@@ -22,12 +22,13 @@ from uuid import UUID
 from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
-from src.models.auth import PayrollPayout, PayrollSheet, User
+from src.models.auth import OrgMoneyAudit, PayrollPayout, PayrollSheet, User
 
 from . import business_clock as bc
 from . import payment_status as ps
 from . import payments_texts as tx
 from .payments_files import staff_name
+from .money_reconcile_rows import PAYOUT_CREATED, PAYOUT_VOIDED
 from .payroll_engine import MAX_FEE
 from .payroll_schemas import PayoutCreate, PayoutCreated, PayoutOut, PayoutState, PayoutVoided
 
@@ -269,6 +270,13 @@ class PayrollPayoutService:
             raise PayoutMethodRequired("Укажите способ выплаты")
         return body.amount, paid_on, body.method
 
+    def _journal(self, row: PayrollPayout, action: str, actor_id: str, headline: str) -> None:
+        """The line of the journal of money (``org_money_audit``) with the id of the payout, the author and the sum, in the transaction of the action: the nightly reconciliation looks for the id of a payout
+        it finds cancelled.  The page of the money settings does not list these lines (the sums of the salary are for the owner of the platform's team and the owner's payroll pages)."""
+        self.db.add(OrgMoneyAudit(org_id=row.org_id, actor_id=UUID(str(actor_id)), action=action, occurred_at=_utcnow(), details={
+            "payout_id": str(row.id), "sheet_id": str(row.sheet_id), "teacher_id": str(row.teacher_id), "period_month": row.period_month.isoformat(), "amount": int(row.amount),
+            "method": row.method, "reason": row.void_reason, "text": f"{headline}: {tx.money(int(row.amount))}"}))
+
     def create(self, org_id: str, sheet_id: UUID, actor_id: str, body: PayoutCreate, key: Optional[UUID], fresh_total_of) -> PayoutCreated:
         """``fresh_total_of(sheet) -> Optional[int]`` is the payroll's fresh calculation of the sheet (asked once per revision of the sheet in a request)."""
         today = ps.business_today()
@@ -312,6 +320,8 @@ class PayrollPayoutService:
                 sheet_revision=sheet.revision, sheet_total=int(sheet.total_amount), idempotency_key=key,
                 created_by=UUID(str(actor_id)), created_at=_utcnow())
             self.db.add(row)
+            self.db.flush()
+            self._journal(row, PAYOUT_CREATED, actor_id, "Выплата зарплаты")
             self.db.commit()
         except PayoutError:
             self.db.rollback()
@@ -334,6 +344,7 @@ class PayrollPayoutService:
             if row.voided_at is not None:
                 raise PayoutAlreadyVoided("Выплата уже отменена")
             row.voided_at, row.voided_by, row.void_reason = _utcnow(), UUID(str(actor_id)), reason
+            self._journal(row, PAYOUT_VOIDED, actor_id, "Выплата зарплаты отменена")
             self.db.commit()
         except PayoutError:
             self.db.rollback()

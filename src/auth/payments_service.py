@@ -64,6 +64,7 @@ from src.models.auth import (
 from . import billing_ledger as bl
 from . import business_clock as bc
 from . import ledger_service as ls
+from . import money_reconcile_rows as mrows
 from . import payment_status as ps
 from . import payments_texts as tx
 from . import payments_views as pv
@@ -150,7 +151,8 @@ AUDIT_REFUND = "payment_refund"
 AUDIT_REFUND_VOID = "payment_refund_void"
 AUDIT_PAYMENT_VOID = "payment_void"          # Money-1 V2: a cancelled payment / a corrected one leave a line of the journal of decisions, as a forgiveness and a refund do
 AUDIT_PAYMENT_REPLACE = "payment_replace"
-DECISION_ACTIONS = (AUDIT_PAYMENT_VOID, AUDIT_PAYMENT_REPLACE, AUDIT_WRITEOFF, AUDIT_WRITEOFF_VOID, AUDIT_REFUND, AUDIT_REFUND_VOID)
+AUDIT_TRANSFER = "student_transferred"      # Money-2: a transfer carries money from one group to another - the owner sees it among the decisions, and the nightly reconciliation finds the link by its id
+DECISION_ACTIONS = (AUDIT_PAYMENT_VOID, AUDIT_PAYMENT_REPLACE, AUDIT_WRITEOFF, AUDIT_WRITEOFF_VOID, AUDIT_REFUND, AUDIT_REFUND_VOID, AUDIT_TRANSFER)
 
 # /org/payments/summary is asked by the banner and the menu of every administrator: a few seconds of cache.
 SUMMARY_TTL_SECONDS = float(os.getenv("PAYMENTS_SUMMARY_TTL", "15"))
@@ -632,7 +634,7 @@ class PaymentService:
 
     def settings_history(self, org_id: str, *, limit: int = 50) -> Dict[str, Any]:
         """The journal of the money settings of the centre, the newest first (Money-1 B9): who, when, what, and the sums."""
-        rows = (self.db.query(OrgMoneyAudit).filter(OrgMoneyAudit.org_id == org_id)
+        rows = (self.db.query(OrgMoneyAudit).filter(OrgMoneyAudit.org_id == org_id, OrgMoneyAudit.action.notin_(mrows.TRACE_ACTIONS))      # the lines of the payouts and of the reconciliation are not settings
                 .order_by(OrgMoneyAudit.occurred_at.desc(), OrgMoneyAudit.id.desc()).limit(max(1, min(limit, 200))).all())
         names = {u.id: person_name(u.last_name, u.first_name) for u in self.db.query(User).filter(User.id.in_({r.actor_id for r in rows if r.actor_id}))} if rows else {}
         return {"items": [{"id": str(r.id), "at": r.occurred_at.isoformat() if r.occurred_at else None, "actor_id": str(r.actor_id) if r.actor_id else None,
@@ -1677,6 +1679,11 @@ class PaymentService:
             )
         )
 
+    def role_of(self, org_id: str, actor_id: str) -> str:
+        """The role of the author in the centre for a line of the journal (``admin`` when the author is not a member any more)."""
+        role = self.db.query(OrganizationMember.org_role).filter(OrganizationMember.org_id == org_id, OrganizationMember.user_id == actor_id).scalar()
+        return role if role in ("owner", "admin", "teacher") else "admin"
+
     def _entry_of(self, org_id: str, membership_id: UUID, today: Optional[date] = None) -> ls.MembershipLedger:
         found = self._loader(org_id, today).run([membership_id])
         if not found:
@@ -2013,7 +2020,13 @@ class PaymentService:
         self.db.flush()
         loader = self._loader(org_id, ps.business_date(moment))
         loader.load_facts([target.id] + [m.id for m in sources])
-        total = sum(loader.x_of(t) for t in made)
+        carried_sums = [loader.x_of(t) for t in made]
+        total = sum(carried_sums)
+        if actor_id:                      # the journal needs an author; a transfer made by the system (none today) leaves only the link
+            for link, carried in zip(made, carried_sums):
+                self._audit(org_id, target, actor_id, self.role_of(org_id, actor_id), AUDIT_TRANSFER, {
+                    "actor_id": str(actor_id), "student_id": str(link.student_id), "transfer_id": str(link.id), "from_membership_id": str(link.from_membership_id),
+                    "to_membership_id": str(link.to_membership_id), "amount": int(carried), "at": link.at.isoformat()})
         logger.info("transfer recorded to=%s from=%s actor=%s", target.id, [str(m.id) for m in sources], actor_id)
         invalidate_summary(org_id)
         notes: List[Dict[str, str]] = []

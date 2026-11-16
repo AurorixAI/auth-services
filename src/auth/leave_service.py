@@ -26,7 +26,7 @@ from . import business_clock as bc
 from . import ledger_service as ls
 from . import payment_status as ps
 from . import pricing
-from .logica_service import PauseService
+from .logica_service import AUDIT_OPENING_SET, AUDIT_OPENING_VOID, PauseService
 from .membership_periods import close_period
 from .payments_schemas import (
     FreshBalance,
@@ -319,5 +319,10 @@ def apply_add_opening(db: Session, org_id: str, membership: StudentGroup, actor_
         return None
     service = OpeningService(db)
     today = ps.business_today()
-    service.apply(org_id, membership, actor_id, "admin", opening, source=source, today=today, reason=getattr(opening, "reason", None), require_reason_when_money=False)
+    cancelled: List[UUID] = []
+    row, _ = service.apply(org_id, membership, actor_id, "admin", opening, source=source, today=today, reason=getattr(opening, "reason", None), require_reason_when_money=False, voided=cancelled)
+    if cancelled and actor_id:          # a return into a group that kept an opening balance replaces it: the cancelled row must be named in the journal (the first opening of a stay leaves none)
+        service._audit(org_id, membership, actor_id, "admin", AUDIT_OPENING_SET if row else AUDIT_OPENING_VOID, {
+            "actor_id": str(actor_id), "membership_id": str(membership.id), "student_id": str(membership.student_id), "opening_id": str(row.id) if row else None,
+            "voided_opening_id": str(cancelled[0]), "via": source})
     return service.over_payments(org_id, membership.id, today) if opening.paid_until is not None else None       # Money-1 R3 Д4: «оплачено до» on top of payments is named

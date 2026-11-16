@@ -591,7 +591,7 @@ class OpeningsService(_Base):
             # (3) the writes: N times OpeningService.apply, the facts already known, one flush
             batch_id = uuid4()
             service = OpeningService(self.db)
-            written: List[Tuple[PlanItem, Optional[MembershipOpeningBalance]]] = []
+            written: List[Tuple[PlanItem, Optional[MembershipOpeningBalance], Optional[UUID]]] = []
             for p in plan.items:
                 if not p.changed:
                     continue
@@ -599,22 +599,23 @@ class OpeningsService(_Base):
                                      has_money=p.has_money, transfer_target=p.transfer_target)
                 body = SimpleNamespace(paid_until=p.target[0] if p.target else None, debt_amount=p.target[1] if p.target else None,
                                        debt_on=p.target[2] if p.target else None)
+                cancelled: List[UUID] = []
                 row, changed = service.apply(org_id, p.membership, actor_id, actor_role, body, source="manual", today=today, reason=reason,
-                                             facts=facts, flush=False)
+                                             facts=facts, flush=False, voided=cancelled)
                 if not changed:  # cannot happen: the plan said it changes
                     raise ConcurrentEdit("Данные изменились во время записи — повторите")
-                written.append((p, row))
+                written.append((p, row, cancelled[0] if cancelled else None))
             self.db.flush()
             # (4) the check of the family (one pass) and one audit row per membership
-            changed_ids = [p.mid for p, _ in written]
+            changed_ids = [p.mid for p, _, _ in written]
             if changed_ids:
                 for entry in ls.LedgerLoader(self.db, str(org_id), today).run(changed_ids):
                     if bl.F_OUTFLOW_EXCEEDS in entry.ledger.flags:
                         raise VoidBreaksRefund("Сначала отмените возврат: без этого остатка возвращать нечего")
-            for p, row in written:
+            for p, row, cancelled_id in written:
                 self._audit(org_id, p.membership, actor_id, actor_role, AUDIT_OPENING_SET if row else AUDIT_OPENING_VOID, {
                     "actor_id": str(actor_id), "membership_id": str(p.membership.id), "student_id": str(p.membership.student_id),
-                    "opening_id": str(row.id) if row else None,
+                    "opening_id": str(row.id) if row else None, "voided_opening_id": str(cancelled_id) if cancelled_id else None,
                     "paid_until": row.paid_until.isoformat() if row and row.paid_until else None,
                     "debt_amount": int(row.debt_amount) if row and row.debt_amount else None,
                     "debt_on": row.debt_on.isoformat() if row and row.debt_on else None,

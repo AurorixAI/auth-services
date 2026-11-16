@@ -56,7 +56,7 @@ from .payments_income_schemas import (
 from .export_safety import FORMULA_STARTS, csv_safe_row  # noqa: F401  (one rule for every export; re-exported for the callers of this module)
 from .payments_reports import MAX_DAY_SERIES_DAYS, PaymentsReports, method_clause, validate_range
 from .payments_service import (
-    AUDIT_PAYMENT_REPLACE, AUDIT_PAYMENT_VOID, AUDIT_REFUND, AUDIT_REFUND_VOID, AUDIT_WRITEOFF, AUDIT_WRITEOFF_VOID, DECISION_ACTIONS, InvalidPeriod, PaymentInvalid, PaymentService, earlier_versions)
+    AUDIT_PAYMENT_REPLACE, AUDIT_PAYMENT_VOID, AUDIT_REFUND, AUDIT_REFUND_VOID, AUDIT_TRANSFER, AUDIT_WRITEOFF, AUDIT_WRITEOFF_VOID, DECISION_ACTIONS, InvalidPeriod, PaymentInvalid, PaymentService, earlier_versions)
 
 MAX_JOURNAL_PAGE = 100
 MAX_EXPORT_ROWS = 20_000
@@ -64,7 +64,7 @@ MAX_EXPORT_ROWS = 20_000
 
 DECISION_LABELS = {
     AUDIT_PAYMENT_VOID: "Оплата отменена", AUDIT_PAYMENT_REPLACE: "Оплата исправлена", AUDIT_WRITEOFF: "Долг прощён", AUDIT_WRITEOFF_VOID: "Прощение отменено",
-    AUDIT_REFUND: "Аванс возвращён", AUDIT_REFUND_VOID: "Возврат отменён"}
+    AUDIT_REFUND: "Аванс возвращён", AUDIT_REFUND_VOID: "Возврат отменён", AUDIT_TRANSFER: "Ученик переведён: деньги перенесены в новую группу"}
 
 
 class ExportTooLong(PaymentInvalid):

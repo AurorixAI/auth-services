@@ -240,9 +240,10 @@ class OpeningService(_Base):
     def apply(
         self, org_id: str, membership: StudentGroup, actor_id: str, actor_role: str, body, *, source: str, today: date,
         reason: Optional[str] = None, note: Optional[str] = None, require_reason_when_money: bool = True,
-        facts: Optional["OpeningFacts"] = None, flush: bool = True,
+        facts: Optional["OpeningFacts"] = None, flush: bool = True, voided: Optional[List[UUID]] = None,
     ) -> Tuple[Optional[MembershipOpeningBalance], bool]:
-        """The write inside the caller's transaction (no commit).  Returns ``(live row or None, changed)``.
+        """The write inside the caller's transaction (no commit).  Returns ``(live row or None, changed)``; the id of the row it cancelled is appended to ``voided`` (the journal of the caller names it:
+        the reconciliation looks for a line of the journal with the id of every cancelled row).
 
         Nothing but paid_until / debt given = the live one is voided; the same values again = noop.  S0: «оплачено до» = the day before the
         accounting start ("nothing is owed at the start", a reviewed row) is a REAL opening: the ledger gives the same debt and charges with or without it.
@@ -271,6 +272,8 @@ class OpeningService(_Base):
         actor = UUID(str(actor_id))
         if existing is not None:
             existing.voided_at, existing.voided_by = _utcnow(), actor
+            if voided is not None:
+                voided.append(existing.id)
             existing.void_reason = (reason or "").strip() or "заменён новым остатком"
             if flush:
                 self.db.flush()
@@ -302,15 +305,16 @@ class OpeningService(_Base):
             membership = self.pay._membership(org_id, membership_id, lock=True, writable=True)
             self.pay._lock_family(org_id, membership.student_id)
             before = self.pay._entry_of(org_id, membership_id, today).ledger
+            cancelled: List[UUID] = []
             row, changed = self.apply(org_id, membership, actor_id, actor_role, body, source="manual", today=today,
-                                      reason=body.reason, note=body.note)
+                                      reason=body.reason, note=body.note, voided=cancelled)
             after = self.pay._entry_of(org_id, membership_id, today).ledger
             if changed:
                 self.pay._family_check(org_id, [membership_id])
                 if not dry_run:
                     self._audit(org_id, membership, actor_id, actor_role, AUDIT_OPENING_SET if row else AUDIT_OPENING_VOID, {
                         "actor_id": str(actor_id), "membership_id": str(membership.id), "student_id": str(membership.student_id),
-                        "opening_id": str(row.id) if row else None,
+                        "opening_id": str(row.id) if row else None, "voided_opening_id": str(cancelled[0]) if cancelled else None,
                         "paid_until": row.paid_until.isoformat() if row and row.paid_until else None,
                         "debt_amount": int(row.debt_amount) if row and row.debt_amount else None,
                         "debt_on": row.debt_on.isoformat() if row and row.debt_on else None,
@@ -650,15 +654,25 @@ class PauseService(_Base):
     def close_at_leave(self, membership_id: UUID, left_day: date, actor_id: Optional[str] = None) -> int:
         """Pauses after the day of leaving are voided, the one that holds the day is cut to it (spec §2.8).  Returns the number touched."""
         touched = 0
+        membership = None
         for p in self._live(membership_id):
+            was = [p.first_day.isoformat(), p.last_day.isoformat()]
             if p.first_day > left_day:
                 p.voided_at, p.voided_by, p.void_reason = _utcnow(), UUID(str(actor_id)) if actor_id else None, "ученик ушёл из группы"
                 if p.voided_by is None:  # the all-or-none check wants a person: the creator stands for the system
                     p.voided_by = p.created_by
-                touched += 1
+                action = AUDIT_PAUSE_VOID
             elif p.last_day > left_day:
-                p.last_day = left_day
-                touched += 1
+                p.last_day = left_day          # cut IN PLACE: the one change of a pause nobody asked for by hand - the line of the journal keeps what it was
+                action = AUDIT_PAUSE_SET
+            else:
+                continue
+            touched += 1
+            author = actor_id or str(p.created_by)
+            membership = membership or self.db.get(StudentGroup, membership_id)
+            self._audit(str(p.org_id), membership, author, self.pay.role_of(str(p.org_id), author), action, {
+                "actor_id": str(author), "membership_id": str(membership_id), "student_id": str(p.student_id), "pause_id": str(p.id), "first_day": p.first_day.isoformat(),
+                "last_day": p.last_day.isoformat(), "was": was, "reason": p.void_reason if action == AUDIT_PAUSE_VOID else "ученик ушёл из группы", "via": "leave"})
         if touched:
             self.db.flush()
         return touched
