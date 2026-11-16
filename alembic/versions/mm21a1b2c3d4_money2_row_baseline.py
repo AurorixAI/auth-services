@@ -44,8 +44,10 @@ def _widen(table: str, name: str, column: str, value: str) -> None:
         return
     listed = ", ".join(f"'{v}'" for v in [*live, value])
     op.execute(f"ALTER TABLE {table} DROP CONSTRAINT {name}")
-    op.execute(f"ALTER TABLE {table} ADD CONSTRAINT {name} CHECK ({column} IN ({listed})) NOT VALID")          # NOT VALID: no full pass of the table under the exclusive lock ...
-    op.execute(f"ALTER TABLE {table} VALIDATE CONSTRAINT {name}")                                          # ... the pass is done after, under a lock that lets the reads and the writes go on
+    op.execute(f"ALTER TABLE {table} ADD CONSTRAINT {name} CHECK ({column} IN ({listed})) NOT VALID")          # NOT VALID: the add itself does not scan the table ...
+    op.execute(f"ALTER TABLE {table} VALIDATE CONSTRAINT {name}")                                          # ... but the whole migration is ONE transaction, so the lock of DROP/ADD is held until its end and VALIDATE
+    # does not shorten it (an honest note: a VALIDATE in ``autocommit_block`` would split the atomic rollback of the migration).  The tables here are small (the money journal / the holders of the rows), the pass takes
+    # milliseconds, and ``lock_timeout`` of 5 s refuses to wait for a long lock instead of freezing the writes.
 
 
 def _add_column(inspector, table: str, column: sa.Column) -> None:

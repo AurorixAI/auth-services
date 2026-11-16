@@ -553,13 +553,13 @@ def rebaseline(db, reason: str, *, actor: Optional[str], with_open_findings: boo
             return {"busy": True}
         db.rollback()
         db.execute(text("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ"))          # first statement of the transaction: one view of the centres
-        actor_id = platform_actor(db, actor)
-        query = db.query(Organization.id).filter(Organization.status == "active")
-        if only is not None:
-            query = query.filter(Organization.id.in_(_uuids(only)))
-        orgs = [o for (o,) in query.order_by(Organization.id).all()]
         started = bc.utc_now()
         try:
+            actor_id = platform_actor(db, actor)          # Money-2 T21: inside the ``try`` - a refused author closes the transaction too (as the description of the function says)
+            query = db.query(Organization.id).filter(Organization.status == "active")
+            if only is not None:
+                query = query.filter(Organization.id.in_(_uuids(only)))
+            orgs = [o for (o,) in query.order_by(Organization.id).all()]
             run_row = MoneyReconcileRun(started_at=started, finished_at=started, status="rebaselined", centres_checked=0, findings_count=0, new_findings_count=0)
             db.add(run_row)
             db.flush()

@@ -466,7 +466,7 @@ def test_accept_of_a_deleted_row_forgets_it_and_accept_of_a_foreign_row_is_remem
     assert f"payment:{gone}:deleted" in keys and f"refund:{strange}:foreign" in keys and f"refund:{strange}:changed" in keys
     for key in (f"payment:{gone}:deleted", f"refund:{strange}:foreign", f"refund:{strange}:changed"):
         assert script_main(world, monkeypatch, "--accept", key, "--reason", "Разобрали с центром", "--actor", staff_actor(world)) == 0
-    assert baseline_of(world, "payment", gone) is None and baseline_of(world, "refund", strange).accepted == ["foreign"]
+    assert baseline_of(world, "payment", gone) is None and [a.split(":")[0] for a in baseline_of(world, "refund", strange).accepted] == ["foreign"]        # remembered WITH the signature of the mismatch (T21)
     assert i5(night(world), world) == []
     tamper(world, "refund", strange, "amount = 5")
     assert i5(night(world), world) == [f"refund:{strange}:changed"], "what was accepted as foreign stays accepted, a new edit is found"
@@ -552,3 +552,44 @@ def test_a_payment_that_commits_while_the_centre_is_read_is_in_neither_path_of_t
     assert made and i2(racing, world) == [] and i5(racing, world) == [], "one moment: the payment is in neither path yet"
     after = night(world)                                                                              # the next night sees it as a NEW row with its receipt and its sum
     assert i2(after, world) == [] and i5(after, world) == [] and after["failed"] == []
+
+
+# ============================================================================================================ Money-2 T21 (the small things of the check)
+def test_t21_a_reopened_finding_is_never_accepted_one_by_one_and_the_chain_of_the_old_trace_is_closed(world, monkeypatch):
+    # a payment cancelled THROUGH the product (a line of the journal), brought back to life by a bare UPDATE, found as ``reopened``; the team may not accept it (the old line of the journal would
+    # then count as the trace of the NEXT bare cancellation); the way out is a repair of the data or a re-take of the baseline with a reason.
+    ensure_billing(world)
+    row = make_payment(world, voided=True)
+    night(world)
+    sql(world, "UPDATE student_payments SET voided_at = NULL, voided_by = NULL, void_reason = NULL WHERE id = :id", id=row)
+    key = f"payment:{row}:reopened"
+    assert key in i5(night(world), world)
+    before = baseline_of(world, "payment", row)
+    with pytest.raises(ValueError, match="такого пути в продукте нет"):
+        mr.accept(world.db, key, "Разобрали с центром", actor=staff_actor(world))
+    assert world.db.query(OrgMoneyAudit).filter_by(org_id=world.org.id, action="money_reconcile_accept").count() == 0
+    assert baseline_of(world, "payment", row).voided == before.voided
+    assert key in i5(night(world), world), "still open"
+    assert script_main(world, monkeypatch, "--accept", key, "--reason", "Разобрали с центром", "--actor", staff_actor(world)) != 0
+
+
+def test_t21_an_accepted_foreign_row_stays_accepted_only_for_the_mismatch_that_was_accepted(world, monkeypatch):
+    # the refund of S0 is moved to the membership of S1 (the row says S0 / the membership says S1): accepted.  Then ANOTHER mismatch of the same row (the student of the row is a third one) is a NEW finding.
+    ensure_billing(world)
+    strange = make_refund(world)
+    night(world)
+    tamper(world, "refund", strange, KINDS["refund"][3])
+    key = f"refund:{strange}:foreign"
+    assert key in i5(night(world), world)
+    assert script_main(world, monkeypatch, "--accept", key, "--reason", "Разобрали с центром", "--actor", staff_actor(world)) == 0
+    assert key not in i5(night(world), world), "the accepted mismatch is quiet"
+    sql(world, "UPDATE student_refunds SET student_id = :third WHERE id = :id", id=strange, third=world.students[2].id)
+    assert key in i5(night(world), world), "another mismatch of the same row is a new finding"
+
+
+def test_t21_a_rebaseline_refused_for_the_author_closes_its_transaction(world):
+    ensure_billing(world)
+    make_payment(world)
+    with pytest.raises(ValueError, match="не активный сотрудник"):
+        mr.rebaseline(world.db, "После переноса базы", actor=str(uuid4()))
+    assert not world.db.in_transaction(), "the transaction of the refused call is closed (rolled back), not left open"

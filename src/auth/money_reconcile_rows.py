@@ -64,6 +64,7 @@ class RowKind:
     journal: Optional[Journal] = None                     # where its cancellation is written
     owner_joins: str = ""                                 # SQL: the rows the row points at (alias ``t`` = the row)
     owner_wrong: str = ""                                 # SQL: a condition that is true when the row does not belong to what it points at
+    owner_sig: str = ""                                   # SQL: the signature of WHAT it points at (the pointers of the row and of the rows it points at): an accepted ``foreign`` is accepted for THIS signature only
     membership_col: Optional[str] = None                  # the membership the sum of a payment belongs to (for the paid-delta of I-2)
     traced_by_receipt: bool = False                       # a NEW row must have a receipt snapshot
 
@@ -71,6 +72,14 @@ class RowKind:
 _STUDENT_MEMBERSHIP = ("JOIN student_groups sg ON sg.id = t.membership_id JOIN groups g ON g.id = sg.group_id",
                        "t.student_id <> sg.student_id OR t.group_id <> sg.group_id OR g.org_id <> t.org_id")
 _COMMON = ("org_id", "created_by", "created_at")
+
+
+def _sig(*columns: str) -> str:
+    """Money-2 T21: the SQL of a signature - the hash of the columns (a missing one counts as «-»)."""
+    return "md5(concat_ws('|', " + ", ".join(f"coalesce(({c})::text, '-')" for c in columns) + "))"
+
+
+_STUDENT_SIG = ("t.membership_id", "t.student_id", "t.group_id", "t.org_id", "sg.student_id", "sg.group_id", "g.org_id")
 
 KINDS: Tuple[RowKind, ...] = (
     RowKind("payment", StudentPayment,
@@ -81,28 +90,32 @@ KINDS: Tuple[RowKind, ...] = (
             owner_joins=_STUDENT_MEMBERSHIP[0] + " LEFT JOIN student_payments rp ON rp.id = t.replaces_payment_id LEFT JOIN student_payments cp ON cp.id = t.carried_from_payment_id",
             owner_wrong=_STUDENT_MEMBERSHIP[1] + " OR (rp.id IS NOT NULL AND (rp.membership_id <> t.membership_id OR rp.org_id <> t.org_id))"
                                                  " OR (cp.id IS NOT NULL AND (cp.student_id <> t.student_id OR cp.org_id <> t.org_id))",
+            owner_sig=_sig(*_STUDENT_SIG, "t.replaces_payment_id", "rp.membership_id", "rp.org_id", "t.carried_from_payment_id", "cp.student_id", "cp.org_id"),
             membership_col="membership_id", traced_by_receipt=True),
     RowKind("refund", StudentRefund, ("org_id", "membership_id", "student_id", "group_id", "amount", "method", "reason", "note", "effective_on", "idempotency_key", "receipt_no", "created_by", "created_at"),
-            amount=StudentRefund.amount, journal=Journal(GroupAudit, (("payment_refund_void", ("refund_id",)),)), owner_joins=_STUDENT_MEMBERSHIP[0], owner_wrong=_STUDENT_MEMBERSHIP[1]),
+            amount=StudentRefund.amount, journal=Journal(GroupAudit, (("payment_refund_void", ("refund_id",)),)), owner_joins=_STUDENT_MEMBERSHIP[0], owner_wrong=_STUDENT_MEMBERSHIP[1], owner_sig=_sig(*_STUDENT_SIG)),
     RowKind("writeoff", StudentWriteoff, ("org_id", "membership_id", "student_id", "group_id", "amount", "reason", "effective_on", "idempotency_key", "created_by", "created_at"),
-            amount=StudentWriteoff.amount, journal=Journal(GroupAudit, (("payment_writeoff_void", ("writeoff_id",)),)), owner_joins=_STUDENT_MEMBERSHIP[0], owner_wrong=_STUDENT_MEMBERSHIP[1]),
+            amount=StudentWriteoff.amount, journal=Journal(GroupAudit, (("payment_writeoff_void", ("writeoff_id",)),)), owner_joins=_STUDENT_MEMBERSHIP[0], owner_wrong=_STUDENT_MEMBERSHIP[1], owner_sig=_sig(*_STUDENT_SIG)),
     RowKind("opening", MembershipOpeningBalance, ("org_id", "membership_id", "student_id", "group_id", "paid_until", "debt_amount", "debt_on", "note", "source", "created_by", "created_at"),
             amount=MembershipOpeningBalance.debt_amount,
-            journal=Journal(GroupAudit, (("opening_balance_void", ("opening_id", "voided_opening_id")), ("opening_balance_set", ("voided_opening_id",)))), owner_joins=_STUDENT_MEMBERSHIP[0], owner_wrong=_STUDENT_MEMBERSHIP[1]),
+            journal=Journal(GroupAudit, (("opening_balance_void", ("opening_id", "voided_opening_id")), ("opening_balance_set", ("voided_opening_id",)))), owner_joins=_STUDENT_MEMBERSHIP[0], owner_wrong=_STUDENT_MEMBERSHIP[1], owner_sig=_sig(*_STUDENT_SIG)),
     RowKind("transfer", MembershipTransfer, ("org_id", "student_id", "from_membership_id", "to_membership_id", "at", "created_by", "created_at"), can_void=False,
             owner_joins="JOIN student_groups sf ON sf.id = t.from_membership_id JOIN groups gf ON gf.id = sf.group_id JOIN student_groups st ON st.id = t.to_membership_id JOIN groups gt ON gt.id = st.group_id",
-            owner_wrong="t.student_id <> sf.student_id OR t.student_id <> st.student_id OR gf.org_id <> t.org_id OR gt.org_id <> t.org_id"),
+            owner_wrong="t.student_id <> sf.student_id OR t.student_id <> st.student_id OR gf.org_id <> t.org_id OR gt.org_id <> t.org_id",
+            owner_sig=_sig("t.student_id", "t.org_id", "t.from_membership_id", "t.to_membership_id", "sf.student_id", "st.student_id", "gf.org_id", "gt.org_id")),
     RowKind("payout", PayrollPayout, ("org_id", "sheet_id", "teacher_id", "period_month", "amount", "paid_on", "method", "note", "sheet_revision", "sheet_total", "idempotency_key", "created_by", "created_at"),
             amount=PayrollPayout.amount, journal=Journal(OrgMoneyAudit, ((PAYOUT_VOIDED, ("payout_id",)),)),
-            owner_joins="JOIN payroll_sheets ps ON ps.id = t.sheet_id", owner_wrong="ps.org_id <> t.org_id OR ps.teacher_id <> t.teacher_id OR ps.period_month <> t.period_month"),
+            owner_joins="JOIN payroll_sheets ps ON ps.id = t.sheet_id", owner_wrong="ps.org_id <> t.org_id OR ps.teacher_id <> t.teacher_id OR ps.period_month <> t.period_month",
+            owner_sig=_sig("t.sheet_id", "t.org_id", "t.teacher_id", "t.period_month", "ps.org_id", "ps.teacher_id", "ps.period_month")),
     RowKind("rate", PayrollRate, ("org_id", "teacher_id", "lesson_type", "percent", "valid_from", "note", "created_by", "created_at"), can_void=False,
-            owner_wrong="NOT EXISTS (SELECT 1 FROM organization_members om WHERE om.org_id = t.org_id AND om.user_id = t.teacher_id)"),
+            owner_wrong="NOT EXISTS (SELECT 1 FROM organization_members om WHERE om.org_id = t.org_id AND om.user_id = t.teacher_id)",
+            owner_sig=_sig("t.org_id", "t.teacher_id")),
 )
 KIND = {k.name: k for k in KINDS}
 STATE_CODES = ("foreign",)                      # findings of the STATE of a row (not of a move): accepting one is remembered on the row
 ARRIVAL_CODES = ("untraced", "no_journal", "reopened")      # findings of a row that has no baseline yet (it ARRIVED): taking the row into the baseline closes them, so the ones not accepted are carried as «open:<code>»
 OPEN = "open:"
-FIELDS_OF = {"changed": ("fingerprint", "amount"), "reopened": ("voided", "void_fingerprint"), "no_journal": ("voided", "void_fingerprint")}      # what accepting ONE finding of a row that has a baseline takes from the row
+FIELDS_OF = {"changed": ("fingerprint", "amount"), "no_journal": ("voided", "void_fingerprint")}      # what accepting ONE finding of a row that has a baseline takes from the row
 
 Key = Tuple[str, UUID]
 
@@ -139,6 +152,7 @@ class RowVerdict:
     confirm: Dict[Key, RowState] = field(default_factory=dict)        # rows whose baseline is written / updated (new rows, lawful moves)
     now: Dict[Key, RowState] = field(default_factory=dict)            # the rows as they are
     flagged: Set[Key] = field(default_factory=set)                    # rows with a finding of a MOVE (not ``foreign``): their baseline stays as it was
+    foreign: Dict[Key, str] = field(default_factory=dict)            # rows with a ``foreign`` finding -> the signature of the mismatch (what ``accept`` remembers)
     paid_delta: Dict[UUID, int] = field(default_factory=dict)         # per membership: the payments added minus the payments cancelled since the baseline (rows WITHOUT a finding only)
     rows: int = 0
     baselined: int = 0                                                # rows taken into the baseline tonight
@@ -213,20 +227,21 @@ def receipts_of(db, ids: Set[UUID]) -> Set[UUID]:
     return out
 
 
-def foreign_rows(db, org_id: UUID) -> Set[Key]:
-    """The rows that do not belong to what they point at (the student / group / centre of their membership, the membership a correction replaces, the sheet of a payout)."""
-    out: Set[Key] = set()
+def foreign_rows(db, org_id: UUID) -> Dict[Key, str]:
+    """The rows that do not belong to what they point at (the student / group / centre of their membership, the membership a correction replaces, the sheet of a payout), each with the signature of
+    WHAT it points at (Money-2 T21: the team accepts THIS mismatch; another one of the same row is a new finding)."""
+    out: Dict[Key, str] = {}
     for kind in KINDS:
         if not kind.owner_wrong:
             continue
         table = kind.model.__tablename__
-        sql = text(f"SELECT t.id FROM {table} t {kind.owner_joins} WHERE t.org_id = :org AND ({kind.owner_wrong})")
-        out |= {(kind.name, rid) for (rid,) in db.execute(sql, {"org": org_id})}
+        sql = text(f"SELECT t.id, {kind.owner_sig} FROM {table} t {kind.owner_joins} WHERE t.org_id = :org AND ({kind.owner_wrong})")
+        out.update({(kind.name, rid): sig for rid, sig in db.execute(sql, {"org": org_id})})
     return out
 
 
 # ====================================================================================================== the comparison (pure)
-def compare(now: Dict[Key, RowState], base: Dict[Key, RowState], *, journal: Set[Key], receipts: Set[UUID], foreign: Set[Key], first: bool) -> RowVerdict:
+def compare(now: Dict[Key, RowState], base: Dict[Key, RowState], *, journal: Set[Key], receipts: Set[UUID], foreign: Dict[Key, str], first: bool) -> RowVerdict:
     """The ONE comparison for all kinds.  ``journal``: rows a line of the journal names; ``receipts``: payments with a receipt snapshot; ``foreign``: rows that do not belong to what they point at."""
     verdict = RowVerdict(now=now, rows=len(now), first=first)
     paid_moves: Dict[Key, Tuple[UUID, int]] = {}          # row -> (membership, +sum of a new live payment / -sum of a payment cancelled since the baseline)
@@ -250,6 +265,7 @@ def compare(now: Dict[Key, RowState], base: Dict[Key, RowState], *, journal: Set
                 if current.voided and not kind.can_void:
                     flag(key, "reopened", None, current.amount)
             if key in foreign:
+                verdict.foreign[key] = foreign[key]
                 flag(key, "foreign", None, current.amount)
             if kind.name == "payment" and not current.voided and not first:
                 paid_moves[key] = (current.membership_id, current.amount or 0)
@@ -269,7 +285,8 @@ def compare(now: Dict[Key, RowState], base: Dict[Key, RowState], *, journal: Set
                 flag(key, "no_journal", before.amount, current.amount)
             if kind.name == "payment":
                 paid_moves[key] = (current.membership_id, -(before.amount or 0))
-        if key in foreign and "foreign" not in before.accepted:
+        if key in foreign and f"foreign:{foreign[key]}" not in before.accepted:          # accepted for THAT mismatch only
+            verdict.foreign[key] = foreign[key]
             flag(key, "foreign", before.amount, current.amount)
         for carried in sorted(a for a in before.accepted if a.startswith(OPEN)):          # a finding of the arrival of the row that the team has NOT accepted yet (another one of the row was)
             flag(key, carried[len(OPEN):], before.amount, current.amount)
@@ -346,6 +363,8 @@ def accept(db, key: str, reason: str, *, actor_id: UUID, at: datetime) -> Dict[s
         kind = KIND[kind_name]
     except (ValueError, KeyError):
         raise ValueError("Ключ находки: вид:id строки:код") from None
+    if code == "reopened":              # Money-2 T21: the trace of a cancellation is not tied to the time - an accepted ``reopened`` would let the OLD line of the journal be the trace of the next bare cancellation
+        raise ValueError("Отменённая запись снова действует — такого пути в продукте нет; исправьте данные или сделайте пересъёмку с причиной")
     org_id = db.query(MoneyRowBaseline.org_id).filter(MoneyRowBaseline.kind == kind_name, MoneyRowBaseline.row_id == row_id).scalar() or db.query(kind.model.org_id).filter(kind.model.id == row_id).scalar()
     if org_id is None:
         raise ValueError("Такой записи нет ни в таблице, ни в эталоне")
@@ -367,9 +386,9 @@ def accept(db, key: str, reason: str, *, actor_id: UUID, at: datetime) -> Dict[s
         # the row ARRIVED with findings: the baseline takes the row, so the findings of the arrival that are not THIS one stay open on it (``open:<code>``); a state finding is remembered by its code
         others = sorted({f.code for f in verdict.findings if (f.kind, f.row_id) == (kind_name, row_id) and f.code != code and f.code in ARRIVAL_CODES})
         db.add(MoneyRowBaseline(kind=kind_name, row_id=row_id, org_id=org_id, fingerprint=now.fingerprint, amount=now.amount, voided=now.voided, void_fingerprint=now.void_fingerprint,
-                                accepted=([code] if code in STATE_CODES else []) + [OPEN + o for o in others], first_seen_at=at))
+                                accepted=([f"{code}:{verdict.foreign[(kind_name, row_id)]}"] if code in STATE_CODES else []) + [OPEN + o for o in others], first_seen_at=at))
     elif code in STATE_CODES:
-        before.accepted = sorted({*(before.accepted or []), code})
+        before.accepted = sorted({*(before.accepted or []), f"{code}:{verdict.foreign[(kind_name, row_id)]}"})          # THIS mismatch (a repeated one of the same row: a new finding)
     elif OPEN + code in (before.accepted or []):
         before.accepted = [a for a in before.accepted if a != OPEN + code]
     else:
