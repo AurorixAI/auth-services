@@ -239,6 +239,10 @@ class PaymentConflict(PaymentError):
     status_code = 409
 
 
+class RestoreSuperseded(PaymentConflict):
+    code = "PAYMENT_RESTORE_SUPERSEDED"
+
+
 class DuplicatePayment(PaymentConflict):
     code = "DUPLICATE_PAYMENT"
 
@@ -953,7 +957,7 @@ class PaymentService:
             note=payment.note,
             replaces_payment_id=str(payment.replaces_payment_id) if payment.replaces_payment_id else None,
             restored_from_receipt_no=links.restored.get(payment.id) if links else None,
-            restorable=bool(links) and self._restore_blocker(payment, payment.id in links.replaced_by) is None,
+            restorable=bool(links) and self._restore_blocker(payment, payment.id in links.replaced_by) is None and not self._restore_superseded(payment),
             replaced_by_receipt_no=links.replaced_by.get(payment.id) if links else None,
             receipt_no=payment.receipt_no,
             partial_period=bool(payment.partial_period),
@@ -1316,8 +1320,24 @@ class PaymentService:
         student has no debt of his own left - the money went to the new group; a mistaken 600 -> 200 can be put back)."""
         if old is None:                       # a plain payment of a student who left (no correction): only his debt
             return debt_without
+        if self._newer_live_payment(old.membership_id, old.created_at, old.id):      # R3 П3: other money came in after this version appeared - the earlier, bigger sums are not «not new» any more
+            return max(debt_without, int(old.amount))
         before = earlier_versions(self.db, org_id, [old.replaces_payment_id])
         return max([debt_without, int(old.amount)] + [int(v.amount) for v in before.values()])
+
+    def _newer_live_payment(self, membership_id: Any, since: datetime, exclude: Any) -> bool:
+        """R3 П3: THE one test of the relaxation «the money is not new» for a closed stay (the restoration of a cancelled payment, the return of a corrected sum to the biggest one of its chain): it holds only
+        while no OTHER live payment of this stay appeared after ``since`` (the cancellation / the version being corrected)."""
+        return self.db.query(StudentPayment.id).filter(
+            StudentPayment.membership_id == membership_id, StudentPayment.id != exclude, StudentPayment.voided_at.is_(None), StudentPayment.created_at > since,
+            StudentPayment.kind != "legacy_carry", StudentPayment.carried_from_payment_id.is_(None)).first() is not None
+
+    def _restore_superseded(self, payment: StudentPayment) -> bool:
+        """R3 П3: a cancelled payment of a stay that has ended cannot come back after another live payment was taken into this stay since the cancellation."""
+        if payment.voided_at is None:
+            return False
+        membership = self.db.get(StudentGroup, payment.membership_id)
+        return membership is not None and self._is_left(membership) and self._newer_live_payment(payment.membership_id, payment.voided_at, payment.id)
 
     def _check_left_correction(self, org_id: Any, amount: int, debt_without: int, old: StudentPayment) -> None:
         ceiling = self._correction_ceiling(org_id, debt_without, old)
@@ -1632,6 +1652,8 @@ class PaymentService:
             blocker = self._restore_blocker(old, successor is not None, successor.receipt_no if successor is not None else None, successor.id if successor is not None else None)
             if blocker is not None:
                 raise blocker
+            if self._restore_superseded(old):
+                raise RestoreSuperseded("После отмены в эту группу уже внесена другая оплата — восстановить нельзя: исправьте её сумму или внесите разницу")
             was = self._accounts(org_id, family)
             before = was[membership.id].ledger
             data = PaymentCreate(amount=int(old.amount), paid_on=old.paid_on, note=old.note)
