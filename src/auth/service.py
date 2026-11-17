@@ -2584,13 +2584,14 @@ class AuthService:
                 result = self.add_student_to_group(
                     org_id, group_id, student_id,
                     mode=mode, price_override=price_override, actor_id=actor_id,
-                    payments_detail=payments_detail, money_right=money_right, dry_run=dry_run, pay_from=pay_from, immediate=True,
+                    payments_detail=payments_detail, money_right=money_right, dry_run=dry_run, pay_from=pay_from, immediate=True, batch_common=True,      # stage 7 М2: the common fields are not a choice for a student whose leaving is cancelled
                     from_group_id=(sources or {}).get(str(student_id), from_group_id),      # R3 П2: the source of THIS student, else the common one
                 )
                 added += 1
                 results.append({"student_id": str(student_id), "status": "added"})
                 students.append({"student_id": str(student_id), "billing": result.get("billing"), "individual_price_ends": bool(result.get("individual_price_ends")),
-                                 "closing_prices": result.get("closing_prices") or [], "past_balances": result.get("past_balances") or []})
+                                 "closing_prices": result.get("closing_prices") or [], "past_balances": result.get("past_balances") or [],
+                                 "leave_undo": result.get("leave_undo")})      # stage 7 М1: the same object as in the single answer (null = an ordinary adding)
                 for warning in result.get("warnings", []):
                     warnings.append({"student_id": str(student_id), **warning})
             except ValueError as exc:
@@ -2650,8 +2651,12 @@ class AuthService:
         immediate: bool = True,
         from_group_id: Optional[Any] = None,
         expected_carried: Optional[int] = None,
+        batch_common: bool = False,
     ) -> dict:
         """Enrol a student in a group.
+
+        ``batch_common`` (stage 7 М2): ``pay_from`` / ``price_override`` are the COMMON fields of a bulk request, not this student's choice - when his leaving of the same day is cancelled they are not applied
+        (and do not refuse): the stay goes on as it was.  Without it (the single adding) an explicit ``pay_from`` / ``price_override`` / opening balance with a cancelled leaving is the refusal ``LEAVE_UNDO_NO_START``.
 
         ``pay_from`` (Money-1 B1 «Оплата с»): the day the student is charged from; ``None`` = the first lesson of the group from today (``billing_start``); an explicit day is the money right's (the router
         checks it) and is refused for a transfer, which has its own day (the one after it).
@@ -2773,6 +2778,8 @@ class AuthService:
         if closing and not actor_id:   # Money-1 Р3-1б: closing a stay writes the price audit - no row without an author (every caller passes one)
             raise ValueError("Перевод требует автора действия")
         will_undo = bool(existing is not None and not already_member and actor_id and leave_undo.would_undo(self.db, existing, existing.left_at, ps.business_date(now_dt), [m.id for m in closing], payments_detail))      # stage 7: ONE decision «the leaving of the same day is cancelled» (the predicate of the cancel itself), read before anything is written
+        if will_undo and batch_common:
+            pay_from = price_override = override_amount = override_reason = None
         if will_undo and (pay_from is not None or opening_balance is not None or price_override is not None):      # R3 П1 + stage 7 М3: the stay goes on as if he had not left - no new start, no new opening, no new individual price; refused BEFORE the cancel writes anything
             raise ops_rules.unprocessable("LEAVE_UNDO_NO_START", "Ученик возвращается в день ухода — уход отменяется: дата начала оплаты, остаток и индивидуальная цена не меняются")
         if pay_from is not None:      # Money-1 B1: checked BEFORE anything is written - a refusal leaves nothing behind

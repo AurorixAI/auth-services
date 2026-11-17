@@ -44,6 +44,49 @@ def returning(w, b, name="Вернувшийся"):
     return s, before
 
 
+def test_m1_m2_a_batch_of_three_the_common_fields_go_to_the_new_ones_and_the_returning_student_gets_his_leaving_cancelled(world, fixed_today):
+    a, b, c = groups3(world, fixed_today, SUNDAY)
+    s0, s1 = world.students[0], world.students[1]                        # s0, s1: in A, come to B as a second group (add)
+    s2, before = returning(world, b)
+    dry = bulk(world, b, [s0, s1, s2], dry_run=True, **COMMON)
+    out = bulk(world, b, [s0, s1, s2], **COMMON)
+    for answer in (dry, out):
+        assert answer["added"] == 3 and answer["skipped"] == 0 and [r["status"] for r in answer["results"]] == ["added"] * 3, answer
+        first, second, third = answer["students"]
+        assert first["leave_undo"] is None and second["leave_undo"] is None
+        assert third["leave_undo"]["undone"] is True and third["billing"] is None
+    assert dry["students"][2]["leave_undo"] == out["students"][2]["leave_undo"]                  # the window says what the write does
+    assert {i["code"] for i in out["students"][2]["leave_undo"]["restored"]} == {"individual_price", "pause"}
+    assert snap(world, s2, b) == before                                                          # the statement, the price 300 000, the pause, «оплачено до»: as before the leaving
+    assert [r[1] for r in prices(world, s2, b)] == [300_000]                                     # the common 400 000 is NOT written for him
+    assert all(billing_from is None for _, billing_from in periods_billing_from(world, s2, b))
+    for s in (s0, s1):
+        assert [r[1] for r in prices(world, s, b)] == [400_000]                                  # the common price and «Оплата с» 24.11 are applied to the others
+        assert periods_billing_from(world, s, b)[-1][1] == date(2026, 11, 24)
+
+
+def test_m2_a_bulk_transfer_with_a_common_price_does_not_touch_the_returning_one(world, fixed_today):
+    a, b, c = groups3(world, fixed_today, SUNDAY)
+    s0 = world.students[0]                                                                       # moved A -> B with his own source
+    s2, before = returning(world, b)
+    out = bulk(world, b, [s0, s2], mode="transfer", price_override=COMMON["price_override"], sources={str(s0.id): str(a.id)})
+    assert out["added"] == 2 and out["students"][1]["leave_undo"]["undone"] is True and out["students"][0]["leave_undo"] is None
+    assert snap(world, s2, b) == before and [r[1] for r in prices(world, s2, b)] == [300_000]
+    assert [r[1] for r in prices(world, s0, b)] == [400_000] and membership(world, s0, a).is_active is False
+
+
+def test_m1_the_forgiveness_cancelled_at_the_leaving_is_in_the_row_with_the_sum_only_for_the_money_right(world, fixed_today):
+    from tests.test_money2_stage3_pg import recorded_forgiven_taken_out
+    from tests.test_money2_wave_b_pg import _admin
+
+    s, b, m = recorded_forgiven_taken_out(world, fixed_today)
+    new = fresh_student(world, "Новый в партии")
+    row = bulk(world, b, [s, new], dry_run=True)["students"][0]
+    assert row["leave_undo"]["undone"] is True and row["leave_undo"]["forgiveness_cancelled"] == {"amount": 38_000}
+    plain = bulk(world, b, [s, new], dry_run=True, client=_admin(world))["students"][0]["leave_undo"]
+    assert plain["forgiveness_cancelled"] == {} and "38" not in plain["text"]
+
+
 def test_m3_the_single_adding_with_an_individual_price_on_a_cancelled_leaving_is_refused_without_a_price_it_is_cancelled(world, fixed_today):
     a, b, c = groups3(world, fixed_today, SUNDAY)
     s2, before = returning(world, b)
@@ -54,3 +97,14 @@ def test_m3_the_single_adding_with_an_individual_price_on_a_cancelled_leaving_is
     assert add(world, s2, group=b, mode="add")["leave_undo"]["undone"] is True and snap(world, s2, b) == before
 
 
+def test_m4_the_balance_row_of_this_group_says_same_group_and_the_rows_of_other_groups_do_not(world, fixed_today):
+    from tests.test_money2_return_window_pg import _left_with_a_lesson, _window
+
+    b, s = _left_with_a_lesson(world, fixed_today)                                               # B: left on Tue with a debt of 38 000
+    (row,) = _window(world, b, s)["past_balances"]
+    assert row["same_group"] is True and row["amount"] == 38_000
+    from src.models.auth import Group
+
+    gamma = world.db.query(Group).filter(Group.org_id == world.org.id, Group.name == "Гамма").one()
+    other = _window(world, gamma, s)["past_balances"]
+    assert [r["group_id"] for r in other] == [str(b.id)] and "same_group" not in other[0]

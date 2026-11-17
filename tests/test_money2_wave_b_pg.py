@@ -22,25 +22,27 @@ pytestmark = needs_pg
 
 
 def test_t10_one_refusal_of_a_bulk_adding_does_not_break_off_the_rest_and_every_student_has_his_line(world, fixed_today):
-    # Four students are added to B with «Оплата с» = today (20.11).  The third was in B before and left TODAY: «Оплата с» must be after his last stay (21.11 at the earliest) -> PAY_FROM_RANGE for him alone.
-    # The other three are added: 3 of 4.  Before the fix the 422 of the third broke the whole request off (the first two already written, the fourth not even tried).
+    # Four students and one that does not exist are added to B with «Оплата с» = today (20.11).  The third was in B before and left TODAY: stage 7 М2 - his leaving is CANCELLED and the common «Оплата с» is not applied to him
+    # (before: PAY_FROM_RANGE for him alone).  The unknown student is the one refusal: 4 of 5 are added, his line says why, the others are not broken off.
+    import uuid
+
     a, b, c = groups3(world, fixed_today)
     s0, s1, s2 = world.students
     s3 = fresh_student(world, "Четвёртый")
+    ghost = str(uuid.uuid4())
     add(world, s2, group=b, mode="add")
     hold_lessons(world, s2, [DAY], group=b)      # Money-2 У5: a stay of one day charges (and limits «Оплата с») only when the student has a counted mark of a lesson of that day
     assert owner(world).post(f"{API}/org/groups/{b.id}/students/{s2.id}/leave", json={}).status_code == 200
-    r = owner(world).post(f"{API}/org/groups/{b.id}/students/bulk", params={"mode": "add"}, json={"student_ids": [str(s.id) for s in (s0, s1, s2, s3)], "pay_from": DAY.isoformat()})
+    r = owner(world).post(f"{API}/org/groups/{b.id}/students/bulk", params={"mode": "add"}, json={"student_ids": [str(s0.id), str(s1.id), str(s2.id), ghost, str(s3.id)], "pay_from": DAY.isoformat()})
     assert r.status_code == 200, r.text
     body = r.json()
-    assert body["added"] == 3 and body["skipped"] == 1
-    assert [(x["student_id"], x["status"]) for x in body["results"]] == [(str(s0.id), "added"), (str(s1.id), "added"), (str(s2.id), "skipped"), (str(s3.id), "added")]
+    assert body["added"] == 4 and body["skipped"] == 1
+    assert [(x["student_id"], x["status"]) for x in body["results"]] == [(str(s0.id), "added"), (str(s1.id), "added"), (str(s2.id), "added"), (ghost, "skipped"), (str(s3.id), "added")]
     (skip,) = body["skipped_details"]
-    assert skip["student_id"] == str(s2.id) and skip["code"] == "PAY_FROM_RANGE" and "21.11.2026" in skip["reason"]
-    assert body["results"][2]["code"] == "PAY_FROM_RANGE" and body["results"][2]["reason"] == skip["reason"]
-    for s in (s0, s1, s3):
+    assert skip["student_id"] == ghost and skip["reason"] == "Ученик не найден" and body["results"][3]["reason"] == skip["reason"]
+    assert body["students"][2]["leave_undo"]["undone"] is True and body["students"][2]["billing"] is None
+    for s in (s0, s1, s2, s3):
         assert membership(world, s, b).is_active is True
-    assert membership(world, s2, b).is_active is False
 
 
 # ---------------------------------------------------------------------------------------------------- T11 the archive of a student = the rules of the leaving
