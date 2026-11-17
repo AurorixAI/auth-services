@@ -2772,6 +2772,9 @@ class AuthService:
         closing = transfer_rules.resolve_sources(self.db, org_id, student.id, group.id, mode, other_active_memberships, from_group_id)      # Money-2 T1: ONE source; the other groups of the student stay as they are
         if closing and not actor_id:   # Money-1 Р3-1б: closing a stay writes the price audit - no row without an author (every caller passes one)
             raise ValueError("Перевод требует автора действия")
+        will_undo = bool(existing is not None and not already_member and actor_id and leave_undo.would_undo(self.db, existing, existing.left_at, ps.business_date(now_dt), [m.id for m in closing], payments_detail))      # stage 7: ONE decision «the leaving of the same day is cancelled» (the predicate of the cancel itself), read before anything is written
+        if will_undo and (pay_from is not None or opening_balance is not None or price_override is not None):      # R3 П1 + stage 7 М3: the stay goes on as if he had not left - no new start, no new opening, no new individual price; refused BEFORE the cancel writes anything
+            raise ops_rules.unprocessable("LEAVE_UNDO_NO_START", "Ученик возвращается в день ухода — уход отменяется: дата начала оплаты, остаток и индивидуальная цена не меняются")
         if pay_from is not None:      # Money-1 B1: checked BEFORE anything is written - a refusal leaves nothing behind
             if closing or already_member:
                 raise ops_rules.unprocessable("PAY_FROM_NOT_APPLICABLE", "«Оплата с» задаётся только при добавлении ученика в группу: при переводе оплата идёт со следующего дня")
@@ -2835,7 +2838,7 @@ class AuthService:
                 left_before = existing.left_at
                 closed_period = max((p for p in existing.periods if p.left_at is not None), key=lambda p: p.left_at, default=None)
                 closed_pay_from = closed_period.billing_from if closed_period is not None else None
-                if mode == "add" and not closing and not (actor_id and leave_undo.would_undo(self.db, existing, left_before, ps.business_date(now_dt), [m.id for m in closing], payments_detail)):      # Stage 6 (М11Б): what the last stay left on this account, and what the stay had charged, read BEFORE it is reopened (not when the leaving of today is going to be cancelled: the row is thrown away then)
+                if mode == "add" and not closing and not will_undo:      # Stage 6 (М11Б): what the last stay left on this account, and what the stay had charged, read BEFORE it is reopened (not when the leaving of today is going to be cancelled: the row is thrown away then)
                     returned_rows = leave_effects.returned_balance(self.db, org_id, existing.id, money=payments_detail)
                     if immediate and payments_detail and dry_run:
                         from . import billing_start  # lazy: pulls in the payments modules
@@ -2845,8 +2848,6 @@ class AuthService:
                 if actor_id:      # Money-2 T6: back on the day of leaving = the leaving is cancelled (prices and pauses come back); else the ordinary return
                     leave_undo_result = leave_undo.try_undo(self.db, org_id, existing, left_before, now_dt, actor_id, coming_from=[m.id for m in closing], money=payments_detail)
                     leave_undone = bool(leave_undo_result and leave_undo_result["undone"])
-                    if leave_undone and (pay_from is not None or opening_balance is not None):      # R3 П1: the stay goes on as if he had not left - no new start, no new opening
-                        raise ops_rules.unprocessable("LEAVE_UNDO_NO_START", "Ученик возвращается в день ухода — уход отменяется, дата начала оплаты и остаток не меняются")
                 if not leave_undone:
                     on_membership_returned(self.db, existing, now_dt, actor_id)  # LOGIC-A (F13): the price of the group again
             if closing:

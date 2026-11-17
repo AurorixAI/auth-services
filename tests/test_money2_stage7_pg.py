@@ -44,14 +44,13 @@ def returning(w, b, name="Вернувшийся"):
     return s, before
 
 
-def test_m4_the_balance_row_of_this_group_says_same_group_and_the_rows_of_other_groups_do_not(world, fixed_today):
-    from tests.test_money2_return_window_pg import _left_with_a_lesson, _window
+def test_m3_the_single_adding_with_an_individual_price_on_a_cancelled_leaving_is_refused_without_a_price_it_is_cancelled(world, fixed_today):
+    a, b, c = groups3(world, fixed_today, SUNDAY)
+    s2, before = returning(world, b)
+    r = owner(world).post(f"{API}/org/groups/{b.id}/students/{s2.id}", params={"mode": "add"}, json={"price_override": {"amount": 250_000, "reason": "новая цена"}})
+    assert r.status_code == 422 and r.json()["detail"]["code"] == "LEAVE_UNDO_NO_START" and r.json()["detail"]["message"] == NEW_TEXT, r.text
+    world.db.expire_all()
+    assert membership(world, s2, b).is_active is False and [r[1] for r in prices(world, s2, b) if r[1] is not None] == [300_000]      # the marker of the leaving (no amount) is there: the leaving is NOT cancelled
+    assert add(world, s2, group=b, mode="add")["leave_undo"]["undone"] is True and snap(world, s2, b) == before
 
-    b, s = _left_with_a_lesson(world, fixed_today)                                               # B: left on Tue with a debt of 38 000
-    (row,) = _window(world, b, s)["past_balances"]
-    assert row["same_group"] is True and row["amount"] == 38_000
-    from src.models.auth import Group
 
-    gamma = world.db.query(Group).filter(Group.org_id == world.org.id, Group.name == "Гамма").one()
-    other = _window(world, gamma, s)["past_balances"]
-    assert [r["group_id"] for r in other] == [str(b.id)] and "same_group" not in other[0]
