@@ -171,9 +171,13 @@ class _Base:
     def _first_stay_day(self, membership: StudentGroup) -> date:
         periods = membership_periods.periods_by_membership(self.db, [membership.id]).get(membership.id, [])
         if periods:
-            from .ledger_service import first_day_of_period      # the one «first day» of a stay (R3 code №19): «Оплата с» when it was given
+            from . import ledger_service as ls      # the one «first day» of a stay (R3 code №19): «Оплата с» when it was given; Money-2 Ф3: from the stays of the BOOK (a stay of one day without a mark is none), like the table and the batch
 
-            return first_day_of_period(periods[0])
+            group = self.db.query(Group).filter(Group.id == membership.group_id).one()
+            marker = ls.LedgerLoader(self.db, str(group.org_id), ps.business_today())
+            marker.load_marks([(membership, group)], {membership.id: periods})
+            stays = ls.stays_of_membership(membership, periods, marker.marked_of(membership.id))
+            return min(s.first for s in stays) if stays else ls.first_day_of_period(periods[0])
         return ps.business_date(membership.joined_at) if membership.joined_at else ps.business_today()
 
     def _has_money_records(self, membership_id: UUID) -> bool:

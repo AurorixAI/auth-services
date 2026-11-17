@@ -124,3 +124,26 @@ def test_f2_a_leaving_without_a_cancelled_forgiveness_has_no_field_and_no_phrase
     leave(world, s, b)
     undo = add(world, s, group=b, mode="add")["leave_undo"]
     assert undo["undone"] is True and undo["forgiveness_cancelled"] is None and SAID not in undo["text"], undo
+
+
+# ---- Ф3: the card of an opening takes the first day from the stays of the book, like the table and the batch --------------------------------------------------------------------------
+
+
+def test_f3_the_first_stay_day_of_the_card_equals_the_enrolled_on_of_the_table(world, fixed_today):
+    # a stay of 20.09 opened and closed the same day without a mark (no day) + the stay since 02.11: the table says 02.11, the card must say it too (before: 20.09 - the lower border of the card was wrong)
+    from datetime import datetime
+
+    from src.auth.logica_service import OpeningService
+    from src.models.auth import StudentGroupPeriod
+    from tests.test_money2_fix_r3c_pg import BASE
+
+    a, b, c = three(world, fixed_today)
+    s = fresh_student(world, "Карточка")
+    add(world, s, group=b, mode="add")
+    m = membership(world, s, b)
+    stay(world, m, date(2026, 11, 2))
+    world.db.add(StudentGroupPeriod(membership_id=m.id, joined_at=datetime(2026, 9, 20, 6), left_at=datetime(2026, 9, 20, 6)))
+    world.db.commit()
+    (row,) = [r for g in owner(world).get(BASE).json()["groups"] for r in g["memberships"] if r["membership_id"] == str(m.id)]
+    assert row["enrolled_on"] == "2026-11-02"
+    assert OpeningService(world.db)._first_stay_day(m) == date(2026, 11, 2)

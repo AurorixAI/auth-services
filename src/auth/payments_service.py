@@ -28,7 +28,7 @@ import time
 from types import SimpleNamespace
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timedelta, timezone
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Collection, Dict, Iterable, List, Optional, Sequence, Tuple
 from uuid import UUID, uuid4
 
 from sqlalchemy import event, func, insert, literal, select
@@ -2667,8 +2667,9 @@ class PaymentService:
         exclude_days: Optional[Dict[UUID, set]] = None,
         extra_paid_out: Optional[Dict[UUID, List[tuple]]] = None,
         neutral_out: Optional[Dict[UUID, List[tuple]]] = None,
+        only_days: Optional[Collection[date]] = None,
     ) -> Dict[UUID, List[date]]:
-        """Dates of the lessons that spend a lessons payment, per membership.
+        """Dates of the lessons that spend a lessons payment, per membership.  ``only_days`` (Money-2 Ф3): read only the lessons held on those days (inside ``since`` .. ``until``); the rule per lesson is the same.
 
         #154: an ADDITIONAL lesson (``purpose = 'extra'``) is free for every student whatever his mode of payment - it spends nothing and is never in the result (the package, the forecast, the status
         page and the coverage of payroll all read this function).  ``extra_paid_out[membership]`` receives ``(day, lesson_id, attendance_id)`` of the additional lessons the owner pays to the teacher
@@ -2716,6 +2717,7 @@ class PaymentService:
                 GroupAttendance.status == "completed",
                 GroupAttendance.lesson_date >= earliest.isoformat(),
                 *([GroupAttendance.lesson_date <= until.isoformat()] if until is not None else []),
+                *([GroupAttendance.lesson_date.in_(sorted(d.isoformat() for d in only_days))] if only_days is not None else []),
             )
             .all()
         )

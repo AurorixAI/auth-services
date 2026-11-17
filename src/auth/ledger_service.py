@@ -730,7 +730,7 @@ class LedgerLoader:
         days = [d for ds in wanted.values() for d in ds]
         skip = {mid: {d for p in self.pauses.get(mid, []) for d in _days(p.first_day, p.last_day)} for mid in wanted if self.pauses.get(mid)}
         detail: Dict[UUID, List[tuple]] = {}
-        PaymentService(self.db)._counted_lesson_dates(self.org_id, members, since=min(days), until=max(days), detail_out=detail, exclude_days=skip)
+        PaymentService(self.db)._counted_lesson_dates(self.org_id, members, since=min(days), until=max(days), detail_out=detail, exclude_days=skip, only_days=set(days))
         for mid, ds in wanted.items():
             self.marks[mid] = {day for day, _lesson, _att in detail.get(mid, ()) if day in ds}
 
