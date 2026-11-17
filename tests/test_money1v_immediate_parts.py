@@ -49,3 +49,41 @@ def test_v0_a_package_has_no_immediate_charge():
 
 def test_v0_the_price_zero_has_no_immediate_charge():
     assert charge([bl.Stay(D(2026, 10, 27))], D(2026, 11, 2), price=0) is None
+
+
+# ---- Money-2 stage 7 Н1: a part «before» is taken off ONCE; a lock when the parts do not add up
+def _part(start, amount, lessons=4):
+    return {"label": "ноябрь", "period_start": start, "from": None, "amount": amount, "lessons": lessons, "lessons_in_period": None, "whole": True}
+
+
+def test_n1_two_parts_of_one_period_after_the_return_take_the_part_before_off_once():
+    before = {"amount": 100_000, "lessons": 4, "parts": [_part("2026-11-01", 100_000)]}
+    after_parts = [_part("2026-11-01", 100_000), _part("2026-11-01", 60_000)]       # the closed stay first, then the new version of the rules
+    amount, lessons, parts = bs._minus_before(160_000, 8, after_parts, before)
+    assert amount == 60_000 and lessons == 4
+    assert [p["amount"] for p in parts] == [60_000]                                  # not 60 000 - 100 000 = -40 000
+
+
+def test_n1_lock_parts_that_do_not_add_up_are_not_given_but_the_sum_stays():
+    before = {"amount": 100_000, "lessons": 4, "parts": [_part("2026-11-01", 100_000)]}
+    amount, lessons, parts = bs._minus_before(160_000, 8, [_part("2026-11-01", 100_000), _part("2026-12-01", 50_000)], before)   # the parts give 50 000, the sum says 60 000
+    assert (amount, parts) == (60_000, [])
+    amount, lessons, parts = bs._minus_before(160_000, 8, [_part("2026-10-01", 40_000), _part("2026-11-01", 100_000)], before)         # the sum says 60 000, the parts left give 40 000 - no breakdown
+    assert (amount, parts) == (60_000, [])
+
+
+def test_n1_lock_a_part_of_nothing_or_less_is_not_given():
+    before = {"amount": 100_000, "lessons": 4, "parts": [_part("2026-11-01", 100_000)]}
+    _, _, parts = bs._minus_before(50_000, 8, [_part("2026-11-01", 50_000)], before)            # 50 000 - 100 000 < 0
+    assert parts == []
+
+
+def test_n1_the_example_through_the_ledger_two_versions_of_the_rules_in_one_month():
+    regs = [bl.Regime(anchor="fixed_day", billing_day=1), bl.Regime(effective_from=D(2026, 11, 15), anchor="fixed_day", billing_day=1)]
+    kw = dict(price_at=flat(100_000, D(2026, 1, 1)), start=D(2026, 9, 1), regimes=regs, lesson_days=TUE_FRI)
+    closed = make(today=D(2026, 11, 20), stays=[bl.Stay(D(2026, 10, 1), D(2026, 11, 10))], **kw)
+    back = make(today=D(2026, 11, 20), stays=[bl.Stay(D(2026, 10, 1), D(2026, 11, 10)), bl.Stay(D(2026, 11, 20))], **kw)
+    before = bs.immediate_from_ledger(bl.run_ledger(closed), closed.lesson_days)
+    got = bs.immediate_from_ledger(bl.run_ledger(back), back.lesson_days, before)
+    assert got is not None and got["amount"] == 38_000                               # the second November cell
+    assert [p["amount"] for p in got["parts"]] == [38_000] and sum(p["amount"] for p in got["parts"]) == got["amount"]

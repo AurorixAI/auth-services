@@ -114,6 +114,19 @@ def test_the_bulk_window_says_the_same_for_the_returning_student(world, fixed_to
     assert r.json()["immediate_total"]["amount"] == 187_000
 
 
+def test_n1_two_versions_of_the_rules_in_one_month_the_window_gives_one_part_that_adds_up(world, fixed_today):
+    """Stage 7 Н1 through the API: the rules of the centre got a new version (same mode) on the day of the return, so November has TWO cells of the ledger with one start (the closed stay under v1, the return under v2).
+    The window of the return said the sum 188 000 but a part 150 000 (the old cell taken off twice).  Now: ONE part, the sum of the parts = the sum."""
+    from tests.test_pay2_api_pg import settings_block
+
+    b, s = _left_with_a_lesson(world, fixed_today)
+    base = {"period_mode": "calendar", "billing_anchor": "fixed_day", "billing_day": 1}
+    settings_block(world, billing_history=[{"from": "min", **base}, {"from": WED.isoformat(), **base}])
+    imm = _window(world, b, s, pay_from=WED.isoformat())["billing"]["immediate"]      # the return starts charging today: both cells of November have begun
+    assert (imm["amount"], imm["lessons"]) == (188_000, 5)                               # 226 000 after - 38 000 before
+    assert [p["amount"] for p in imm["parts"]] == [188_000] and [p["lessons"] for p in imm["parts"]] == [5]
+
+
 # ---- stage 6, step 4: the parts are matched by the START of the period, not by its name (no database: the ledger is a stand-in) -------------------------------------------------------------
 
 def _seg(start, end, amount, days, *, basis="lessons", in_part=None, in_period=None):
@@ -171,8 +184,8 @@ def test_a_period_charged_less_after_the_return_keeps_the_parts_adding_up():
     before = immediate_from_ledger(Ledger(old_before), _group_days)
     after = immediate_from_ledger(Ledger(old_after, new), _group_days, before)
     assert after["amount"] == 138_000
-    assert sum(p["amount"] for p in after["parts"]) == after["amount"] and sum(p["lessons"] for p in after["parts"]) == after["lessons"]
-    assert all(p["lessons"] >= 0 for p in after["parts"])
+    assert after["parts"] == []         # stage 7 Н1 lock: a part of -50 000 is not a part - no breakdown, the sum and the text stay
+    assert after["lessons"] >= 0
 
 
 # ---- stage 6, step 5: nothing is counted that is thrown away ------------------------------------------------------------------------------------------------------------------------------

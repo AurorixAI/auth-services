@@ -163,13 +163,18 @@ def _minus_before(amount: int, lessons: int, parts: list, before: Dict[str, Any]
     """The account after the return minus the account before it: the total, the lessons of the difference and the parts.  A period charged before is taken off by the START of the period (the name is not
     a key: November 2025 and November 2026 are both «ноябрь»); a period with nothing more drops out; the lessons of a part never go below zero.  Every period of the closed stay is in the account after the
     return too (a charge of a closed stay does not disappear), so the parts add up to the total and their lessons to the lessons by themselves - there is no «rest» to put anywhere."""
-    old = {p["period_start"]: p for p in before["parts"]}
+    old: Dict[str, Any] = {}
+    for p in before["parts"]:
+        old.setdefault(p["period_start"], []).append(p)       # one list per start: a period may have two parts (two versions of the rules in one month), the parts go by the first day, the closed stay first
     left = []
     for p in parts:
-        was = old.get(p["period_start"])
+        was = old[p["period_start"]].pop(0) if old.get(p["period_start"]) else None      # a part before is taken off ONCE
         left.append({**p, "amount": p["amount"] - (was["amount"] if was else 0), "lessons": max(0, p["lessons"] - (was["lessons"] if was else 0))})
     left = [p for p in left if p["amount"] != 0]
-    return amount - int(before["amount"]), sum(p["lessons"] for p in left), left
+    total, total_lessons = amount - int(before["amount"]), max(0, lessons - int(before.get("lessons") or 0))
+    if sum(p["amount"] for p in left) != total or sum(p["lessons"] for p in left) != total_lessons or any(p["amount"] <= 0 for p in left):
+        return total, total_lessons, []      # the lock: the parts do not add up to the sum - no breakdown (the sum and the text stay)
+    return total, total_lessons, left
 
 
 def immediate_label(seg: Any) -> str:
