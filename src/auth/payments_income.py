@@ -25,6 +25,7 @@ from src.models.auth import Group, MembershipPause, Organization, Student, Stude
 from . import billing_ledger as bl
 from . import ledger_service as ls
 from .sql_text import contains
+from . import leave_undo
 from . import payment_status as ps
 from . import payments_texts as tx
 from .payments_views import debt_split_of
@@ -956,7 +957,8 @@ class IncomeReports:
             return f"Оплата № {snap.get('receipt_no')} на {tx.money(int(snap.get('amount') or 0))} от {at(snap.get('paid_on'))} восстановлена как № {snap.get('new_receipt_no')}"
         if kind == "leave_undone":
             count = sum((snap.get("restored_counts") or {}).values())
-            return "Ученик вернулся в день ухода: уход отменён, цены и паузы возвращены" + (f": {count} {tx.plural(count, 'запись', 'записи', 'записей')}" if count else "")
+            text = "Ученик вернулся в день ухода: уход отменён, цены и паузы возвращены" + (f": {count} {tx.plural(count, 'запись', 'записи', 'записей')}" if count else "")
+            return text + (". " + leave_undo.FORGIVENESS_NOT_BACK if snap.get("forgiveness_cancelled") else "")
         if kind == "pause_moved":
             return f"Пауза {at(snap.get('first_day'))}–{at(snap.get('last_day'))} перенесена в группу «{group.name if group else '—'}» вместе с учеником"
         return None

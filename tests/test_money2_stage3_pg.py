@@ -74,3 +74,53 @@ def test_f1_a_forgiveness_given_to_the_empty_stay_with_no_old_debt_is_still_canc
     assert r.voided_at is not None
     assert [l.snapshot["writeoff_id"] for l in auto_lines(world)] == [wid]
     assert numbers(world, s, b)[2:4] == (0, 0)
+
+
+# ---- Ф2: the cancel of a leaving says that the forgiveness cancelled at the leaving is not back ------------------------------------------------------------------------------------------
+
+SAID = "Прощение долга, отменённое при уходе, не возвращено — простите заново, если нужно"
+
+
+def recorded_forgiven_taken_out(world, fixed_today):
+    a, b, c = three(world, fixed_today)
+    s = fresh_student(world, "Простили и убрали")
+    add(world, s, group=b, mode="add")
+    m, wid = forgive(world, s, b)
+    leave(world, s, b)
+    assert [r.voided_at is not None for r in writeoffs_of(world, m)] == [True]
+    return s, b, m
+
+
+def test_f2_the_cancel_of_the_leaving_names_the_forgiveness_that_was_cancelled_and_is_not_back(world, fixed_today):
+    # recorded -> forgiven 38 000 -> taken out (the forgiveness is cancelled by the closing) -> back today: the stay goes on, the debt of the open stay is there again, the forgiveness is NOT back
+    from src.models.auth import GroupAudit
+
+    s, b, m = recorded_forgiven_taken_out(world, fixed_today)
+    out = add(world, s, group=b, mode="add")
+    undo = out["leave_undo"]
+    assert undo["undone"] is True and undo["forgiveness_cancelled"] == {"amount": 38_000}, undo
+    assert SAID in undo["text"], undo["text"]
+    assert [r.voided_at is not None for r in writeoffs_of(world, m)] == [True]            # not restored
+    assert numbers(world, s, b)[3] == 225_000                                              # the debt of the open stay is there again (shared month: 6 lessons 05..17.11 x 37 500) and nothing forgives it
+    (line,) = [l for l in world.db.query(GroupAudit).filter(GroupAudit.org_id == world.org.id, GroupAudit.action == "student_left_group").all() if (l.snapshot or {}).get("event") == "leave_undone"]
+    assert line.snapshot["forgiveness_cancelled"] == 38_000
+    rows = owner(world).get(f"{API}/org/payments/decisions", params={"from": "2026-11-17", "to": "2026-11-17", "kind": "leave_undone"}).json()["rows"]
+    assert [SAID in r["text"] for r in rows] == [True], rows                                # the line of the journal says the same
+
+
+def test_f2_without_the_money_right_the_field_is_a_sign_without_the_sum(world, fixed_today):
+    from tests.test_money2_wave_b_pg import _admin
+
+    s, b, m = recorded_forgiven_taken_out(world, fixed_today)
+    undo = add(world, s, group=b, mode="add", client=_admin(world))["leave_undo"]
+    assert undo["undone"] is True and undo["forgiveness_cancelled"] == {}, undo
+    assert SAID in undo["text"] and "38" not in undo["text"], undo["text"]
+
+
+def test_f2_a_leaving_without_a_cancelled_forgiveness_has_no_field_and_no_phrase(world, fixed_today):
+    a, b, c = three(world, fixed_today)
+    s = fresh_student(world, "Без прощения")
+    add(world, s, group=b, mode="add")
+    leave(world, s, b)
+    undo = add(world, s, group=b, mode="add")["leave_undo"]
+    assert undo["undone"] is True and undo["forgiveness_cancelled"] is None and SAID not in undo["text"], undo

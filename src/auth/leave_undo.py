@@ -5,6 +5,9 @@ The stay goes on as if the leaving had not happened - the individual price (the 
 restored, each by the lines of the journal of THAT leaving (the price audit and the pause audit of ``close_stay``).  The periods of the stay touch (``merge_stays``): the day of leaving is charged once.
 A transfer back (``mode=transfer`` from the group he went to) takes the same way; the money comes home by the ordinary transfer back (the new group has a stay of zero days: it charges nothing, rule G-8).
 
+Ф2: a forgiveness that the leaving itself cancelled (a stay of no day, ``leave_service.cancel_forgiveness_of_empty_stay``) is NOT restored (a cancelled record is final, like the other money); the answer says so:
+``forgiveness_cancelled`` = ``null`` (nothing was cancelled) or ``{"amount": N}`` (a role with the right to money) / ``{}`` (without it - a sign, no sum), and the text and the line of the journal carry the sentence ``FORGIVENESS_NOT_BACK``.
+
 NOT undone (an ordinary return, the window says why): a refund of an advance or a forgiveness of a debt made after the leaving (the money moved by that decision stays moved), and a leaving by a transfer when the
 student does not come back from the group he was moved to (he is in both groups then - two decisions of the owner, not one cancelled).  The next day and later it is an ordinary return (rules Р3-1, Р3-1б).
 
@@ -28,6 +31,7 @@ from .membership_periods import naive_utc
 AUDIT_LEFT = "student_left_group"
 LEFT_REASON = "left_group"
 UNDONE_REASON = "leave_undone"
+FORGIVENESS_NOT_BACK = "Прощение долга, отменённое при уходе, не возвращено — простите заново, если нужно"
 
 
 def _item(code: str, text: str, **fields: Any) -> Dict[str, Any]:
@@ -35,7 +39,7 @@ def _item(code: str, text: str, **fields: Any) -> Dict[str, Any]:
 
 
 def _refusal(text: str) -> Dict[str, Any]:
-    return {"undone": False, "restored": [], "text": text}
+    return {"undone": False, "restored": [], "text": text, "forgiveness_cancelled": None}
 
 
 def left_today(left_at: Optional[datetime], today: date) -> bool:
@@ -111,10 +115,17 @@ def try_undo(
         ids.append(str(pause.id))
         restored.append(_item("pause", f"Пауза {_range(first, last)} восстановлена", first_day=first.isoformat(), last_day=last.isoformat()))
     text = "Ученик вернулся в день ухода — уход отменён: " + "; ".join(i["text"][0].lower() + i["text"][1:] for i in restored) if restored else "Ученик вернулся в день ухода — уход отменён"
+    from .leave_service import EMPTY_STAY_REASON  # lazy
     from .payments_service import PaymentService  # lazy
 
+    voided = db.query(StudentWriteoff).filter(StudentWriteoff.membership_id == mid, StudentWriteoff.voided_at.isnot(None), StudentWriteoff.void_reason == EMPTY_STAY_REASON,
+                                              StudentWriteoff.voided_at >= since).all()
+    cancelled_sum = sum(int(w.amount) for w in voided)
+    if voided:
+        text += ". " + FORGIVENESS_NOT_BACK
     pay = PaymentService(db)
     pay._audit(org_id, membership, actor_id, pay.role_of(org_id, actor_id), AUDIT_LEFT, {
         "undone": True, "event": "leave_undone", "actor_id": str(actor_id), "membership_id": str(mid), "student_id": str(membership.student_id), "left_at": since.isoformat(),
-        "restored": ids, "restored_counts": {code: sum(1 for i in restored if i["code"] == code) for code in dict.fromkeys(i["code"] for i in restored)}, "coming_from": [str(x) for x in coming_from]})
-    return {"undone": True, "restored": restored, "text": text}
+        "restored": ids, "restored_counts": {code: sum(1 for i in restored if i["code"] == code) for code in dict.fromkeys(i["code"] for i in restored)}, "coming_from": [str(x) for x in coming_from],
+        **({"forgiveness_cancelled": cancelled_sum} if voided else {})})
+    return {"undone": True, "restored": restored, "text": text, "forgiveness_cancelled": ({"amount": cancelled_sum} if money else {}) if voided else None}
