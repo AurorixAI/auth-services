@@ -2590,7 +2590,7 @@ class AuthService:
                 added += 1
                 results.append({"student_id": str(student_id), "status": "added"})
                 students.append({"student_id": str(student_id), "billing": result.get("billing"), "individual_price_ends": bool(result.get("individual_price_ends")),
-                                 "closing_prices": result.get("closing_prices") or []})
+                                 "closing_prices": result.get("closing_prices") or [], "past_balances": result.get("past_balances") or []})
                 for warning in result.get("warnings", []):
                     warnings.append({"student_id": str(student_id), **warning})
             except ValueError as exc:
@@ -2822,6 +2822,7 @@ class AuthService:
             carry_before = PaymentService(self.db).account_after(org_id, existing.id, now_dt)      # Money-1 D-6: the account the money lands on, BEFORE the transfer
 
         new_period = None
+        returned_rows: list = []      # Stage 6 (М11Б): the balance of the closed stay in THIS group (a returning student); empty for a new one
         leave_undo_result = None
         leave_undone = False      # R3b В1: ONE name for «the leaving of the same day was cancelled»
         closed_pay_from = None
@@ -2833,6 +2834,8 @@ class AuthService:
                 left_before = existing.left_at
                 closed_period = max((p for p in existing.periods if p.left_at is not None), key=lambda p: p.left_at, default=None)
                 closed_pay_from = closed_period.billing_from if closed_period is not None else None
+                if mode == "add" and not closing:      # Stage 6 (М11Б): what the last stay left on this account, and what the stay had charged, read BEFORE it is reopened
+                    returned_rows = leave_effects.returned_balance(self.db, org_id, existing.id, money=payments_detail)
                 new_period = open_period(existing, now_dt)
                 if actor_id:      # Money-2 T6: back on the day of leaving = the leaving is cancelled (prices and pauses come back); else the ordinary return
                     leave_undo_result = leave_undo.try_undo(self.db, org_id, existing, left_before, now_dt, actor_id, coming_from=[m.id for m in closing], money=payments_detail)
@@ -2935,7 +2938,7 @@ class AuthService:
         warnings.extend(carried)
         if opening_warning:                  # Money-1 R3 Д4: «оплачено до» on top of payments is named (the same function as the batch and the single window)
             warnings.append(opening_warning)
-        past_balances = leave_effects.past_balances(self.db, org_id, student.id, group.id, money=payments_detail) if mode == "add" else []
+        past_balances = (([] if leave_undone else returned_rows) + leave_effects.past_balances(self.db, org_id, student.id, group.id, money=payments_detail)) if mode == "add" else []
         result = {
             "student_id": str(student_id),
             "group_id": str(group_id),

@@ -114,20 +114,33 @@ def open_balances(db: Session, org_id: Any, membership_ids: Sequence[UUID]) -> L
 
 def past_balances(db: Session, org_id: Any, student_id: Any, group_id: Any, *, money: bool) -> List[Dict[str, Any]]:
     """Money-2 T13: the window of adding a student to ``group_id`` shows what is left on his closed stays in the OTHER groups of the centre: group, the day he left, a debt or an advance
-    (sums and figures only with ``money``).  No action here: moving an advance to the new group is not in the package."""
+    (sums and figures only with ``money``).  No action here: moving an advance to the new group is not in the package.
+    The closed stay in THIS group is not here: ``returned_balance`` (read before the return)."""
     ids = [row[0] for row in db.query(StudentGroup.id).join(Group, Group.id == StudentGroup.group_id).filter(
         StudentGroup.student_id == student_id, StudentGroup.is_active.is_(False), StudentGroup.group_id != group_id, Group.org_id == org_id).all()]
+    return _balance_rows(db, org_id, ids, money, same_group=False)
+
+
+def returned_balance(db: Session, org_id: Any, membership_id: Any, *, money: bool) -> List[Dict[str, Any]]:
+    """Money-2 stage 6 (М11Б): a student who COMES BACK to the group he left sees what the last time left on this account (a debt or an advance; no sum without ``money``): the same row as
+    ``past_balances`` with the words «В этой группе с прошлого раза ...».  The caller reads it BEFORE the membership is reopened (afterwards the account is the account of the new stay)."""
+    return _balance_rows(db, org_id, [membership_id], money, same_group=True)
+
+
+def _balance_rows(db: Session, org_id: Any, ids: Sequence[Any], money: bool, *, same_group: bool) -> List[Dict[str, Any]]:
     out: List[Dict[str, Any]] = []
     for entry, kind, amount in open_balances(db, org_id, ids):
         left_on = ps.business_date(entry.membership.left_at) if entry.membership.left_at else None
-        name, when = entry.group.name, (f" (ушёл {_dmy(left_on)})" if left_on else "")
+        name = entry.group.name
         word = "долг" if kind == "debt" else "аванс"
         row: Dict[str, Any] = {"group_id": str(entry.group.id), "group_name": name, "membership_id": str(entry.membership.id), "left_on": left_on.isoformat() if left_on else None, "kind": kind}
+        sum_text = f" {tx.money(amount)}" if money else ""
+        if same_group:
+            row["text"] = f"В этой группе с прошлого раза{f' (ушёл {_dmy(left_on)})' if left_on else ''} остался {word}{sum_text}"
+        else:
+            row["text"] = f"В группе «{name}»{f' (ушёл {_dmy(left_on)})' if left_on else ''} остался {word}{sum_text}: смотрите её выписку"
         if money:
             row["amount"] = amount
-            row["text"] = f"В группе «{name}»{when} остался {word} {tx.money(amount)}: смотрите её выписку"
-        else:
-            row["text"] = f"В группе «{name}»{when} остался {word}: смотрите её выписку"
         out.append(row)
     out.sort(key=lambda r: (r["left_on"] or "", r["group_name"], r["kind"]))
     return out
