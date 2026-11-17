@@ -49,7 +49,12 @@ def _role(user: dict) -> str:
 
 def _can_set(result, user: dict):
     """R3c Г1: ``can_set_opening`` of the ASKING user (the cached summary is shared by the centre, so the field is set on a copy)."""
-    return result.model_copy(update={"can_set_opening": opening_allowed(result.launch_closed, _role(user)), "can_reopen_launch": result.launch_closed and _role(user) == "owner"})
+    allowed = opening_allowed(result.launch_closed, _role(user))
+    update = {"can_set_opening": allowed, "can_reopen_launch": result.launch_closed and _role(user) == "owner"}
+    groups = getattr(result, "groups", None)
+    if groups and not allowed:      # Money-2 С4(б): a row is not editable for the one who may not set an opening (the same rule as the field above); the copy keeps the cached list of the centre as it is
+        update["groups"] = [g.model_copy(update={"memberships": [r.model_copy(update={"editable": False}) for r in g.memberships]}) for g in groups]
+    return result.model_copy(update=update)
 
 
 @router.get("/org/opening-balances", response_model=OpeningsList, responses=_ERRORS)

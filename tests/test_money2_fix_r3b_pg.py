@@ -213,7 +213,7 @@ def test_small_the_restorable_flag_costs_the_same_number_of_queries_for_two_and_
         listener = lambda *args: n.append(1)       # noqa: E731
         event.listen(engine, "before_cursor_execute", listener)
         try:
-            PaymentService(world.db).list_payments(str(world.org.id), m)
+            PaymentService(world.db).list_payments(str(world.org.id), m, actor_role="owner")
         finally:
             event.remove(engine, "before_cursor_execute", listener)
         return len(n)

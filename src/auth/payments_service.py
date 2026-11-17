@@ -1263,7 +1263,7 @@ class PaymentService:
         return self._rows(kept)
 
     def list_payments(
-        self, org_id: str, membership_id: UUID, include_voided: bool = True, *, actor_role: str = "owner",
+        self, org_id: str, membership_id: UUID, include_voided: bool = True, *, actor_role: str,       # Money-2 С4(а): the role of the asker is always named (no default of «owner»: ``restorable`` is the asker's)
     ) -> List[PaymentOut]:
         self._membership(org_id, membership_id)
         query = self.db.query(StudentPayment).filter(
