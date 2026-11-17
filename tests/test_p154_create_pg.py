@@ -95,7 +95,7 @@ def test_c13_an_additional_lesson_of_a_group_without_a_teacher_is_refused_and_ev
     assert entry.snapshot["lessonId"] == made["id"] and entry.snapshot["purpose"] == "extra" and entry.snapshot["money"] == "paid" and entry.snapshot["madeUp"] is None
     cancel_origin(w)
     mk = makeup(w, "A", w.G1, "2026-10-29", start="12:00", end="13:00").json()
-    last = audit(w, "one_off_created")[-1]
+    (last,) = [a for a in audit(w, "one_off_created") if a.snapshot["lessonId"] == mk["id"]]
     assert (last.actor_role, last.snapshot["purpose"], last.snapshot["madeUp"]) == ("teacher", "makeup", {"lessonId": ORIGIN, "date": ORIGIN_DAY}) and last.snapshot["lessonId"] == mk["id"]
 
 
