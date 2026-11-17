@@ -15,7 +15,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 from uuid import UUID
 
 from sqlalchemy import and_, exists, or_
@@ -111,20 +111,23 @@ def first_day_of_period(period) -> date:
     return period.billing_from or ps.business_date(period.joined_at)
 
 
-def stay_of_period(period) -> Optional[bl.Stay]:
+def stay_of_period(period, packages_on: Callable[[date], bool] = lambda day: False) -> Optional[bl.Stay]:
     """The ledger stay of a membership period.  A stay that ended BEFORE the day he was to be charged from (written down on 21.10 «с 06.11», taken out on 22.10) charges NOTHING (R3 code №2 / money R-1:
-    ``merge_stays`` used to turn the upside-down stay into the one day of ``first`` - a ghost debt of 10 000 for a student who never came)."""
+    ``merge_stays`` used to turn the upside-down stay into the one day of ``first`` - a ghost debt of 10 000 for a student who never came).  A stay that was opened AND closed on the same business day charges
+    nothing as well (Money-2 С1): the ONE place of the rule - every reader of the stays (the account, the statement, «paid until», the window, the reconciliation, the day he left another group) gets it from here."""
     first = first_day_of_period(period)
     last = ps.business_date(period.left_at) if period.left_at else None
     if last is not None and last < first:
         return None
+    if last is not None and first == last and period.joined_at is not None and ps.business_date(period.joined_at) == last and not packages_on(last):
+        return None             # Money-2 С1: opened and closed on ONE business day (written down and taken out, there and back, on through a third group): a stay of no day - charged nothing, holds no day (a stay with «Оплата с» earlier than the day he joined is a real, back-dated one and stays); a PACKAGE centre keeps the stay (it charges only the lessons the student was marked at: no mark - nothing, a mark - the lesson he got stays spent)
     return bl.Stay(first, last, period.joined_at)
 
 
-def stays_of_membership(membership: StudentGroup, periods: Sequence) -> List[bl.Stay]:
+def stays_of_membership(membership: StudentGroup, periods: Sequence, packages_on: Callable[[date], bool] = lambda day: False) -> List[bl.Stay]:
     """The ledger stays of a membership from its periods; a legacy row without periods is one stay by its own dates (NOT a membership whose only stay charges
     nothing: R3 №2)."""
-    spans = [stay for stay in (stay_of_period(p) for p in periods) if stay is not None]
+    spans = [stay for stay in (stay_of_period(p, packages_on) for p in periods) if stay is not None]
     if not periods and membership.joined_at:
         return [bl.Stay(ps.business_date(membership.joined_at),
                         None if membership.is_active or not membership.left_at else ps.business_date(membership.left_at), membership.joined_at)]
@@ -401,7 +404,7 @@ class LedgerLoader:
             return
         periods = membership_periods.periods_by_membership(self.db, found)
         for mid in found:
-            self.stays[mid] = stays_of_membership(self.members[mid][0], periods.get(mid, []))
+            self.stays[mid] = stays_of_membership(self.members[mid][0], periods.get(mid, []), self._packages_on)
         for payment in self.db.query(StudentPayment).filter(
             StudentPayment.org_id == self.org_id, StudentPayment.membership_id.in_(found),
             StudentPayment.voided_at.is_(None), StudentPayment.kind == "payment",
@@ -659,11 +662,15 @@ class LedgerLoader:
         if self._needs_lessons():
             self._load_counted([(m, None, g) for m, g in rows if m.id not in self.counted])
         for membership, group in rows:
-            runs = bl.merge_stays(stays_of_membership(membership, periods.get(membership.id, [])))
+            runs = bl.merge_stays(stays_of_membership(membership, periods.get(membership.id, []), self._packages_on))
             for run in runs:
                 # G-8b / Р-6: the day he left belongs to that group only when it really charges the day (a stay of one day without a lesson charges nothing, G-7)
                 if run[1] is not None and not bl.lessonless_day(lambda a, b, _g=group: self._lesson_days(_g, a, b), run) and self._holds_day(group, run[1], membership.id):
                     self.left_days.setdefault(membership.student_id, {}).setdefault(membership.id, set()).add(run[1])
+
+    def _packages_on(self, day: date) -> bool:
+        """Whether the centre counts PACKAGES of lessons on ``day`` (a one-day stay is then judged by the marks of the lessons, see ``stay_of_period``)."""
+        return bl.regime_at(self.settings.regimes, day).mode == ps.LESSONS
 
     def _holds_day(self, group: Group, day: date, mid: UUID) -> bool:
         """Money-1 Р-6 (R3 В5, Д-1): does the membership ``mid`` in ``group`` itself charge ``day``?  By a per-day share (the calendar mode without a schedule to count by) always; by lessons

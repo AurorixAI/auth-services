@@ -77,13 +77,13 @@ def test_a_one_day_stay_in_a_without_a_lesson_charges_nothing_so_b_charges_from_
     assert la.charged == 0 and lb.charged == 271_000 and lb.first_billable == D(2026, 10, 11)      # 21 of 31 days of 400 000: the 11th is nobody's otherwise
 
 
-def test_a_one_day_stay_in_a_with_a_lesson_charges_that_day_so_b_starts_the_next(world):
+def test_a_one_day_stay_in_a_even_with_a_lesson_charges_nothing_so_b_charges_from_that_day(world):      # Money-2 С1: added and removed the same day = a mistake, not a day of study
     a_group, b_group = _two_groups(world, a_has_lessons=True)           # a lesson every day
     a = membership_of(world.db, world.students[0], a_group)
     join_on(world.db, a, D(2026, 10, 11), left=D(2026, 10, 11))
     b = _join_b(world, b_group, D(2026, 10, 11))
     la, lb = _ledgers(world, a, b)
-    assert la.charged > 0 and lb.charged == 258_000 and lb.first_billable == D(2026, 10, 12)
+    assert la.charged == 0 and lb.charged == 271_000 and lb.first_billable == D(2026, 10, 11)      # was: A charged that day and B began the next (258 000)
 
 
 # ---- Р-6 (R3 В5): the old group keeps the day T only when it CHARGES it - a per-day share, or a lesson of its own that day -----------------------------------------
