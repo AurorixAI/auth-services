@@ -388,3 +388,29 @@ def test_t20_the_payments_service_takes_the_actions_of_the_journal_from_the_neut
     assert not any("money_reconcile" in (m or "") for m in imported), imported
     assert not any(isinstance(n, ast.ImportFrom) and any(a.name.startswith("money_reconcile") for a in n.names) for n in ast.walk(ast.parse(inspect.getsource(payments_service))))
     assert "money_journal_actions" in inspect.getsource(payments_service)
+
+
+def test_t10b_a_coded_refusal_in_the_middle_of_a_batch_the_others_are_written_and_the_refused_one_is_untouched(world, fixed_today):
+    # The batch (common «Оплата с» = today 20.11, B has lessons that day) is s0, s1, s2, s3.  s2 was in B, paid 500 000 in advance, left TODAY and got 40 000 of it back after the leaving: the cancel of the leaving is forbidden
+    # (a refund after the leaving: «возврат обычный, а не отмена ухода»), so his adding is the ordinary return and the common «Оплата с» is checked for him (stage 7 М2: the branch `will_undo = False`).
+    # A refusal by a CODE for him alone; s0, s1, s3 are added; s2 is still left, his money is as it was.
+    a, b, c = groups3(world, fixed_today)
+    s0, s1, s2 = world.students
+    s3 = fresh_student(world, "Четвёртый")
+    add(world, s2, group=b, mode="add")
+    hold_lessons(world, s2, [DAY], group=b)
+    pay(world, s2, b, amount=500_000)
+    assert owner(world).post(f"{API}/org/groups/{b.id}/students/{s2.id}/leave", json={}).status_code == 200
+    r = owner(world).post(f"{API}/org/memberships/{mid(world, s2, b)}/refunds", json={"amount": 40_000, "method": "cash", "reason": "Выбыл"})
+    assert r.status_code == 201, r.text
+    left = snap(world, s2, b)
+    r = owner(world).post(f"{API}/org/groups/{b.id}/students/bulk", params={"mode": "add"}, json={"student_ids": [str(s.id) for s in (s0, s1, s2, s3)], "pay_from": (DAY - timedelta(days=5)).isoformat()})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert [(x["student_id"], x["status"]) for x in body["results"]] == [(str(s0.id), "added"), (str(s1.id), "added"), (str(s2.id), "skipped"), (str(s3.id), "added")], body["results"]
+    assert body["added"] == 3 and body["skipped"] == 1 and body["skipped_details"][0]["student_id"] == str(s2.id)
+    assert body["skipped_details"][0].get("code") == "PAY_FROM_RANGE" or "PAY_FROM_RANGE" in str(body["skipped_details"][0]), body["skipped_details"]
+    world.db.expire_all()
+    assert membership(world, s2, b).is_active is False and snap(world, s2, b) == left        # the refused student is untouched
+    for s in (s0, s1, s3):
+        assert membership(world, s, b).is_active is True
