@@ -284,7 +284,7 @@ class LedgerLoader:
         self.transfers: Dict[UUID, MembershipTransfer] = {}
         self.books = pricing.PriceBooks()
         self.counted: Dict[UUID, List[bl.CountedLesson]] = {}
-        self.marks: Dict[UUID, Set[date]] = {}      # Money-2 У3: membership id -> the days of its ONE-DAY stays on which the student has a counted mark of a lesson (read once per load, see ``_load_marks``)
+        self.marks: Dict[UUID, Set[date]] = {}      # Money-2 У3: membership id -> the days of its ONE-DAY stays on which the student has a counted mark of a lesson (read once per load, see ``load_marks``)
         self._x_memo: Dict[UUID, int] = {}
         self._x_active: Set[UUID] = set()
         self._guard_hits = 0
@@ -429,7 +429,7 @@ class LedgerLoader:
             MembershipOpeningBalance.voided_at.is_(None),
         ):
             self.openings[opening.membership_id] = opening
-        self._load_marks([(self.members[m][0], self.members[m][2]) for m in found], periods)         # after the pauses (a lesson of a day of a pause is nobody's lesson)
+        self.load_marks([(self.members[m][0], self.members[m][2]) for m in found], periods)         # after the pauses (a lesson of a day of a pause is nobody's lesson)
         for mid in found:
             self.stays[mid] = stays_of_membership(self.members[mid][0], periods.get(mid, []), self.marked_of(mid), self.today if mid in self.closing else None)
             if mid in self.closing:          # Money-2 У4: the closing will cancel the forgiveness of a stay of no day - the window and the answer read the account as it will stand
@@ -670,7 +670,7 @@ class LedgerLoader:
         rows = self.db.query(StudentGroup, Group).join(Group, Group.id == StudentGroup.group_id).filter(StudentGroup.student_id.in_(students), Group.org_id == self.org_id).all()      # Р-10: the groups come with the memberships, and only the groups of THIS centre
         self.other_groups.update({g.id: g for _, g in rows})          # their lessons are loaded together with the lessons of the loaded groups (``_occurrences``, ``_moved_copies``)
         periods = {**periods, **membership_periods.periods_by_membership(self.db, [m.id for m, _ in rows if m.id not in periods])}
-        self._load_marks([(m, g) for m, g in rows], periods)
+        self.load_marks([(m, g) for m, g in rows], periods)
         if self._needs_lessons():
             self._load_counted([(m, None, g) for m, g in rows if m.id not in self.counted])
         for membership, group in rows:
@@ -685,7 +685,7 @@ class LedgerLoader:
         days = self.marks.get(mid, ())
         return lambda day: day in days
 
-    def _load_marks(self, pairs: Sequence[Tuple[StudentGroup, Group]], periods: Dict[UUID, list]) -> None:
+    def load_marks(self, pairs: Sequence[Tuple[StudentGroup, Group]], periods: Dict[UUID, list]) -> None:
         """Money-2 У3: the counted marks of the ONE-DAY stays (opened and closed on one business day, or the open one that is being closed today) - ONE query of the lessons of those days for all the
         memberships of the load, not one per stay; a stay of one day with such a mark charges its day (``stay_of_period``)."""
         from .payments_service import PaymentService  # lazy: the service imports this module

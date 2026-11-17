@@ -241,3 +241,45 @@ def test_u1b_a_wrong_group_with_a_mark_holds_the_day_the_new_group_starts_tomorr
     add(world, s, group=c, mode="transfer")
     nb, nc = numbers(world, s, b), numbers(world, s, c)
     assert nb[0] == 38_000 and nc[0] == 0, (nb, nc)      # the lesson he got is B's; C starts tomorrow
+
+
+# ---- У5: the small ones --------------------------------------------------------------------------------------------------------------------------------------------------------
+
+
+def test_u5a_the_table_of_openings_takes_the_first_day_from_the_stays_of_the_book_not_from_a_stay_of_no_day(world, fixed_today):
+    # the accounting starts 01.10; the student was written down on 20.09 and taken out the same day (no mark), and is in the group since 02.11: his first day is 02.11 -> no «не хватает остатка»
+    from datetime import datetime
+
+    from src.models.auth import StudentGroupPeriod
+    from tests.test_money2_fix_r3c_pg import BASE
+
+    a, b, c = three(world, fixed_today)
+    s = fresh_student(world, "Ошибся в сентябре")
+    add(world, s, group=b, mode="add")
+    m = membership(world, s, b)
+    stay(world, m, date(2026, 11, 2))
+    world.db.add(StudentGroupPeriod(membership_id=m.id, joined_at=datetime(2026, 9, 20, 6), left_at=datetime(2026, 9, 20, 6)))
+    world.db.commit()
+    rows = [r for g in owner(world).get(BASE).json()["groups"] for r in g["memberships"] if r["membership_id"] == str(m.id)]
+    assert [(r["enrolled_on"], r["missing"]) for r in rows] == [("2026-11-02", False)], rows
+
+
+@pytest.mark.parametrize("state", ["done", "skipped"])
+def test_u5b_a_row_that_is_not_editable_because_the_launch_is_closed_says_why(world, fixed_today, state):
+    from src.auth.payments_service import OpeningOwnerOnly
+    from tests.test_money2_fix_r3c_pg import BASE, world_g1
+
+    a, s0, admin = world_g1(world, fixed_today, state)
+    rows = [r for g in admin.get(BASE).json()["groups"] for r in g["memberships"]]
+    assert rows and all(r["editable"] is False and r["reason_not_editable"] == OpeningOwnerOnly.TEXT for r in rows), rows
+
+
+def test_u5c_pay_from_is_not_limited_by_a_stay_that_charged_nothing(world, fixed_today):
+    a, b, c = three(world, fixed_today)
+    bare, marked = fresh_student(world, "Без отметки"), fresh_student(world, "С отметкой")
+    one_day(world, bare, b, False)
+    one_day(world, marked, b, True)
+    fixed_today(date(2026, 11, 18))                                                         # (the same day it would be a cancelled leaving, not a return)
+    add(world, bare, group=b, mode="add", pay_from=TUE.isoformat())                       # the earlier stay charged nothing: 17.11 is allowed
+    r = owner(world).post(f"{API}/org/groups/{b.id}/students/{marked.id}", params={"mode": "add"}, json={"pay_from": TUE.isoformat()})
+    assert r.status_code == 422 and "PAY_FROM_RANGE" in r.text, r.text                   # the earlier stay charged its lesson: «Оплата с» is after it

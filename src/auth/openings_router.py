@@ -31,7 +31,7 @@ from .openings_schemas import (
 )
 from .logica_service import opening_allowed
 from .openings_service import MAX_IMPORT_BYTES, OpeningsService
-from .payments_service import PaymentError
+from .payments_service import OpeningOwnerOnly, PaymentError
 
 router = APIRouter(tags=["Openings"])  # the prefix /auth comes from payments_router
 
@@ -53,7 +53,7 @@ def _can_set(result, user: dict):
     update = {"can_set_opening": allowed, "can_reopen_launch": result.launch_closed and _role(user) == "owner"}
     groups = getattr(result, "groups", None)
     if groups and not allowed:      # Money-2 С4(б): a row is not editable for the one who may not set an opening (the same rule as the field above); the copy keeps the cached list of the centre as it is
-        update["groups"] = [g.model_copy(update={"memberships": [r.model_copy(update={"editable": False}) for r in g.memberships]}) for g in groups]
+        update["groups"] = [g.model_copy(update={"memberships": [r.model_copy(update={"editable": False, "reason_not_editable": r.reason_not_editable or OpeningOwnerOnly.TEXT}) for r in g.memberships]}) for g in groups]
     return result.model_copy(update=update)
 
 

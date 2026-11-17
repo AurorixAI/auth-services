@@ -8,7 +8,7 @@ from src.models.auth import (
 )
 
 from src.auth import payments_texts as tx
-from tests.money1b_helpers import account, add, fresh_student, set_schedule, slot
+from tests.money1b_helpers import account, add, fresh_student, hold_lessons, set_schedule, slot
 from tests.pg_world import business_today, ensure_billing, give_group_price, make_group, needs_pg, pg_session, world  # noqa: F401  (fixtures)
 from tests.ops_helpers import exams  # noqa: F401  (fixture: exam-service stub)
 from tests.test_money2_transfer_a_pg import DAILY, DAY, groups3, snap
@@ -28,6 +28,7 @@ def test_t10_one_refusal_of_a_bulk_adding_does_not_break_off_the_rest_and_every_
     s0, s1, s2 = world.students
     s3 = fresh_student(world, "Четвёртый")
     add(world, s2, group=b, mode="add")
+    hold_lessons(world, s2, [DAY], group=b)      # Money-2 У5: a stay of one day charges (and limits «Оплата с») only when the student has a counted mark of a lesson of that day
     assert owner(world).post(f"{API}/org/groups/{b.id}/students/{s2.id}/leave", json={}).status_code == 200
     r = owner(world).post(f"{API}/org/groups/{b.id}/students/bulk", params={"mode": "add"}, json={"student_ids": [str(s.id) for s in (s0, s1, s2, s3)], "pay_from": DAY.isoformat()})
     assert r.status_code == 200, r.text

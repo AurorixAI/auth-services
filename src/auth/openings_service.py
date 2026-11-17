@@ -232,11 +232,14 @@ class OpeningsService(_Base):
             MembershipPause.org_id == org_id, MembershipPause.voided_at.is_(None), MembershipPause.first_day <= today,
             MembershipPause.last_day >= today).distinct()}
         books = pricing.load_books(self.db, {g.id for _, _, g, _ in everyone}, ids)
+        marker = ls.LedgerLoader(self.db, org_id, today, settings)      # Money-2 У5: the first day is read from the SAME stays as the book (a stay of one day without a mark is none)
+        marker.load_marks([(m, g) for m, _, g, _ in everyone], periods)
         block = self.pay._settings_dict(org_id)
         out: List[TableRow] = []
         for m, s, g, u in everyone:
             spans = periods.get(m.id) or []
-            first_day = ls.first_day_of_period(spans[0]) if spans else (ps.business_date(m.joined_at) if m.joined_at else today)       # the same day as the account (R3 №19)
+            stays = ls.stays_of_membership(m, spans, marker.marked_of(m.id)) if spans else []
+            first_day = min(s.first for s in stays) if stays else (ls.first_day_of_period(spans[0]) if spans else (ps.business_date(m.joined_at) if m.joined_at else today))       # the same day as the account (R3 №19)
             price = books.price(m.id, g.id, today)
             row = TableRow(
                 m=m, s=s, g=g, teacher=u, first_day=first_day, floor=OpeningService.floor_of(first_day, start),
