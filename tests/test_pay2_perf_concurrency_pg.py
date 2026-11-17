@@ -186,15 +186,23 @@ def test_a_payment_and_a_transfer_of_the_same_student_do_not_deadlock(world, eng
 
     t1, o1 = run_in_thread(engine, lambda s: PaymentService(s).create_payment(org, m.id, actor, body(5_000_000), actor_role="owner"))
     t2, o2 = run_in_thread(engine, lambda s: AuthService(s).add_student_to_group(
-        org, str(second.id), str(world.students[0].id), actor_id=actor, payments_detail=True, money_right=True))
+        org, str(second.id), str(world.students[0].id), actor_id=actor, payments_detail=True, money_right=True,
+        from_group_id=str(world.group.id)))                                   # a real transfer: the source is required (TRANSFER_SOURCE_REQUIRED)
     for t in (t1, t2):
         t.join(timeout=60)
+    from src.auth.payments_service import is_deadlock
+
     for o in (o1, o2):
         # a deadlock PostgreSQL finds is a 409 to repeat (the router maps it for the transfer, the guard for the payment)
-        from src.auth.payments_service import is_deadlock
-
         assert "error" not in o or isinstance(o["error"], PaymentError) or is_deadlock(o["error"]), o.get("error")
+    transfer_done, transfer_deadlock = "error" not in o2, "error" in o2 and is_deadlock(o2["error"])
+    assert transfer_done or transfer_deadlock, o2.get("error")                # nothing else may refuse the transfer
+    print(f"OUTCOME transfer={'done' if transfer_done else 'deadlock'} payment={'done' if 'error' not in o1 else type(o1['error']).__name__}")
     world.db.expire_all()
+    active = {str(g.group_id) for g in world.db.query(StudentGroup).filter_by(student_id=world.students[0].id, is_active=True)}
+    assert active == ({str(second.id)} if transfer_done else {str(world.group.id)}), active   # moved whole, or not at all
+    if "error" not in o1:
+        assert world.db.query(StudentPayment).filter_by(membership_id=m.id, voided_at=None).count() == 1   # the payment is in place
     ids = [e.membership.id for e in ls.LedgerLoader(world.db, org, business_today()).load(student_id=world.students[0].id, scope="all")]
     entries = ls.LedgerLoader(world.db, org, business_today()).run(ids)
     assert all(e.ledger.reconciles for e in entries)
