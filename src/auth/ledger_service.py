@@ -111,12 +111,13 @@ def first_day_of_period(period) -> date:
     return period.billing_from or ps.business_date(period.joined_at)
 
 
-def stay_of_period(period, packages_on: Callable[[date], bool] = lambda day: False) -> Optional[bl.Stay]:
+def stay_of_period(period, packages_on: Callable[[date], bool] = lambda day: False, close_on: Optional[date] = None) -> Optional[bl.Stay]:
     """The ledger stay of a membership period.  A stay that ended BEFORE the day he was to be charged from (written down on 21.10 «с 06.11», taken out on 22.10) charges NOTHING (R3 code №2 / money R-1:
     ``merge_stays`` used to turn the upside-down stay into the one day of ``first`` - a ghost debt of 10 000 for a student who never came).  A stay that was opened AND closed on the same business day charges
-    nothing as well (Money-2 С1): the ONE place of the rule - every reader of the stays (the account, the statement, «paid until», the window, the reconciliation, the day he left another group) gets it from here."""
+    nothing as well (Money-2 С1): the ONE place of the rule - every reader of the stays (the account, the statement, «paid until», the window, the reconciliation, the day he left another group) gets it from here.
+    ``close_on`` (Money-2 У2): the day an OPEN period is about to be closed (the window and the answer of a leaving read the account «after the leaving», before it is written): it is judged as if it ended that day."""
     first = first_day_of_period(period)
-    last = ps.business_date(period.left_at) if period.left_at else None
+    last = ps.business_date(period.left_at) if period.left_at else close_on
     if last is not None and last < first:
         return None
     if last is not None and first == last and period.joined_at is not None and ps.business_date(period.joined_at) == last and not packages_on(last):
@@ -124,10 +125,10 @@ def stay_of_period(period, packages_on: Callable[[date], bool] = lambda day: Fal
     return bl.Stay(first, last, period.joined_at)
 
 
-def stays_of_membership(membership: StudentGroup, periods: Sequence, packages_on: Callable[[date], bool] = lambda day: False) -> List[bl.Stay]:
+def stays_of_membership(membership: StudentGroup, periods: Sequence, packages_on: Callable[[date], bool] = lambda day: False, close_on: Optional[date] = None) -> List[bl.Stay]:
     """The ledger stays of a membership from its periods; a legacy row without periods is one stay by its own dates (NOT a membership whose only stay charges
     nothing: R3 №2)."""
-    spans = [stay for stay in (stay_of_period(p, packages_on) for p in periods) if stay is not None]
+    spans = [stay for stay in (stay_of_period(p, packages_on, close_on) for p in periods) if stay is not None]
     if not periods and membership.joined_at:
         return [bl.Stay(ps.business_date(membership.joined_at),
                         None if membership.is_active or not membership.left_at else ps.business_date(membership.left_at), membership.joined_at)]
@@ -258,11 +259,13 @@ def _days(first: date, last: date) -> List[date]:
 class LedgerLoader:
     """Loads the facts of a set of memberships (and of the memberships linked to them by transfers) and runs the ledger."""
 
-    def __init__(self, db: Session, org_id: str, today: date, settings: Optional[LedgerSettings] = None, *, recalc: bool = True) -> None:
-        """``recalc=False``: the account WITHOUT the deduction for lessons the centre cancelled (payroll reads the money of the students as it was: PAY-F, scenario 17)."""
+    def __init__(self, db: Session, org_id: str, today: date, settings: Optional[LedgerSettings] = None, *, recalc: bool = True, closing: Optional[Set[UUID]] = None) -> None:
+        """``recalc=False``: the account WITHOUT the deduction for lessons the centre cancelled (payroll reads the money of the students as it was: PAY-F, scenario 17).
+        ``closing``: the memberships whose open stay is about to be closed ``today`` (Money-2 У2: the window and the answer of a leaving) - their stays are judged as closed today, by the very rule of the record."""
         self.db = db
         self.org_id = org_id
         self.today = today
+        self.closing: Set[UUID] = set(closing or ())
         self.settings = settings or load_settings(db, org_id)
         self.recalc_versions = self.settings.recalc_versions if recalc else ()
         self.cancels: Dict[UUID, List[bl.CentreCancel]] = {}      # group id -> lessons the centre cancelled (kind ``centre``)
@@ -404,7 +407,7 @@ class LedgerLoader:
             return
         periods = membership_periods.periods_by_membership(self.db, found)
         for mid in found:
-            self.stays[mid] = stays_of_membership(self.members[mid][0], periods.get(mid, []), self._packages_on)
+            self.stays[mid] = stays_of_membership(self.members[mid][0], periods.get(mid, []), self._packages_on, self.today if mid in self.closing else None)
         for payment in self.db.query(StudentPayment).filter(
             StudentPayment.org_id == self.org_id, StudentPayment.membership_id.in_(found),
             StudentPayment.voided_at.is_(None), StudentPayment.kind == "payment",

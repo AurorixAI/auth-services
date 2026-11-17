@@ -124,7 +124,7 @@ class LeaveService:
 
     def _after(self, org_id: str, membership_ids: Sequence[UUID], today: date):
         """``{membership_id: (ledger after leaving today, refundable on today, loader)}`` - the stays are closed on today in memory."""
-        loader = ls.LedgerLoader(self.db, str(org_id), today)
+        loader = ls.LedgerLoader(self.db, str(org_id), today, closing=set(membership_ids))      # Money-2 У2: the stays are judged as closed today - by the same rule as the record (a stay opened today and closed today charges nothing)
         loader.load_facts(list(membership_ids))
         out: Dict[UUID, Tuple[bl.Ledger, int]] = {}
         for mid in membership_ids:

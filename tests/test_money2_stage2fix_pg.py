@@ -10,7 +10,7 @@ import pytest
 from tests.money1b_helpers import add, fresh_student, hold_lessons
 from tests.pg_world import needs_pg, pg_session, world  # noqa: F401  (fixtures)
 from tests.test_money2_sameday_pg import numbers, settle, three
-from tests.test_pay2_api_pg import API, fixed_today, membership, owner  # noqa: F401  (fixture)
+from tests.test_pay2_api_pg import API, fixed_today, membership, owner, stay  # noqa: F401  (fixture)
 
 pytestmark = needs_pg
 
@@ -48,3 +48,66 @@ def test_u1_an_ordinary_transfer_from_an_old_group_with_a_lesson_today_keeps_the
     nb, nc = numbers(world, s0, b), numbers(world, s0, c)
     # B: 7 of 12 lessons up to and including today = 262 500 -> 263 000, the rest of the 450 000 (187 000) went to C; C starts TOMORROW (nothing charged yet): the day is neither paid twice nor lost
     assert nb[0] == 263_000 and nc[0] == 0 and nc[2] == 187_000 and nc[3] == 0, (nb, nc)
+
+
+# ---- У2: the window and the answer of the leaving count like the record ------------------------------------------------------------------------------------------------
+
+
+def window(w, student, group, client=None):
+    r = (client or owner(w)).get(f"{API}/org/groups/{group.id}/students/{student.id}/leave-preview")
+    assert r.status_code == 200, r.text
+    return r.json()["memberships"][0]
+
+
+def leave(w, student, group, body=None, client=None, expect=200):
+    r = (client or owner(w)).post(f"{API}/org/groups/{group.id}/students/{student.id}/leave", json=body or {})
+    assert r.status_code == expect, r.text
+    return r.json()
+
+
+def test_u2_written_down_today_taken_out_today_the_window_the_record_and_the_answer_see_no_debt(world, fixed_today):
+    # B has a lesson today (38 000 would be the ghost debt of the old rule): the stay is of no day -> no debt anywhere
+    import json
+
+    a, b, c = three(world, fixed_today)
+    s = fresh_student(world, "Ошибка")
+    add(world, s, group=b, mode="add")
+    row = window(world, s, b)
+    assert row["money"]["debt"] == 0 and row["has_open_balance"] is False and row["allowed"] == ["keep"], row
+    done = leave(world, s, b)                                     # no expected_debt, no settle: passes
+    assert "долг" not in json.dumps(done["effects"], ensure_ascii=False).lower(), done["effects"]
+
+
+def test_u2_paid_600000_the_refund_is_the_whole_600000(world, fixed_today):
+    from tests.test_payments_service_pg import pay
+
+    a, b, c = three(world, fixed_today)
+    s = fresh_student(world, "Оплатил")
+    add(world, s, group=b, mode="add")
+    pay(world, s, b, amount=600_000)
+    row = window(world, s, b)
+    assert row["money"]["refundable"] == 600_000 and row["money"]["advance"] == 600_000 and row["money"]["debt"] == 0, row
+    done = leave(world, s, b, {"settle": [{"membership_id": row["membership_id"], "action": "refund", "method": "cash", "expected_refundable": 600_000}]})
+    assert [(i["action"], i["amount"]) for i in done["settled"]] == [("refund", 600_000)]
+
+
+def test_u2_an_administrator_without_the_money_right_takes_out_a_student_written_down_today(world, fixed_today):
+    from tests.test_money2_wave_b_pg import _admin
+
+    a, b, c = three(world, fixed_today)
+    s = fresh_student(world, "Ошибка админа")
+    add(world, s, group=b, mode="add")
+    done = leave(world, s, b, client=_admin(world))
+    assert done["settled"] == []
+
+
+def test_u2_an_ordinary_old_student_with_a_debt_the_window_equals_the_record(world, fixed_today):
+    # in B since 02.11, nothing paid: 7 of 12 lessons up to today = 262 500 -> 263 000, the window and the record agree
+    a, b, c = three(world, fixed_today)
+    s = fresh_student(world, "Давний")
+    add(world, s, group=b, mode="add")
+    stay(world, membership(world, s, b), date(2026, 11, 2))
+    row = window(world, s, b)
+    assert row["money"]["debt"] == 263_000 and row["allowed"] == ["keep", "writeoff"], row
+    done = leave(world, s, b, {"settle": [{"membership_id": row["membership_id"], "action": "writeoff", "expected_debt": 263_000, "reason": "Договорились"}]})
+    assert [(i["action"], i["amount"]) for i in done["settled"]] == [("writeoff", 263_000)]
