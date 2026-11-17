@@ -41,7 +41,12 @@ def test_the_returning_debtor_sees_his_old_debt_of_this_group_and_what_this_addi
     assert (row["group_id"], row["group_name"], row["kind"], row["amount"], row["left_on"]) == (str(b.id), b.name, "debt", 38_000, TUE.isoformat())
     assert row["membership_id"] == str(membership(world, s, b).id)
     assert row["text"] == "В этой группе с прошлого раза (ушёл 17.11.2026) остался долг 38\xa0000\xa0сум"
+    imm = dry["billing"]["immediate"]
+    assert (imm["amount"], imm["lessons"]) == (187_000, 5) and imm["text"] == "Сразу начислится ещё 187\xa0000\xa0сум (за 5 уроков)"
+    assert sum(p["amount"] for p in imm["parts"]) == 187_000 and sum(p["lessons"] for p in imm["parts"]) == 5
     real = add(world, s, group=b, mode="add")
+    assert real["past_balances"] == [row] and "immediate" not in real["billing"]      # the answer says the same row; no sum in the real answer (as before)
+    assert numbers(world, s, b)[3] == 225_000 == 38_000 + imm["amount"]                 # the window = the adding
 
 
 def test_the_forgiven_debt_of_the_first_stay_is_not_shown_and_the_adding_brings_the_rest(world, fixed_today):
@@ -50,6 +55,8 @@ def test_the_forgiven_debt_of_the_first_stay_is_not_shown_and_the_adding_brings_
     assert r.status_code == 201, r.text
     dry = _window(world, b, s)
     assert dry["past_balances"] == []
+    imm = dry["billing"]["immediate"]
+    assert (imm["amount"], imm["lessons"], imm["text"]) == (187_000, 5, "Сразу начислится ещё 187\xa0000\xa0сум (за 5 уроков)")
     add(world, s, group=b, mode="add")
     assert numbers(world, s, b)[3] == 187_000                      # 225 000 charged - 38 000 forgiven
 
@@ -67,6 +74,8 @@ def test_personal_period_the_adding_brings_the_rest_of_the_period(world, fixed_t
     b, s = _left_with_a_lesson(world, fixed_today, mode="personal")
     assert numbers(world, s, b)[0] == 15_000
     dry = _window(world, b, s)
+    imm = dry["billing"]["immediate"]
+    assert imm["amount"] == 435_000 and imm["text"].startswith("Сразу начислится ещё 435\xa0000\xa0сум (за ")
     (row,) = dry["past_balances"]
     assert (row["kind"], row["amount"]) == ("debt", 15_000)
     add(world, s, group=b, mode="add")
@@ -81,6 +90,7 @@ def test_without_the_money_right_the_row_has_no_sum_and_nothing_is_charged_at_on
     dry = add(world, s, client=admin, group=b, mode="add", dry_run=True)
     (row,) = dry["past_balances"]
     assert "amount" not in row and row["kind"] == "debt" and row["text"] == "В этой группе с прошлого раза (ушёл 17.11.2026) остался долг"
+    assert "immediate" not in dry["billing"]
 
 
 def test_a_new_student_gets_the_answers_as_before(world, fixed_today):
@@ -88,6 +98,9 @@ def test_a_new_student_gets_the_answers_as_before(world, fixed_today):
     s = fresh_student(world, "Совсем новый")
     dry = add(world, s, group=b, mode="add", dry_run=True)
     assert dry["past_balances"] == []
+    imm = dry["billing"]["immediate"]
+    assert (imm["amount"], imm["lessons"], imm["text"]) == (225_000, 6, "Сразу начислится 225\xa0000\xa0сум (за 6 уроков)")
+    assert "ещё" not in imm["text"]
 
 
 def test_the_bulk_window_says_the_same_for_the_returning_student(world, fixed_today):
@@ -95,5 +108,7 @@ def test_the_bulk_window_says_the_same_for_the_returning_student(world, fixed_to
     r = owner(world).post(f"{API}/org/groups/{b.id}/students/bulk", params={"mode": "add", "dry_run": "true"}, json={"student_ids": [str(s.id)]})
     assert r.status_code == 200, r.text
     (item,) = r.json()["students"]
+    assert item["billing"]["immediate"]["text"] == "Сразу начислится ещё 187\xa0000\xa0сум (за 5 уроков)"
     (row,) = item["past_balances"]
     assert (row["kind"], row["amount"]) == ("debt", 38_000)
+    assert r.json()["immediate_total"]["amount"] == 187_000

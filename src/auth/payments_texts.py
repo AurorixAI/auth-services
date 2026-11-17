@@ -192,10 +192,11 @@ def repeated_payment_text(moment: datetime, now: datetime) -> str:
     return f"Такая же оплата уже внесена {day} в {local.strftime('%H:%M')} — внести ещё одну?"
 
 
-def immediate_text(amount: int, lessons: int, *, total: bool = False) -> str:
-    """Money-1 B (R3 lead 11): ``Сразу начислится 300 000 сум (за 14 уроков)``; under a bulk adding ``Всего сразу начислится ...``."""
+def immediate_text(amount: int, lessons: int, *, total: bool = False, more: bool = False) -> str:
+    """Money-1 B (R3 lead 11): ``Сразу начислится 300 000 сум (за 14 уроков)``; under a bulk adding ``Всего сразу начислится ...``.
+    Stage 6 (М11Б): a student who comes BACK has charges already - ``Сразу начислится ещё 187 000 сум (за 5 уроков)`` (``more``)."""
     word = f" (за {lessons} {lessons_word(lessons)})" if lessons else ""
-    return f"{'Всего сразу' if total else 'Сразу'} начислится {money(amount)}{word}"
+    return f"{'Всего сразу' if total else 'Сразу'} начислится {'ещё ' if more else ''}{money(amount)}{word}"
 
 
 def waiting_text(until: date) -> str:

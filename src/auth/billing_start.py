@@ -130,26 +130,49 @@ def apply(db: Session, group: Group, period: StudentGroupPeriod, *, today: date,
             "text": text_of(chosen, today, explicit is not None, info["first_lesson"])}
 
 
-def immediate_charge(db: Session, org_id: Any, membership_id: Any, today: date) -> Optional[Dict[str, Any]]:
+def immediate_charge(db: Session, org_id: Any, membership_id: Any, today: date, before: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
     """Money-1 R3 (lead, 11): «сразу начислится N сум (K уроков)» - what the account of the new stay charges ON THE DAY of adding (a past «Оплата с», or a first lesson that is today): the sum of the periods that have
     begun and the lessons of the group inside their days.  ``None``: nothing is charged at once (a start in the future, a package, no price).  Read from the account the add has just made (flushed, not
-    committed: a dry run rolls it back)."""
+    committed: a dry run rolls it back).
+    Stage 6 (М11Б): ``before`` = the same read taken BEFORE a returning student is written into his old membership (``immediate_charge`` of the closed stay, ``None`` = nothing charged yet): the answer is then what THIS
+    adding adds, the account after minus the account before (``immediate_from_ledger``)."""
     from .payments_service import PaymentService  # lazy: pulls in the status maths
 
     db.flush()
     (entry,) = PaymentService(db)._loader(str(org_id), today).run([membership_id])
-    return immediate_from_ledger(entry.ledger, entry.inp.lesson_days)
+    return immediate_from_ledger(entry.ledger, entry.inp.lesson_days, before)
 
 
-def immediate_from_ledger(ledger: Any, lesson_days: Any) -> Optional[Dict[str, Any]]:
-    """The pure part of ``immediate_charge`` (no database): the begun periods with a charge of an account -> ``{amount, lessons, text, parts}`` or ``None``."""
+def immediate_from_ledger(ledger: Any, lesson_days: Any, before: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
+    """The pure part of ``immediate_charge`` (no database): the begun periods with a charge of an account -> ``{amount, lessons, text, parts}`` or ``None``.
+    ``before`` (stage 6): the same answer of the account before the return -> only the difference is said (``more`` in the text); a difference of nothing or less = ``None``."""
     begun = [s for s in ledger.segments if s.kind == "period" and s.begun and s.amount > 0]
     amount = sum(s.amount for s in begun)
     if amount <= 0:
         return None
     parts = immediate_parts(begun, lesson_days)
     lessons = sum(p["lessons"] for p in parts)
-    return {"amount": amount, "lessons": lessons, "text": tx.immediate_text(amount, lessons), "parts": parts}
+    if before is not None:
+        amount, lessons, parts = _minus_before(amount, lessons, parts, before)
+        if amount <= 0:
+            return None
+    return {"amount": amount, "lessons": lessons, "text": tx.immediate_text(amount, lessons, more=before is not None), "parts": parts}
+
+
+def _minus_before(amount: int, lessons: int, parts: list, before: Dict[str, Any]) -> tuple:
+    """The account after the return minus the account before it: the total, the lessons of the difference and the parts (a period charged before is taken off by its label; a period charged
+    again for nothing more drops out).  The parts always add up to the total: a rest of a period that is no longer there goes on the last part."""
+    old = {p["label"]: p for p in before["parts"]}
+    left = []
+    for p in parts:
+        was = old.get(p["label"])
+        left.append({**p, "amount": p["amount"] - (was["amount"] if was else 0), "lessons": max(0, p["lessons"] - (was["lessons"] if was else 0))})
+    total, count = amount - int(before["amount"]), max(0, lessons - int(before["lessons"]))
+    left = [p for p in left if p["amount"] > 0]
+    if left:
+        left[-1]["amount"] += total - sum(p["amount"] for p in left)
+        left[-1]["lessons"] += count - sum(p["lessons"] for p in left)
+    return total, count, left
 
 
 def immediate_label(seg: Any) -> str:

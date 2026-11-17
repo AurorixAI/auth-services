@@ -2822,6 +2822,7 @@ class AuthService:
             carry_before = PaymentService(self.db).account_after(org_id, existing.id, now_dt)      # Money-1 D-6: the account the money lands on, BEFORE the transfer
 
         new_period = None
+        charged_before = None         # Stage 6 (М11Б): what the closed stay had charged (the preview says what the return ADDS to it)
         returned_rows: list = []      # Stage 6 (М11Б): the balance of the closed stay in THIS group (a returning student); empty for a new one
         leave_undo_result = None
         leave_undone = False      # R3b В1: ONE name for «the leaving of the same day was cancelled»
@@ -2836,6 +2837,10 @@ class AuthService:
                 closed_pay_from = closed_period.billing_from if closed_period is not None else None
                 if mode == "add" and not closing:      # Stage 6 (М11Б): what the last stay left on this account, and what the stay had charged, read BEFORE it is reopened
                     returned_rows = leave_effects.returned_balance(self.db, org_id, existing.id, money=payments_detail)
+                    if immediate and payments_detail and dry_run:
+                        from . import billing_start  # lazy: pulls in the payments modules
+
+                        charged_before = billing_start.immediate_charge(self.db, org_id, existing.id, ps.business_date(now_dt))
                 new_period = open_period(existing, now_dt)
                 if actor_id:      # Money-2 T6: back on the day of leaving = the leaving is cancelled (prices and pauses come back); else the ordinary return
                     leave_undo_result = leave_undo.try_undo(self.db, org_id, existing, left_before, now_dt, actor_id, coming_from=[m.id for m in closing], money=payments_detail)
@@ -2891,7 +2896,7 @@ class AuthService:
                 explicit=pay_from, cache=cache)
             if immediate and payments_detail and dry_run:        # R3 / lead 11: the sum is in the PREVIEW (dry_run) and only for a caller who may see money; the real answer carries no sum (test_n13_p2_permissions): the window says what is charged AT ONCE (a past «Оплата с»)
                 self.db.flush()                                  # the new membership gets its id here
-                billing["immediate"] = billing_start.immediate_charge(self.db, org_id, membership.id, ps.business_date(now_dt))
+                billing["immediate"] = billing_start.immediate_charge(self.db, org_id, membership.id, ps.business_date(now_dt), charged_before)
 
         # N13 P2.1: a transfer carries the payments in force over to the new group.  The price is not carried
         # (#105): in the new group the student follows the price of that group.
