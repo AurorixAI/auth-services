@@ -173,3 +173,25 @@ def test_a_period_charged_less_after_the_return_keeps_the_parts_adding_up():
     assert after["amount"] == 138_000
     assert sum(p["amount"] for p in after["parts"]) == after["amount"] and sum(p["lessons"] for p in after["parts"]) == after["lessons"]
     assert all(p["lessons"] >= 0 for p in after["parts"])
+
+
+# ---- stage 6, step 5: nothing is counted that is thrown away ------------------------------------------------------------------------------------------------------------------------------
+
+def test_a_return_on_the_day_of_leaving_does_not_read_the_balance_of_the_closed_stay(world, fixed_today, monkeypatch):
+    """The leaving of the same day is cancelled: the row «with the last time» is thrown away, so it is not counted (a spy on ``returned_balance``: 0 calls); an ordinary return the next day reads it ONCE."""
+    from src.auth import leave_effects
+
+    calls = []
+    real = leave_effects.returned_balance
+    monkeypatch.setattr(leave_effects, "returned_balance", lambda *a, **k: calls.append(1) or real(*a, **k))
+    a, b, c = three(world, fixed_today)
+    s = world.students[1]
+    add(world, s, group=b, mode="add")
+    hold_lessons(world, s, [TUE], group=b)
+    assert owner(world).post(f"{API}/org/groups/{b.id}/students/{s.id}/leave", json={}).status_code == 200
+    out = add(world, s, group=b, mode="add")                                              # the same day: the leaving is cancelled
+    assert out["leave_undo"]["undone"] is True and out["past_balances"] == [] and calls == []
+    assert owner(world).post(f"{API}/org/groups/{b.id}/students/{s.id}/leave", json={}).status_code == 200
+    fixed_today(WED)
+    add(world, s, group=b, mode="add", dry_run=True)                                       # the next day: an ordinary return
+    assert calls == [1]

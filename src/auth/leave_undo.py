@@ -67,6 +67,11 @@ def _blocker(db: Session, membership: StudentGroup, since: datetime, coming_from
     return None
 
 
+def would_undo(db: Session, membership: StudentGroup, left_at: Optional[datetime], today: date, coming_from: Sequence[Any], money: bool) -> bool:
+    """The cancel of the leaving WILL be done by ``try_undo`` (the stay ended today and nothing forbids it): the caller does not count what the cancel throws away.  Reads only, before ``open_period``."""
+    return left_today(left_at, today) and _blocker(db, membership, naive_utc(left_at), coming_from, money) is None
+
+
 def try_undo(
     db: Session, org_id: str, membership: StudentGroup, left_at: Optional[datetime], now: datetime, actor_id: str,
     *, coming_from: Sequence[Any], money: bool,

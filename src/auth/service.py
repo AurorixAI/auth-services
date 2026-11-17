@@ -2835,7 +2835,7 @@ class AuthService:
                 left_before = existing.left_at
                 closed_period = max((p for p in existing.periods if p.left_at is not None), key=lambda p: p.left_at, default=None)
                 closed_pay_from = closed_period.billing_from if closed_period is not None else None
-                if mode == "add" and not closing:      # Stage 6 (М11Б): what the last stay left on this account, and what the stay had charged, read BEFORE it is reopened
+                if mode == "add" and not closing and not (actor_id and leave_undo.would_undo(self.db, existing, left_before, ps.business_date(now_dt), [m.id for m in closing], payments_detail)):      # Stage 6 (М11Б): what the last stay left on this account, and what the stay had charged, read BEFORE it is reopened (not when the leaving of today is going to be cancelled: the row is thrown away then)
                     returned_rows = leave_effects.returned_balance(self.db, org_id, existing.id, money=payments_detail)
                     if immediate and payments_detail and dry_run:
                         from . import billing_start  # lazy: pulls in the payments modules
