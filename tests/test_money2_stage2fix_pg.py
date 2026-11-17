@@ -9,7 +9,7 @@ import pytest
 
 from tests.money1b_helpers import add, fresh_student, hold_lessons
 from tests.pg_world import needs_pg, pg_session, world  # noqa: F401  (fixtures)
-from tests.test_money2_sameday_pg import numbers, settle, three
+from tests.test_money2_sameday_pg import TUE, numbers, settle, three
 from tests.test_pay2_api_pg import API, fixed_today, membership, owner, stay  # noqa: F401  (fixture)
 
 pytestmark = needs_pg
@@ -111,3 +111,56 @@ def test_u2_an_ordinary_old_student_with_a_debt_the_window_equals_the_record(wor
     assert row["money"]["debt"] == 263_000 and row["allowed"] == ["keep", "writeoff"], row
     done = leave(world, s, b, {"settle": [{"membership_id": row["membership_id"], "action": "writeoff", "expected_debt": 263_000, "reason": "Договорились"}]})
     assert [(i["action"], i["amount"]) for i in done["settled"]] == [("writeoff", 263_000)]
+
+
+# ---- У3: a one-day stay charges its day when the student has a COUNTED mark of a lesson of that day ------------------------------------------------------------------------------
+
+
+def one_day(w, student, group, marked):
+    """Written down today and taken out today; ``marked``: a held lesson of the group today with the student «present»."""
+    add(w, student, group=group, mode="add")
+    if marked:
+        hold_lessons(w, student, [TUE], group=group)
+    leave(w, student, group)
+
+
+@pytest.mark.parametrize("mode,expected", [("shared", 38_000), ("personal", 15_000)])
+def test_u3_a_one_day_stay_with_a_mark_charges_its_day_without_one_nothing(world, fixed_today, mode, expected):
+    # shared month: B (12 lessons, 450 000) charges the one lesson he was marked at: 37 500 -> 38 000; a personal period is 30 days: one day = 450 000 / 30 = 15 000
+    a, b, c = three(world, fixed_today, mode)
+    marked, bare = fresh_student(world, "С отметкой"), fresh_student(world, "Без отметки")
+    one_day(world, marked, b, True)
+    one_day(world, bare, b, False)
+    nm, nb = numbers(world, marked, b), numbers(world, bare, b)
+    assert nm[0] == expected and nm[3] == expected, nm
+    assert nb[0] == 0 and nb[3] == 0, nb
+
+
+def test_u3_a_mark_that_appears_the_day_after_the_closing_brings_the_charge_and_the_debt_is_seen_in_the_past_balances(world, fixed_today):
+    from src.auth.leave_effects import past_balances
+
+    a, b, c = three(world, fixed_today)
+    s = fresh_student(world, "Отметка потом")
+    one_day(world, s, b, False)
+    assert numbers(world, s, b)[0] == 0
+    fixed_today(date(2026, 11, 18))
+    hold_lessons(world, s, [TUE], group=b)
+    assert numbers(world, s, b)[0] == 38_000
+    rows = past_balances(world.db, world.org.id, s.id, c.id, money=True)
+    assert [(r["group_name"], r["kind"], r["amount"]) for r in rows] == [("Бета", "debt", 38_000)], rows
+
+
+def test_u3_payroll_a_marked_one_day_stay_is_a_lesson_covered_by_the_money_and_an_unmarked_one_is_no_lesson_at_all(world, fixed_today):
+    from src.auth.payments_service import PaymentService
+    from tests.test_payments_service_pg import pay
+
+    a, b, c = three(world, fixed_today)
+    marked, bare = fresh_student(world, "Оплачен с отметкой"), fresh_student(world, "Нет отметки")
+    add(world, marked, group=b, mode="add")
+    pay(world, marked, b, amount=450_000)
+    hold_lessons(world, marked, [TUE], group=b)
+    leave(world, marked, b)
+    one_day(world, bare, b, False)
+    cover = PaymentService(world.db).lesson_coverage(str(world.org.id), [membership(world, marked, b).id, membership(world, bare, b).id], TUE, TUE)
+    # the marked one: counted and covered by the MONEY of the student (before У3 the ledger had no stay there: «before_start», the teacher was paid for a lesson the student was not charged); the bare one: not in the sheet at all
+    assert {(k[0] == membership(world, marked, b).id, v.paid, v.cover_source) for k, v in cover.items()} == {(True, True, "money")}, cover

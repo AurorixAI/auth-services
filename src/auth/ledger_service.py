@@ -111,24 +111,24 @@ def first_day_of_period(period) -> date:
     return period.billing_from or ps.business_date(period.joined_at)
 
 
-def stay_of_period(period, packages_on: Callable[[date], bool] = lambda day: False, close_on: Optional[date] = None) -> Optional[bl.Stay]:
+def stay_of_period(period, marked: Callable[[date], bool] = lambda day: False, close_on: Optional[date] = None) -> Optional[bl.Stay]:
     """The ledger stay of a membership period.  A stay that ended BEFORE the day he was to be charged from (written down on 21.10 «с 06.11», taken out on 22.10) charges NOTHING (R3 code №2 / money R-1:
     ``merge_stays`` used to turn the upside-down stay into the one day of ``first`` - a ghost debt of 10 000 for a student who never came).  A stay that was opened AND closed on the same business day charges
     nothing as well (Money-2 С1): the ONE place of the rule - every reader of the stays (the account, the statement, «paid until», the window, the reconciliation, the day he left another group) gets it from here.
-    ``close_on`` (Money-2 У2): the day an OPEN period is about to be closed (the window and the answer of a leaving read the account «after the leaving», before it is written): it is judged as if it ended that day."""
+    ``marked(day)``: does the student have a COUNTED mark of a lesson of this membership that day (``LedgerLoader.marked_of``).  ``close_on`` (Money-2 У2): the day an OPEN period is about to be closed (the window and the answer of a leaving read the account «after the leaving», before it is written): it is judged as if it ended that day."""
     first = first_day_of_period(period)
     last = ps.business_date(period.left_at) if period.left_at else close_on
     if last is not None and last < first:
         return None
-    if last is not None and first == last and period.joined_at is not None and ps.business_date(period.joined_at) == last and not packages_on(last):
-        return None             # Money-2 С1: opened and closed on ONE business day (written down and taken out, there and back, on through a third group): a stay of no day - charged nothing, holds no day (a stay with «Оплата с» earlier than the day he joined is a real, back-dated one and stays); a PACKAGE centre keeps the stay (it charges only the lessons the student was marked at: no mark - nothing, a mark - the lesson he got stays spent)
+    if last is not None and first == last and period.joined_at is not None and ps.business_date(period.joined_at) == last and not marked(last):
+        return None             # Money-2 С1 / У3: opened and closed on ONE business day (written down and taken out, there and back, on through a third group) WITHOUT a counted mark of a lesson of that day: a stay of no day - charged nothing, holds no day; with the mark the student got the lesson and the stay charges it, in every mode (the teacher is paid for it: ONE rule for the account, the statement and the payroll).  A stay with «Оплата с» earlier than the day he joined is a real, back-dated one and stays
     return bl.Stay(first, last, period.joined_at)
 
 
-def stays_of_membership(membership: StudentGroup, periods: Sequence, packages_on: Callable[[date], bool] = lambda day: False, close_on: Optional[date] = None) -> List[bl.Stay]:
+def stays_of_membership(membership: StudentGroup, periods: Sequence, marked: Callable[[date], bool] = lambda day: False, close_on: Optional[date] = None) -> List[bl.Stay]:
     """The ledger stays of a membership from its periods; a legacy row without periods is one stay by its own dates (NOT a membership whose only stay charges
     nothing: R3 №2)."""
-    spans = [stay for stay in (stay_of_period(p, packages_on, close_on) for p in periods) if stay is not None]
+    spans = [stay for stay in (stay_of_period(p, marked, close_on) for p in periods) if stay is not None]
     if not periods and membership.joined_at:
         return [bl.Stay(ps.business_date(membership.joined_at),
                         None if membership.is_active or not membership.left_at else ps.business_date(membership.left_at), membership.joined_at)]
@@ -284,6 +284,7 @@ class LedgerLoader:
         self.transfers: Dict[UUID, MembershipTransfer] = {}
         self.books = pricing.PriceBooks()
         self.counted: Dict[UUID, List[bl.CountedLesson]] = {}
+        self.marks: Dict[UUID, Set[date]] = {}      # Money-2 У3: membership id -> the days of its ONE-DAY stays on which the student has a counted mark of a lesson (read once per load, see ``_load_marks``)
         self._x_memo: Dict[UUID, int] = {}
         self._x_active: Set[UUID] = set()
         self._guard_hits = 0
@@ -406,8 +407,6 @@ class LedgerLoader:
         if not found:
             return
         periods = membership_periods.periods_by_membership(self.db, found)
-        for mid in found:
-            self.stays[mid] = stays_of_membership(self.members[mid][0], periods.get(mid, []), self._packages_on, self.today if mid in self.closing else None)
         for payment in self.db.query(StudentPayment).filter(
             StudentPayment.org_id == self.org_id, StudentPayment.membership_id.in_(found),
             StudentPayment.voided_at.is_(None), StudentPayment.kind == "payment",
@@ -430,6 +429,9 @@ class LedgerLoader:
             MembershipOpeningBalance.voided_at.is_(None),
         ):
             self.openings[opening.membership_id] = opening
+        self._load_marks([(self.members[m][0], self.members[m][2]) for m in found], periods)         # after the pauses (a lesson of a day of a pause is nobody's lesson)
+        for mid in found:
+            self.stays[mid] = stays_of_membership(self.members[mid][0], periods.get(mid, []), self.marked_of(mid), self.today if mid in self.closing else None)
         touched: Set[Tuple[str, UUID]] = set()
         for t in self.db.query(MembershipTransfer).filter(
             MembershipTransfer.org_id == self.org_id, MembershipTransfer.voided_at.is_(None),
@@ -663,18 +665,45 @@ class LedgerLoader:
         rows = self.db.query(StudentGroup, Group).join(Group, Group.id == StudentGroup.group_id).filter(StudentGroup.student_id.in_(students), Group.org_id == self.org_id).all()      # Р-10: the groups come with the memberships, and only the groups of THIS centre
         self.other_groups.update({g.id: g for _, g in rows})          # their lessons are loaded together with the lessons of the loaded groups (``_occurrences``, ``_moved_copies``)
         periods = {**periods, **membership_periods.periods_by_membership(self.db, [m.id for m, _ in rows if m.id not in periods])}
+        self._load_marks([(m, g) for m, g in rows], periods)
         if self._needs_lessons():
             self._load_counted([(m, None, g) for m, g in rows if m.id not in self.counted])
         for membership, group in rows:
-            runs = bl.merge_stays(stays_of_membership(membership, periods.get(membership.id, []), self._packages_on))
+            runs = bl.merge_stays(stays_of_membership(membership, periods.get(membership.id, []), self.marked_of(membership.id)))
             for run in runs:
                 # G-8b / Р-6: the day he left belongs to that group only when it really charges the day (a stay of one day without a lesson charges nothing, G-7)
                 if run[1] is not None and not bl.lessonless_day(lambda a, b, _g=group: self._lesson_days(_g, a, b), run) and self._holds_day(group, run[1], membership.id):
                     self.left_days.setdefault(membership.student_id, {}).setdefault(membership.id, set()).add(run[1])
 
-    def _packages_on(self, day: date) -> bool:
-        """Whether the centre counts PACKAGES of lessons on ``day`` (a one-day stay is then judged by the marks of the lessons, see ``stay_of_period``)."""
-        return bl.regime_at(self.settings.regimes, day).mode == ps.LESSONS
+    def marked_of(self, mid: UUID) -> Callable[[date], bool]:
+        """Money-2 У3: ``day -> the student has a COUNTED mark of a lesson of this membership that day`` (the one predicate of the package, ``PaymentService._counted_lesson_dates``)."""
+        days = self.marks.get(mid, ())
+        return lambda day: day in days
+
+    def _load_marks(self, pairs: Sequence[Tuple[StudentGroup, Group]], periods: Dict[UUID, list]) -> None:
+        """Money-2 У3: the counted marks of the ONE-DAY stays (opened and closed on one business day, or the open one that is being closed today) - ONE query of the lessons of those days for all the
+        memberships of the load, not one per stay; a stay of one day with such a mark charges its day (``stay_of_period``)."""
+        from .payments_service import PaymentService  # lazy: the service imports this module
+
+        wanted: Dict[UUID, Set[date]] = {}
+        for membership, _group in pairs:
+            if membership.id in self.marks:
+                continue
+            self.marks[membership.id] = set()
+            for p in periods.get(membership.id, ()):
+                joined = ps.business_date(p.joined_at) if p.joined_at else None
+                end = ps.business_date(p.left_at) if p.left_at else (self.today if membership.id in self.closing else None)
+                if joined is not None and joined == end:
+                    wanted.setdefault(membership.id, set()).add(joined)
+        if not wanted:
+            return
+        members = [(m, None, g) for m, g in pairs if m.id in wanted]
+        days = [d for ds in wanted.values() for d in ds]
+        skip = {mid: {d for p in self.pauses.get(mid, []) for d in _days(p.first_day, p.last_day)} for mid in wanted if self.pauses.get(mid)}
+        detail: Dict[UUID, List[tuple]] = {}
+        PaymentService(self.db)._counted_lesson_dates(self.org_id, members, since=min(days), until=max(days), detail_out=detail, exclude_days=skip)
+        for mid, ds in wanted.items():
+            self.marks[mid] = {day for day, _lesson, _att in detail.get(mid, ()) if day in ds}
 
     def _holds_day(self, group: Group, day: date, mid: UUID) -> bool:
         """Money-1 Р-6 (R3 В5, Д-1): does the membership ``mid`` in ``group`` itself charge ``day``?  By a per-day share (the calendar mode without a schedule to count by) always; by lessons
