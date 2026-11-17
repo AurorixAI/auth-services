@@ -42,6 +42,7 @@ from .payments_schemas import (
 from .payments_service import (
     AUDIT_REFUND,
     AUDIT_WRITEOFF,
+    AUDIT_WRITEOFF_VOID,
     MethodRequired,
     PaymentConflict,
     PaymentError,
@@ -91,12 +92,45 @@ def on_membership_closed(db: Session, membership: StudentGroup, left_at: datetim
     PauseService(db).close_at_leave(membership.id, left_day, actor_id, via=via)
 
 
+EMPTY_STAY_REASON = "Пребывание закрыто в день записи — долга нет"
+
+
+def cancel_forgiveness_of_empty_stay(db: Session, membership: StudentGroup, period, actor_id: str) -> List[UUID]:
+    """Money-2 У4: the stay that has just been closed is of NO day (opened and closed on one business day without a counted mark, ``ls.stay_of_period``): the debt it had is gone, so the forgiveness
+    given to it while it was open would stand as an advance (and the night would name it, I-1).  The live forgiveness of THIS stay is cancelled by the closing itself, in the same transaction, with a line
+    of the journal of decisions (the author is the one who closes; the same line as the cancel by hand - no check of the age or of the role here); a debt that comes back later with a mark is an ordinary
+    debt.  A forgiveness dated before the day the stay opened belongs to an earlier stay of the membership and is left alone.  Returns the ids of the cancelled forgivenesses."""
+    day = ps.business_date(period.joined_at)
+    if period.left_at is None or ps.business_date(period.left_at) != day:
+        return []
+    rows = (db.query(StudentWriteoff).filter(StudentWriteoff.membership_id == membership.id, StudentWriteoff.voided_at.is_(None), StudentWriteoff.effective_on >= day)
+            .with_for_update().all())
+    if not rows:
+        return []
+    org_id = db.query(Group.org_id).filter(Group.id == membership.group_id).scalar()
+    loader = ls.LedgerLoader(db, str(org_id), day)
+    loader.load_facts([membership.id])
+    if ls.stay_of_period(period, loader.marked_of(membership.id)) is not None:
+        return []
+    pay = PaymentService(db)
+    role = pay.role_of(org_id, actor_id)
+    for row in rows:
+        row.voided_at, row.voided_by, row.void_reason = _utcnow(), UUID(str(actor_id)), EMPTY_STAY_REASON
+        pay._audit(org_id, membership, actor_id, role, AUDIT_WRITEOFF_VOID, {
+            "actor_id": str(actor_id), "membership_id": str(membership.id), "student_id": str(membership.student_id), "writeoff_id": str(row.id), "amount": int(row.amount),
+            "reason": row.void_reason, "effective_on": row.effective_on.isoformat(), "auto": True, "via": "stay_closed_same_day"})
+    db.flush()
+    return [r.id for r in rows]
+
+
 def close_stay(db: Session, membership: StudentGroup, at: datetime, actor_id: str, via: str) -> None:
     """THE one way a stay ends - a leaving, a transfer, an archiving (Money-2: one rule, one function): the open period ends at ``at`` and the hooks of ``on_membership_closed`` run
     (the individual price ends, the scheduled prices are cancelled, the pauses are cut).  ``via``: ``leave`` / ``transfer`` / ``archive`` (the line of the journal says it)."""
-    close_period(membership, at)
+    period = close_period(membership, at)
     db.flush()
     on_membership_closed(db, membership, at.replace(tzinfo=None), actor_id, via=via)
+    if period is not None:
+        cancel_forgiveness_of_empty_stay(db, membership, period, actor_id)
 
 
 def on_membership_returned(db: Session, membership: StudentGroup, now: datetime, actor_id: Optional[str]) -> bool:

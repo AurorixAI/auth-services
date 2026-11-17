@@ -164,3 +164,80 @@ def test_u3_payroll_a_marked_one_day_stay_is_a_lesson_covered_by_the_money_and_a
     cover = PaymentService(world.db).lesson_coverage(str(world.org.id), [membership(world, marked, b).id, membership(world, bare, b).id], TUE, TUE)
     # the marked one: counted and covered by the MONEY of the student (before У3 the ledger had no stay there: «before_start», the teacher was paid for a lesson the student was not charged); the bare one: not in the sheet at all
     assert {(k[0] == membership(world, marked, b).id, v.paid, v.cover_source) for k, v in cover.items()} == {(True, True, "money")}, cover
+
+
+# ---- У4: a forgiveness of a debt that is gone after the closing is cancelled by the closing itself -----------------------------------------------------------------------------
+
+
+def forgive(w, student, group, amount=38_000):
+    m = membership(w, student, group)
+    r = owner(w).post(f"{API}/org/memberships/{m.id}/writeoffs", json={"amount": amount, "reason": "Договорённость с родителем"})
+    assert r.status_code in (200, 201), r.text
+    return m, r.json()["writeoff"]["id"]
+
+
+def writeoffs_of(w, m):
+    from src.models.auth import StudentWriteoff
+
+    w.db.expire_all()
+    return w.db.query(StudentWriteoff).filter(StudentWriteoff.membership_id == m.id).all()
+
+
+def test_u4_forgiven_while_in_the_group_taken_out_the_same_day_without_a_mark_the_forgiveness_is_cancelled_with_a_journal_line(world, fixed_today):
+    from src.auth import money_reconcile as mr
+    from src.models.auth import GroupAudit
+
+    a, b, c = three(world, fixed_today)
+    s = fresh_student(world, "Простили")
+    add(world, s, group=b, mode="add")
+    m, wid = forgive(world, s, b)
+    row = window(world, s, b)
+    assert row["money"]["advance"] == 0 and row["money"]["debt"] == 0 and row["has_open_balance"] is False, row      # the window reads the account as the closing will leave it
+    leave(world, s, b)
+    (row,) = writeoffs_of(world, m)
+    assert row.voided_at is not None and row.voided_by == world.owner.id and "день записи" in row.void_reason, row
+    lines = world.db.query(GroupAudit).filter(GroupAudit.org_id == world.org.id, GroupAudit.action == "payment_writeoff_void").all()
+    assert [(l.snapshot["writeoff_id"], str(l.actor_id)) for l in lines] == [(wid, str(world.owner.id))]
+    n = numbers(world, s, b)
+    assert (n[0], n[2], n[3]) == (0, 0, 0), n                          # charged 0, advance 0, debt 0
+    result = mr.run(world.db, apply=True, only=[world.org.id])
+    assert result["failed"] == [] and [i for i in result["items"] if i["org"] == str(world.org.id)] == []
+
+
+def test_u4_with_a_counted_mark_the_forgiveness_stays(world, fixed_today):
+    a, b, c = three(world, fixed_today)
+    s = fresh_student(world, "С отметкой")
+    add(world, s, group=b, mode="add")
+    m, _ = forgive(world, s, b)
+    hold_lessons(world, s, [TUE], group=b)
+    leave(world, s, b)
+    (row,) = writeoffs_of(world, m)
+    assert row.voided_at is None
+    n = numbers(world, s, b)
+    assert (n[0], n[3]) == (38_000, 0), n                              # the lesson he got is charged and forgiven
+
+
+def test_u4_a_forgiveness_of_an_earlier_stay_is_not_touched_by_the_one_day_return(world, fixed_today):
+    # in B since 02.11 with a forgiveness dated 10.11, left, came back today and was taken out today: the old forgiveness belongs to the old stay
+    from src.models.auth import StudentWriteoff
+
+    a, b, c = three(world, fixed_today)
+    s = fresh_student(world, "Вернулся")
+    add(world, s, group=b, mode="add")
+    m = membership(world, s, b)
+    stay(world, m, date(2026, 11, 2), date(2026, 11, 12))
+    world.db.add(StudentWriteoff(org_id=world.org.id, membership_id=m.id, student_id=s.id, group_id=b.id, amount=1_000, reason="Старое", effective_on=date(2026, 11, 10), created_by=world.owner.id))
+    world.db.commit()
+    add(world, s, group=b, mode="add")
+    leave(world, s, b)
+    assert [r.voided_at is None for r in writeoffs_of(world, m)] == [True]
+
+
+def test_u1b_a_wrong_group_with_a_mark_holds_the_day_the_new_group_starts_tomorrow(world, fixed_today):
+    a, b, c = three(world, fixed_today)
+    s = fresh_student(world, "Был на уроке")
+    add(world, s, group=b, mode="add")
+    hold_lessons(world, s, [TUE], group=b)
+    add(world, s, group=c, mode="transfer")
+    nb, nc = numbers(world, s, b), numbers(world, s, c)
+    assert nb[0] == 38_000 and nc[0] == 0, (nb, nc)      # the lesson he got is B's; C starts tomorrow

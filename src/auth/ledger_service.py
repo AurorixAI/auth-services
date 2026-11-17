@@ -432,6 +432,11 @@ class LedgerLoader:
         self._load_marks([(self.members[m][0], self.members[m][2]) for m in found], periods)         # after the pauses (a lesson of a day of a pause is nobody's lesson)
         for mid in found:
             self.stays[mid] = stays_of_membership(self.members[mid][0], periods.get(mid, []), self.marked_of(mid), self.today if mid in self.closing else None)
+            if mid in self.closing:          # Money-2 У4: the closing will cancel the forgiveness of a stay of no day - the window and the answer read the account as it will stand
+                emptied = [p for p in periods.get(mid, []) if p.left_at is None and p.joined_at is not None and ps.business_date(p.joined_at) == self.today
+                           and stay_of_period(p, self.marked_of(mid), self.today) is None]
+                if emptied:
+                    self.writeoffs[mid] = [w for w in self.writeoffs.get(mid, []) if w.effective_on < self.today]
         touched: Set[Tuple[str, UUID]] = set()
         for t in self.db.query(MembershipTransfer).filter(
             MembershipTransfer.org_id == self.org_id, MembershipTransfer.voided_at.is_(None),
