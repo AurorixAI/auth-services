@@ -158,6 +158,8 @@ def test_a_clean_night_writes_no_letter(world, monkeypatch):
 # ------------------------------------------------------------------------------------------------------------ the console
 def test_the_console_reads_the_runs_with_the_right_and_a_centre_cannot(cw):
     org = cw.make_centre()
+    # the console shows the NEWEST run of the shared database: a night left by a test of another file (e.g. with the clock of a later day) would hide ours, so the table is ours here (the findings/centres go by CASCADE)
+    cw.db.query(MoneyReconcileRun).delete(synchronize_session=False)
     cw.db.add(MoneyReconcileRun(status="findings", centres_checked=1, findings_count=1, new_findings_count=1))
     cw.db.flush()
     run_row = cw.db.query(MoneyReconcileRun).order_by(MoneyReconcileRun.started_at.desc()).first()
