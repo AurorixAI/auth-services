@@ -94,8 +94,10 @@ def test_c_the_same_scheduled_price_returned_without_a_price_means_the_group_pri
         assert _price(w, m, day) == (500_000, "group"), day                                # the planned price of the earlier stay does not come alive
 
 
-def test_d_leaving_and_returning_on_the_same_day_with_a_price_acts_from_today(world, fixed_today):
+def test_d_leaving_and_returning_on_the_same_day_cancels_the_leaving_a_price_in_the_request_is_refused_and_the_new_price_is_a_separate_action(world, fixed_today):
+    # the rule changed in Money-2 stage 7 M3: the return on the day of the leaving is the CANCEL of the leaving (no new price from today in the same request)
     from tests.test_logicA_money_pg import leave
+    from tests.test_pay2_api_pg import API, owner
 
     w = world
     opening_world(w, fixed_today, today=D(2026, 10, 20), schedule=STUDY)
@@ -104,9 +106,21 @@ def test_d_leaving_and_returning_on_the_same_day_with_a_price_acts_from_today(wo
     add(w, s, pay_from="2026-09-01", price_override={"amount": 400_000, "reason": "Скидка по договорённости"})
     m, _ = stay_of(w, s)
     leave(w, w.group, s)
-    add(w, s, price_override={"amount": 450_000, "reason": "Новая скидка при возврате"})
-    for day in (D(2026, 10, 20), D(2026, 10, 21), D(2026, 11, 14), D(2026, 12, 20)):
-        assert _price(w, m, day) == (450_000, "override"), day                              # the marker of tomorrow is replaced by the new row of the same day
+    days = (D(2026, 10, 20), D(2026, 10, 21), D(2026, 11, 14), D(2026, 12, 20))
+    r = add(w, s, expect=422, price_override={"amount": 450_000, "reason": "Новая скидка при возврате"})
+    assert r["detail"]["code"] == "LEAVE_UNDO_NO_START"
+    w.db.expire_all()
+    assert w.db.get(type(m), m.id).is_active is False                                      # still removed
+    assert _price(w, m, D(2026, 10, 20)) == (400_000, "override")                         # the prices are as they were
+    add(w, s)                                                                              # the return without a price: the leaving is cancelled
+    w.db.expire_all()
+    assert w.db.get(type(m), m.id).is_active is True
+    for day in days:
+        assert _price(w, m, day) == (400_000, "override"), day
+    r = owner(w).put(f"{API}/org/memberships/{m.id}/price-override", json={"amount": 450_000, "valid_from": "2026-10-20", "reason": "Новая скидка при возврате"})
+    assert r.status_code == 200, r.text                                                    # the separate action «individual price from today»
+    for day in days:
+        assert _price(w, m, day) == (450_000, "override"), day
 
 
 def test_e_a_student_without_own_prices_before_returns_with_a_price_and_a_past_pay_from_the_new_price_acts_from_pay_from(world, fixed_today):
