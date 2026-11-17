@@ -108,3 +108,20 @@ def test_m4_the_balance_row_of_this_group_says_same_group_and_the_rows_of_other_
     gamma = world.db.query(Group).filter(Group.org_id == world.org.id, Group.name == "Гамма").one()
     other = _window(world, gamma, s)["past_balances"]
     assert [r["group_id"] for r in other] == [str(b.id)] and "same_group" not in other[0]
+
+
+def test_n2_the_prediction_and_the_cancel_must_agree_else_a_refusal_with_a_code_and_nothing_is_written(world, fixed_today, monkeypatch):
+    """Stage 7 Н2: the decision «the leaving is cancelled» is taken BEFORE the writes (``would_undo``) and the cancel itself says its own result (``try_undo``).  If a future edit makes them differ, the adding refuses with a code (not a 500) and rolls back."""
+    from src.auth import leave_undo
+
+    a, b, c = groups3(world, fixed_today, SUNDAY)
+    s2, before = returning(world, b)
+    left = snap(world, s2, b)
+    monkeypatch.setattr(leave_undo, "would_undo", lambda *args, **kw: False)                 # the prediction says «not cancelled», the cancel itself cancels
+    r = owner(world).post(f"{API}/org/groups/{b.id}/students/{s2.id}", params={"mode": "add"}, json={})
+    assert r.status_code == 422 and r.json()["detail"]["code"] == "LEAVE_UNDO_MISMATCH", r.text
+    assert r.json()["detail"]["message"] == "Не удалось вернуть ученика — обновите страницу и повторите"
+    world.db.expire_all()
+    assert membership(world, s2, b).is_active is False and snap(world, s2, b) == left        # nothing is written: still left, as before the call
+    monkeypatch.undo()
+    assert add(world, s2, group=b, mode="add")["leave_undo"]["undone"] is True and snap(world, s2, b) == before      # the ordinary way still works

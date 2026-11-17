@@ -2855,6 +2855,9 @@ class AuthService:
                 if actor_id:      # Money-2 T6: back on the day of leaving = the leaving is cancelled (prices and pauses come back); else the ordinary return
                     leave_undo_result = leave_undo.try_undo(self.db, org_id, existing, left_before, now_dt, actor_id, coming_from=[m.id for m in closing], money=payments_detail)
                     leave_undone = bool(leave_undo_result and leave_undo_result["undone"])
+                    if leave_undone != will_undo:      # stage 7 Н2: the decision taken before the writes and the cancel itself must agree; a difference (a future edit of one of the two) is a refusal with a code, and nothing stays written
+                        self.db.rollback()
+                        raise ops_rules.unprocessable("LEAVE_UNDO_MISMATCH", "Не удалось вернуть ученика — обновите страницу и повторите")
                 if not leave_undone:
                     on_membership_returned(self.db, existing, now_dt, actor_id)  # LOGIC-A (F13): the price of the group again
             if closing:
