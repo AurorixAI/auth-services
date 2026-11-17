@@ -689,6 +689,11 @@ class LedgerLoader:
                 return True
         return bool(self._lesson_days(group, day, day))
 
+    def _covers(self, mid: UUID, day: date) -> bool:
+        """Money-2 У1: does a stay of the membership ``mid`` itself cover ``day``?  A stay of no day (opened and closed on one business day without a mark, ``stay_of_period``) covers nothing, so the day it
+        «held» was never charged by it: the group a student was moved to on that day charges the day itself (written down by mistake and moved the same day, A -> B -> C in one day)."""
+        return any(s.first <= day and (s.last is None or day <= s.last) for s in self.stays.get(mid, ()))
+
     @staticmethod
     def _begin_after(stays: List[bl.Stay], days: Set[date]) -> List[bl.Stay]:
         """A stay that begins on one of ``days`` begins the day AFTER it; a stay that was only that day is nothing."""
@@ -707,7 +712,7 @@ class LedgerLoader:
         for t in self.t_in.get(mid, []):
             day = ps.business_date(t.at)
             old = self.members.get(t.from_membership_id)           # not loaded (beyond the hops of the loader): nothing is known against the day, it stays the old group's
-            if old is None or self._holds_day(old[2], day, t.from_membership_id):
+            if old is None or (self._covers(t.from_membership_id, day) and self._holds_day(old[2], day, t.from_membership_id)):
                 stays = self._begin_after(stays, {day})
         elsewhere = {d for other, days in self.left_days.get(self.members[mid][1].id, {}).items() if other != mid for d in days}
         return self._begin_after(stays, elsewhere)
