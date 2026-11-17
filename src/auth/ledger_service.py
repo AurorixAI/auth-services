@@ -286,6 +286,7 @@ class LedgerLoader:
         self.counted: Dict[UUID, List[bl.CountedLesson]] = {}
         self.marks: Dict[UUID, Set[date]] = {}      # Money-2 У3: membership id -> the days of its ONE-DAY stays on which the student has a counted mark of a lesson (read once per load, see ``load_marks``)
         self._x_memo: Dict[UUID, int] = {}
+        self._emptied: List[UUID] = []      # Ф1: the memberships whose closing cancels the forgiveness of a stay of no day (judged after the load)
         self._x_active: Set[UUID] = set()
         self._guard_hits = 0
         self._indexed: Set[Tuple[UUID, str]] = set()
@@ -382,6 +383,10 @@ class LedgerLoader:
         if any(v.on for v in self.recalc_versions):       # after the last hop: the schedule is preloaded for ALL the groups at once
             self._load_cancels({g.id for _, _, g, _ in self.members.values()})
         self._prices()
+        for mid in self._emptied:                  # the window and the answer read the account as the closing will leave it
+            gone = self.forgiveness_to_cancel(mid, self.today)
+            self.writeoffs[mid] = [w for w in self.writeoffs.get(mid, []) if w.id not in gone]
+        self._emptied = []
 
     def _load_batch(self, ids: List[UUID]) -> None:
         rows = (
@@ -432,11 +437,6 @@ class LedgerLoader:
         self.load_marks([(self.members[m][0], self.members[m][2]) for m in found], periods)         # after the pauses (a lesson of a day of a pause is nobody's lesson)
         for mid in found:
             self.stays[mid] = stays_of_membership(self.members[mid][0], periods.get(mid, []), self.marked_of(mid), self.today if mid in self.closing else None)
-            if mid in self.closing:          # Money-2 У4: the closing will cancel the forgiveness of a stay of no day - the window and the answer read the account as it will stand
-                emptied = [p for p in periods.get(mid, []) if p.left_at is None and p.joined_at is not None and ps.business_date(p.joined_at) == self.today
-                           and stay_of_period(p, self.marked_of(mid), self.today) is None]
-                if emptied:
-                    self.writeoffs[mid] = [w for w in self.writeoffs.get(mid, []) if w.effective_on < self.today]
         touched: Set[Tuple[str, UUID]] = set()
         for t in self.db.query(MembershipTransfer).filter(
             MembershipTransfer.org_id == self.org_id, MembershipTransfer.voided_at.is_(None),
@@ -455,6 +455,10 @@ class LedgerLoader:
         if self._needs_lessons():
             self._load_counted([self.members[m][:3] for m in found])
         self._load_left_days(found, periods)       # after the counted lessons: for a package the day he left belongs to the group that COUNTED a lesson of his that day
+        for mid in found:
+            if mid in self.closing and any(p.left_at is None and p.joined_at is not None and ps.business_date(p.joined_at) == self.today
+                                           and stay_of_period(p, self.marked_of(mid), self.today) is None for p in periods.get(mid, [])):
+                self._emptied.append(mid)           # Money-2 У4 / Ф1: the closing will cancel the forgiveness that would stand as an advance - judged in ``load_facts`` when the prices are there
 
     def _load_cancels(self, group_ids: Set[UUID]) -> None:
         """PAY-F: the lessons the CENTRE cancelled (``cancellation_kind = 'centre'``; a holiday, a move and an old cancellation have another kind or none) - one query.
@@ -679,6 +683,26 @@ class LedgerLoader:
                 # G-8b / Р-6: the day he left belongs to that group only when it really charges the day (a stay of one day without a lesson charges nothing, G-7)
                 if run[1] is not None and not bl.lessonless_day(lambda a, b, _g=group: self._lesson_days(_g, a, b), run) and self._holds_day(group, run[1], membership.id):
                     self.left_days.setdefault(membership.student_id, {}).setdefault(membership.id, set()).add(run[1])
+
+    def forgiveness_to_cancel(self, mid: UUID, day: date) -> Set[UUID]:
+        """Money-2 Ф1: of the live forgivenesses dated ``day`` or later of a membership whose stay of ``day`` is of NO day (the stay is already closed in the load, or is judged as closed by ``closing``) - the ids that are
+        to be cancelled by the closing: the ones that would stand as an advance.  A forgiveness that covers the REAL debt of an earlier stay (he left with a debt, came back, was forgiven and taken out by mistake) is left.
+        The latest (by the time of the record) is tried first: it is cancelled when the debt stays 0 without it; so with no real debt all of them go, with a real debt of D only what exceeds D goes (the tail of the
+        latest ones), and a forgiveness that cannot be taken off without the debt appearing is kept whole.  ONE function for the record (``leave_service.cancel_forgiveness_of_empty_stay``) and the window (``closing``)."""
+        mine = list(self.writeoffs.get(mid, []))
+        cands = sorted((w for w in mine if w.effective_on >= day), key=lambda w: (w.created_at or datetime.min, str(w.id)), reverse=True)
+        gone: Set[UUID] = set()
+        try:
+            for w in cands:
+                self.writeoffs[mid] = [x for x in mine if x.id not in gone and x.id != w.id]
+                self._x_memo.clear()
+                inp = self.build_input(mid)
+                if inp is not None and bl.run_ledger(bl.sliced_input(inp, self.today)).debt == 0:
+                    gone.add(w.id)
+        finally:
+            self.writeoffs[mid] = mine
+            self._x_memo.clear()
+        return gone
 
     def marked_of(self, mid: UUID) -> Callable[[date], bool]:
         """Money-2 У3: ``day -> the student has a COUNTED mark of a lesson of this membership that day`` (the one predicate of the package, ``PaymentService._counted_lesson_dates``)."""

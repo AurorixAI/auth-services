@@ -112,6 +112,10 @@ def cancel_forgiveness_of_empty_stay(db: Session, membership: StudentGroup, peri
     loader.load_facts([membership.id])
     if ls.stay_of_period(period, loader.marked_of(membership.id)) is not None:
         return []
+    gone = loader.forgiveness_to_cancel(membership.id, day)          # Ф1: only the forgiveness that would stand as an advance - one function with the window
+    rows = [r for r in rows if r.id in gone]
+    if not rows:
+        return []
     pay = PaymentService(db)
     role = pay.role_of(org_id, actor_id)
     for row in rows:
