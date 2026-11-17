@@ -1422,12 +1422,26 @@ def _run_ledger(inp: LedgerInput, horizon_extra: int) -> Ledger:
         n = sum(1 for k in range((last - first).days + 1) if not _is_paused(real_pauses, first + timedelta(days=k)))
         if n:
             events.append(StatementEvent(day=first, rank=4, kind="pause", ref_id=f"gap:{first.isoformat()}:{last.isoformat()}:{n}"))
+    entered: Dict[Tuple[bool, str], datetime] = {}       # (is an outflow, id) -> when it was entered; a derived credit (the recalculation) has datetime.min
     for c in credits:
         rank = 2 if c.kind == WRITEOFF else 1
         events.append(StatementEvent(day=c.on, rank=rank, kind=c.kind, ref_id=c.id, credit=c.amount))
+        entered[(False, c.id)] = c.created_at
     for o in inp.outflows:
         events.append(StatementEvent(day=o.on, rank=3, kind=o.kind, ref_id=o.id, outflow=o.amount))
-    events.sort(key=lambda e: (e.day, e.rank, e.ref_id))
+        entered[(True, o.id)] = o.created_at
+
+    def order(e: StatementEvent):
+        """One day: the charges and the opening first, then ALL the money lines in the order they were entered (so a balance after a line is a balance the student
+        really had - Money-2 rule 142.5), then the pauses.  Equal moments: the old rank, then the id.  The recalculation has no moment (datetime.min): it stands
+        right after the charges of its day."""
+        if e.rank == 0:
+            return (e.day, 0, datetime.min, 0, e.ref_id)
+        if e.rank == 4:
+            return (e.day, 2, datetime.min, 0, e.ref_id)
+        return (e.day, 1, entered[(e.rank == 3, e.ref_id)], e.rank, e.ref_id)
+
+    events.sort(key=order)
     bal = 0
     stmt: List[StatementEvent] = []
     for e in events:
