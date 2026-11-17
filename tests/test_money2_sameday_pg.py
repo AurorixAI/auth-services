@@ -155,3 +155,37 @@ def test_an_old_forgiveness_on_a_one_day_stay_is_an_honest_finding_of_the_night_
     assert (led.charged, led.advance, led.debt) == (0, 38_000, 0)      # the statement: no charge, no debt, the forgiven sum stands as an ADVANCE (the forgiveness is an income line); the night names the row
     result = mr.run(world.db, apply=True, only=[world.org.id])
     assert [i["key"] for i in result["items"] if i["org"] == str(world.org.id) and i["invariant"] == "I-1"] == [f"membership:{m.id}:writeoff"]
+
+
+# ---- С2: the forecast «хватит до» of a package counts the lessons from «Оплата с», not from today -------------------------------------------------------------
+
+
+def forecast(w, student, group):
+    w.db.expire_all()
+    page = owner(w).get(f"{API}/org/payments/status", params={"limit": 200}).json()
+    (row,) = [i for i in page["items"] if i["student_id"] == str(student.id) and i["group_id"] == str(group.id)]
+    return row["lessons_left"], row["paid_through_forecast"]
+
+
+def test_the_forecast_of_a_package_counts_from_the_pay_from_day(world, fixed_today):
+    # B = Tue/Thu/Sat, today Tue 17.11, «Оплата с» Wed 18.11, 10 lessons paid (450 000 x 10 / 12 = 375 000): 19,21,24,26,28.11, 01,03,05,08,10.12 -> 10.12 (from today it said 08.12: it counted Tue 17.11)
+    from tests.money1b_helpers import add as add_student
+    from tests.money1b_helpers import fresh_student
+
+    a, b, c = three(world, fixed_today, "lessons")
+    s = fresh_student(world, "Предоплаченный")
+    add_student(world, s, group=b, mode="add", pay_from="2026-11-18")
+    pay(world, s, b, amount=375_000)
+    assert forecast(world, s, b) == (10, "2026-12-10")
+
+
+def test_the_forecast_after_a_transfer_with_twelve_lessons_counts_from_the_pay_from_day(world, fixed_today):
+    # a transfer that carries 450 000 = 12 lessons of B (the same shape as a payment) from «Оплата с» 18.11: 19,21,24,26,28.11, 01,03,05,08,10,12,15.12 -> 15.12 (from today: 12.12)
+    from tests.money1b_helpers import add as add_student
+    from tests.money1b_helpers import fresh_student
+
+    a, b, c = three(world, fixed_today, "lessons")
+    s = fresh_student(world, "С переносом")
+    add_student(world, s, group=b, mode="add", pay_from="2026-11-18")
+    pay(world, s, b, amount=450_000)
+    assert forecast(world, s, b) == (12, "2026-12-15")

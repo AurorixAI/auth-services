@@ -646,7 +646,8 @@ class LedgerLoader:
                     if (o["occurrenceDate"], o["id"]) not in cancelled[e.group.id] and o.get("purpose") != "extra")      # #154: an additional lesson does not spend the package
             held = {(c.day, c.lesson_id) for c in e.ledger.counted}
             paused = {d for p in e.pauses for d in _days(p.first_day, p.last_day)}
-            coming = [d for d, lesson_id in upcoming[e.group.id] if (d, lesson_id) not in held and d not in paused]
+            begin = e.ledger.first_billable or self.today          # Money-2 С2: the package counts lessons from «Оплата с», so the forecast does too (a lesson before it is nobody's)
+            coming = [d for d, lesson_id in upcoming[e.group.id] if (d, lesson_id) not in held and d not in paused and d >= begin]
             left = e.ledger.lessons.left
             out[e.membership.id] = coming[left - 1] if len(coming) >= left else None
         return out
