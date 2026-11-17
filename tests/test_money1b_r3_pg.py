@@ -228,7 +228,7 @@ def test_r3_lead11_the_dry_run_of_adding_with_a_past_pay_from_says_what_is_charg
     immediate = dry["billing"]["immediate"]
     assert {k: immediate[k] for k in ("amount", "lessons", "text")} == {"amount": 300_000, "lessons": lessons, "text": f"Сразу начислится 300 000 сум (за {lessons} уроков)"}
     # V0: one begun period 07.10-06.11 (the pay day is the 7th), taken whole; the parts add up to the total
-    assert immediate["parts"] == [{"label": "07.10–06.11", "from": None, "amount": 300_000, "lessons": lessons, "lessons_in_period": None, "whole": True}]
+    assert immediate["parts"] == [{"label": "07.10–06.11", "period_start": "2026-10-07", "from": None, "amount": 300_000, "lessons": lessons, "lessons_in_period": None, "whole": True}]
     assert w.db.query(StudentGroup).filter_by(student_id=s.id).count() == 0                  # a dry run writes nothing
     today_lesson = add(w, fresh_student(w, "Урок сегодня"), dry_run=True)                    # the default: Wednesday 21.10 is a lesson - the period begins today, the charge is at once too
     assert today_lesson["billing"]["immediate"]["amount"] == 300_000

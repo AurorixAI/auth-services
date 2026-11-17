@@ -21,8 +21,8 @@ def charge(stays, today, *, price=400_000, regime=FIRST_OF_MONTH):
 def test_v0_27_10_at_400000_is_89000_for_2_of_9_lessons_and_the_whole_of_november():
     got = charge([bl.Stay(D(2026, 10, 27))], D(2026, 11, 2))
     assert got["parts"] == [
-        {"label": "октябрь", "from": "2026-10-27", "amount": 89_000, "lessons": 2, "lessons_in_period": 9, "whole": False},
-        {"label": "ноябрь", "from": None, "amount": 400_000, "lessons": 8, "lessons_in_period": None, "whole": True}]
+        {"label": "октябрь", "period_start": "2026-10-01", "from": "2026-10-27", "amount": 89_000, "lessons": 2, "lessons_in_period": 9, "whole": False},
+        {"label": "ноябрь", "period_start": "2026-11-01", "from": None, "amount": 400_000, "lessons": 8, "lessons_in_period": None, "whole": True}]
     assert got["amount"] == 489_000 and got["lessons"] == 10                              # the old fields mean what they meant
     assert sum(p["amount"] for p in got["parts"]) == got["amount"] and sum(p["lessons"] for p in got["parts"]) == got["lessons"]
     assert got["text"] == "Сразу начислится 489 000 сум (за 10 уроков)"
@@ -38,7 +38,7 @@ def test_v0_the_payment_day_the_6th_names_the_period_by_its_days_not_by_a_month(
 
 def test_v0_the_first_lesson_today_loses_nothing_so_the_period_is_whole():
     got = charge([bl.Stay(D(2026, 11, 3))], D(2026, 11, 3))                              # Tuesday 03.11 is the first lesson of November: 8 of 8
-    assert got["parts"] == [{"label": "ноябрь", "from": None, "amount": 400_000, "lessons": 8, "lessons_in_period": 8, "whole": True}]
+    assert got["parts"] == [{"label": "ноябрь", "period_start": "2026-11-01", "from": None, "amount": 400_000, "lessons": 8, "lessons_in_period": 8, "whole": True}]
     assert got["amount"] == 400_000 and got["lessons"] == 8
 
 

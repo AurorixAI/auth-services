@@ -112,3 +112,64 @@ def test_the_bulk_window_says_the_same_for_the_returning_student(world, fixed_to
     (row,) = item["past_balances"]
     assert (row["kind"], row["amount"]) == ("debt", 38_000)
     assert r.json()["immediate_total"]["amount"] == 187_000
+
+
+# ---- stage 6, step 4: the parts are matched by the START of the period, not by its name (no database: the ledger is a stand-in) -------------------------------------------------------------
+
+def _seg(start, end, amount, days, *, basis="lessons", in_part=None, in_period=None):
+    from types import SimpleNamespace
+
+    return SimpleNamespace(kind="period", begun=True, amount=amount, period_start=start, period_end=end, basis=basis, days=days, lessons_in_part=in_part, lessons_in_period=in_period)
+
+
+def _days(first, last):
+    from datetime import timedelta
+
+    return [first + timedelta(days=i) for i in range((last - first).days + 1)]
+
+
+def _group_days(first, last):
+    return [d for d in _days(first, last) if d.isoweekday() in (2, 4, 6)]            # Tue / Thu / Sat
+
+
+def test_the_stay_of_a_year_ago_with_the_same_month_name_is_not_taken_off_twice():
+    """«Общий месяц» 450 000: November 2025 was charged in full (450 000, 13 lessons of Tue/Thu/Sat: 4 Tue + 4 Thu + 5 Sat = 13: 04.11 .. 29.11), he left on 30.11.2025.  He returns on 18.11.2026: November 2026 from
+    19.11 is Thu 19, Sat 21, Tue 24, Thu 26, Sat 28 = 5 lessons of 12 = 450 000 x 5/12 = 187 500 -> 188 000.  Before = 450 000 (November 2025); after = 450 000 + 188 000.  The difference = 188 000 for 5 lessons, ONE part
+    (November 2026); the old November must not eat the new one (they have the same name «ноябрь»)."""
+    from src.auth.billing_start import immediate_from_ledger
+
+    nov25 = _seg(date(2025, 11, 1), date(2025, 11, 30), 450_000, _days(date(2025, 11, 1), date(2025, 11, 30)), basis="full")
+    nov26 = _seg(date(2026, 11, 1), date(2026, 11, 30), 188_000, _days(date(2026, 11, 19), date(2026, 11, 30)), in_part=5, in_period=12)
+
+    class Ledger:
+        def __init__(self, *segments):
+            self.segments = list(segments)
+
+    lesson_days = _group_days
+    before = immediate_from_ledger(Ledger(nov25), lesson_days)
+    assert before["amount"] == 450_000 and before["parts"][0]["period_start"] == "2025-11-01"
+    after = immediate_from_ledger(Ledger(nov25, nov26), lesson_days, before)
+    assert (after["amount"], after["lessons"]) == (188_000, 5)
+    assert [p["period_start"] for p in after["parts"]] == ["2026-11-01"]
+    assert sum(p["amount"] for p in after["parts"]) == after["amount"] and sum(p["lessons"] for p in after["parts"]) == after["lessons"]
+    assert all(p["lessons"] >= 0 for p in after["parts"])
+
+
+def test_a_period_charged_less_after_the_return_keeps_the_parts_adding_up():
+    """The price of the return is lower than the price of the first stay (an individual price ended): the period is charged 450 000 now and was 500 000 -> the part is -50 000, the new period 188 000: the total 138 000 is
+    the sum of the parts, the lessons never go below zero.  There is no «rest goes on the last part»: with the start as the key every period of the first stay is in the account after the return (a charge of a closed stay
+    never disappears), so the parts always sum up by themselves."""
+    from src.auth.billing_start import immediate_from_ledger
+
+    class Ledger:
+        def __init__(self, *segments):
+            self.segments = list(segments)
+
+    old_before = _seg(date(2026, 10, 1), date(2026, 10, 31), 500_000, _days(date(2026, 10, 1), date(2026, 10, 31)), basis="full")
+    old_after = _seg(date(2026, 10, 1), date(2026, 10, 31), 450_000, _days(date(2026, 10, 1), date(2026, 10, 31)), basis="full")
+    new = _seg(date(2026, 11, 1), date(2026, 11, 30), 188_000, _days(date(2026, 11, 19), date(2026, 11, 30)), in_part=5, in_period=12)
+    before = immediate_from_ledger(Ledger(old_before), _group_days)
+    after = immediate_from_ledger(Ledger(old_after, new), _group_days, before)
+    assert after["amount"] == 138_000
+    assert sum(p["amount"] for p in after["parts"]) == after["amount"] and sum(p["lessons"] for p in after["parts"]) == after["lessons"]
+    assert all(p["lessons"] >= 0 for p in after["parts"])

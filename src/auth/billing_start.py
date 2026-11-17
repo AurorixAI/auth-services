@@ -160,19 +160,16 @@ def immediate_from_ledger(ledger: Any, lesson_days: Any, before: Optional[Dict[s
 
 
 def _minus_before(amount: int, lessons: int, parts: list, before: Dict[str, Any]) -> tuple:
-    """The account after the return minus the account before it: the total, the lessons of the difference and the parts (a period charged before is taken off by its label; a period charged
-    again for nothing more drops out).  The parts always add up to the total: a rest of a period that is no longer there goes on the last part."""
-    old = {p["label"]: p for p in before["parts"]}
+    """The account after the return minus the account before it: the total, the lessons of the difference and the parts.  A period charged before is taken off by the START of the period (the name is not
+    a key: November 2025 and November 2026 are both «ноябрь»); a period with nothing more drops out; the lessons of a part never go below zero.  Every period of the closed stay is in the account after the
+    return too (a charge of a closed stay does not disappear), so the parts add up to the total and their lessons to the lessons by themselves - there is no «rest» to put anywhere."""
+    old = {p["period_start"]: p for p in before["parts"]}
     left = []
     for p in parts:
-        was = old.get(p["label"])
+        was = old.get(p["period_start"])
         left.append({**p, "amount": p["amount"] - (was["amount"] if was else 0), "lessons": max(0, p["lessons"] - (was["lessons"] if was else 0))})
-    total, count = amount - int(before["amount"]), max(0, lessons - int(before["lessons"]))
-    left = [p for p in left if p["amount"] > 0]
-    if left:
-        left[-1]["amount"] += total - sum(p["amount"] for p in left)
-        left[-1]["lessons"] += count - sum(p["lessons"] for p in left)
-    return total, count, left
+    left = [p for p in left if p["amount"] != 0]
+    return amount - int(before["amount"]), sum(p["lessons"] for p in left), left
 
 
 def immediate_label(seg: Any) -> str:
@@ -187,14 +184,14 @@ def immediate_label(seg: Any) -> str:
 
 def immediate_parts(begun: Any, lesson_days: Any) -> list:
     """Money-1 V0: the sum of ``immediate_charge`` by the periods it is made of - one element per begun period with a charge, read from the SAME segments of the ledger (no second formula):
-    ``{label, from, amount, lessons, lessons_in_period, whole}``.  ``from`` is the first charged day when the period is taken not in full (else ``None``); ``lessons_in_period`` is the lessons
+    ``{label, period_start, from, amount, lessons, lessons_in_period, whole}`` (``period_start``: ISO first day of the period, the key that matches a part before and after a return).  ``from`` is the first charged day when the period is taken not in full (else ``None``); ``lessons_in_period`` is the lessons
     of the group in the whole period (the ledger knows it for a period charged by lessons, «2 из 9»), else ``None``.  The amounts add up to ``amount``, the lessons to ``lessons``."""
     parts = []
     for seg in begun:
         inside = set(seg.days)
         whole = seg.basis == "full" or (seg.basis == "lessons" and seg.lessons_in_part is not None and seg.lessons_in_part == seg.lessons_in_period)       # nothing of the period is lost
         parts.append({
-            "label": immediate_label(seg), "from": None if whole or not seg.days else min(inside).isoformat(), "amount": int(seg.amount),
+            "label": immediate_label(seg), "period_start": seg.period_start.isoformat(), "from": None if whole or not seg.days else min(inside).isoformat(), "amount": int(seg.amount),
             "lessons": sum(1 for d in lesson_days(min(inside), max(inside)) if d in inside) if inside else 0,
             "lessons_in_period": seg.lessons_in_period, "whole": whole})
     return parts
