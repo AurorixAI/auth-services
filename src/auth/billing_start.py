@@ -131,7 +131,7 @@ def apply(db: Session, group: Group, period: StudentGroupPeriod, *, today: date,
 
 
 def immediate_charge(db: Session, org_id: Any, membership_id: Any, today: date, before: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
-    """Money-1 R3 (lead, 11): «сразу начислится N сум (K уроков)» - what the account of the new stay charges ON THE DAY of adding (a past «Оплата с», or a first lesson that is today): the sum of the periods that have
+    """Money-1 R3 (lead, 11): «к оплате сразу: N сум (K уроков)» - what the account of the new stay charges ON THE DAY of adding (a past «Оплата с», or a first lesson that is today): the sum of the periods that have
     begun and the lessons of the group inside their days.  ``None``: nothing is charged at once (a start in the future, a package, no price).  Read from the account the add has just made (flushed, not
     committed: a dry run rolls it back).
     Stage 6 (М11Б): ``before`` = the same read taken BEFORE a returning student is written into his old membership (``immediate_charge`` of the closed stay, ``None`` = nothing charged yet): the answer is then what THIS

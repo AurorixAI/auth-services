@@ -1,4 +1,4 @@
-"""Money-1 pack V0 (pure ledger, no database): «Сразу начислится» is told by the periods it is made of.
+"""Money-1 pack V0 (pure ledger, no database): «К оплате сразу» is told by the periods it is made of.
 
 The owner saw «489 000 сум (за 10 уроков)» at the price 400 000 and did not understand the sum: 89 000 for October (2 lessons of 9, from 27.10) + 400 000 for the whole of November.
 ``parts`` is read from the SAME segments of the same ledger (one number - one function, LESSONS 104): the amounts add up to ``amount``, the lessons to ``lessons``."""
@@ -25,7 +25,7 @@ def test_v0_27_10_at_400000_is_89000_for_2_of_9_lessons_and_the_whole_of_novembe
         {"label": "ноябрь", "period_start": "2026-11-01", "from": None, "amount": 400_000, "lessons": 8, "lessons_in_period": None, "whole": True}]
     assert got["amount"] == 489_000 and got["lessons"] == 10                              # the old fields mean what they meant
     assert sum(p["amount"] for p in got["parts"]) == got["amount"] and sum(p["lessons"] for p in got["parts"]) == got["lessons"]
-    assert got["text"] == "Сразу начислится 489 000 сум (за 10 уроков)"
+    assert got["text"] == "К оплате сразу: 489 000 сум (за 10 уроков)"
 
 
 def test_v0_the_payment_day_the_6th_names_the_period_by_its_days_not_by_a_month():
