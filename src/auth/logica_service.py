@@ -816,7 +816,7 @@ class PauseService(_Base):
             self._close_excuses(membership, first, last, actor_id)
             self._audit(str(pause.org_id), membership, actor_id, self.pay.role_of(str(pause.org_id), actor_id), AUDIT_PAUSE_SET, {
                 "actor_id": str(actor_id), "membership_id": str(membership.id), "student_id": str(pause.student_id), "pause_id": str(pause.id), "first_day": first.isoformat(),
-                "last_day": last.isoformat(), "was": snap["was"] if line.action == AUDIT_PAUSE_SET else None, "reason": "уход отменён: ученик вернулся в тот же день", "via": "leave_undone"})
+                "last_day": last.isoformat(), "was": snap["was"] if line.action == AUDIT_PAUSE_SET else None, "reason": "ученика вернули в день ухода", "via": "leave_undone"})
             done.append((pause, first, last))
         return done
 

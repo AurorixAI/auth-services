@@ -70,7 +70,7 @@ DECISION_LABELS = {
 # Money-2 Э7: events that share the ``action`` of another line (the list of actions of the journal is a CHECK of the table) and say what they are in ``snapshot``: kind -> (action, the condition on the snapshot, the label)
 EVENT_KINDS = {
     "payment_restored": (AUDIT_PAYMENT_REPLACE, lambda s: s["event"].astext == "payment_restored", "Оплата восстановлена"),
-    "leave_undone": ("student_left_group", lambda s: s["event"].astext == "leave_undone", "Уход отменён"),
+    "leave_undone": ("student_left_group", lambda s: s["event"].astext == "leave_undone", "Вернули в день ухода"),
     "pause_moved": ("membership_pause_set", lambda s: and_(s["via"].astext == "transfer", s["moved_from_pause_id"].astext.isnot(None)), "Пауза перенесена в новую группу"),
 }
 DECISION_LABELS = {**DECISION_LABELS, **{kind: label for kind, (_, _, label) in EVENT_KINDS.items()}}
@@ -957,7 +957,7 @@ class IncomeReports:
             return f"Оплата № {snap.get('receipt_no')} на {tx.money(int(snap.get('amount') or 0))} от {at(snap.get('paid_on'))} восстановлена как № {snap.get('new_receipt_no')}"
         if kind == "leave_undone":
             count = sum((snap.get("restored_counts") or {}).values())
-            text = "Ученик вернулся в день ухода: уход отменён, цены и паузы возвращены" + (f": {count} {tx.plural(count, 'запись', 'записи', 'записей')}" if count else "")
+            text = "Ученика убрали и в тот же день вернули — всё осталось как было: цены и паузы сохранены" + (f": {count} {tx.plural(count, 'запись', 'записи', 'записей')}" if count else "")
             return text + (". " + leave_undo.FORGIVENESS_NOT_BACK if snap.get("forgiveness_cancelled") else "")
         if kind == "pause_moved":
             return f"Пауза {at(snap.get('first_day'))}–{at(snap.get('last_day'))} перенесена в группу «{group.name if group else '—'}» вместе с учеником"

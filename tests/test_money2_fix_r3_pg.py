@@ -425,7 +425,7 @@ def test_p5_a_cancelled_leaving_says_what_came_back_in_numbers_not_in_a_bare_bra
     add(world, s0, group=a, mode="add")
     (row,) = decisions(world, kind="leave_undone")
     assert row["restored"] == {"individual_price": 1, "scheduled_price": 1, "pause": 2}
-    assert row["text"] == "Ученик вернулся в день ухода: уход отменён, цены и паузы возвращены: 4 записи"
+    assert row["text"] == "Ученика убрали и в тот же день вернули — всё осталось как было: цены и паузы сохранены: 4 записи"
 
 
 def test_p5_the_statement_rows_of_a_refund_and_a_forgiveness_say_the_day_they_were_entered(world, fixed_today):
