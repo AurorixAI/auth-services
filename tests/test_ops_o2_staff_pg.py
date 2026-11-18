@@ -114,7 +114,9 @@ def test_r3_return_to_the_team_restores_login_but_not_the_groups(w):
     assert w.db.query(Group).filter_by(teacher_id=w.A.id).count() == 0                                # the groups stay where they were put
     again = client(w, "owner").post(M.format(mid=mid(w, "A")) + "/restore")
     assert again.status_code == 409 and again.json()["detail"]["code"] == "NOT_REMOVED"
-    assert [a.action for a in audits(w, "A")] == ["removed", "restored"]
+    # composition, not order: created_at is server-side now() (the frozen `clock` does not touch it; one test
+    # transaction gives equal values) and id is a random uuid4, so the journal rows have no reliable order here
+    assert sorted(a.action for a in audits(w, "A")) == ["removed", "restored"]
 
 
 def test_r4_removal_and_a_start_are_serialised_and_two_admins_changing_a_teacher_do_not_lose_an_update(w, clock):
