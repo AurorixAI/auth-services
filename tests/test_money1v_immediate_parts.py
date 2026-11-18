@@ -62,6 +62,19 @@ def test_n1_two_parts_of_one_period_after_the_return_take_the_part_before_off_on
     amount, lessons, parts = bs._minus_before(160_000, 8, after_parts, before)
     assert amount == 60_000 and lessons == 4
     assert [p["amount"] for p in parts] == [60_000]                                  # not 60 000 - 100 000 = -40 000
+    assert [(p["from"], p["whole"]) for p in parts] == [(None, True)]                # the second part had no part before: untouched (the reduced one dropped out with nothing more)
+
+
+def test_n1_reduced_part_loses_from_and_whole_an_untouched_part_keeps_them():
+    before = {"amount": 100_000, "lessons": 4, "parts": [_part("2026-11-01", 100_000)]}
+    first = {**_part("2026-11-01", 160_000, 9), "from": "2026-11-17", "whole": False}      # reduced: was found
+    second = {**_part("2026-12-01", 50_000, 3), "from": "2026-12-05", "whole": False}     # no part before: stays as it was
+    amount, lessons, parts = bs._minus_before(210_000, 12, [first, second], before)
+    assert (amount, lessons) == (110_000, 8)
+    assert [(p["label"], p["from"], p["whole"], p["amount"]) for p in parts] == [("ноябрь", None, False, 60_000), ("ноябрь", "2026-12-05", False, 50_000)]
+    whole_part = {**_part("2026-12-01", 50_000, 3), "whole": True}
+    _, _, parts = bs._minus_before(180_000, 11, [{**_part("2026-11-01", 130_000, 8), "from": "2026-11-17", "whole": True}, whole_part], before)
+    assert [(p["from"], p["whole"], p["amount"]) for p in parts] == [(None, False, 30_000), (None, True, 50_000)]      # was found -> not whole even if it was; no part before -> untouched
 
 
 def test_n1_lock_parts_that_do_not_add_up_are_not_given_but_the_sum_stays():

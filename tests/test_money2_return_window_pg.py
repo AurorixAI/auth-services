@@ -166,6 +166,24 @@ def test_the_stay_of_a_year_ago_with_the_same_month_name_is_not_taken_off_twice(
     assert [p["period_start"] for p in after["parts"]] == ["2026-11-01"]
     assert sum(p["amount"] for p in after["parts"]) == after["amount"] and sum(p["lessons"] for p in after["parts"]) == after["lessons"]
     assert all(p["lessons"] >= 0 for p in after["parts"])
+    assert [(p["from"], p["whole"]) for p in after["parts"]] == [("2026-11-19", False)]      # no part before for this period: «from» stays as it was
+
+
+def test_the_part_of_a_period_reduced_by_the_return_has_no_from_and_is_not_whole():
+    """Stage 8 (М12): a period charged before is reduced by the part before: the date «from» of the whole stay does not describe the difference (it argued with «Оплата с»), the part is not whole."""
+    from src.auth.billing_start import immediate_from_ledger
+
+    class Ledger:
+        def __init__(self, *segments):
+            self.segments = list(segments)
+
+    before_seg = _seg(date(2026, 11, 1), date(2026, 11, 30), 262_500, _days(date(2026, 11, 17), date(2026, 11, 30)), in_part=7, in_period=12)
+    after_seg = _seg(date(2026, 11, 1), date(2026, 11, 30), 450_000, _days(date(2026, 11, 17), date(2026, 11, 30)), in_part=12, in_period=12)
+    before = immediate_from_ledger(Ledger(before_seg), _group_days)
+    assert before["parts"][0]["from"] == "2026-11-17"
+    after = immediate_from_ledger(Ledger(after_seg), _group_days, before)
+    assert after["amount"] == 187_500 and len(after["parts"]) == 1
+    assert (after["parts"][0]["from"], after["parts"][0]["whole"]) == (None, False)
 
 
 def test_a_period_charged_less_after_the_return_keeps_the_parts_adding_up():

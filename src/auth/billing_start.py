@@ -169,7 +169,10 @@ def _minus_before(amount: int, lessons: int, parts: list, before: Dict[str, Any]
     left = []
     for p in parts:
         was = old[p["period_start"]].pop(0) if old.get(p["period_start"]) else None      # a part before is taken off ONCE
-        left.append({**p, "amount": p["amount"] - (was["amount"] if was else 0), "lessons": max(0, p["lessons"] - (was["lessons"] if was else 0))})
+        part = {**p, "amount": p["amount"] - (was["amount"] if was else 0), "lessons": max(0, p["lessons"] - (was["lessons"] if was else 0))}
+        if was:
+            part["from"], part["whole"] = None, False      # a difference is not the start of the stay: the date «from» of the whole part does not describe it, and a reduced part is not whole
+        left.append(part)
     left = [p for p in left if p["amount"] != 0]
     total, total_lessons = amount - int(before["amount"]), max(0, lessons - int(before.get("lessons") or 0))
     if sum(p["amount"] for p in left) != total or sum(p["lessons"] for p in left) != total_lessons or any(p["amount"] <= 0 for p in left):
