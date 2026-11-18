@@ -2781,7 +2781,7 @@ class AuthService:
         if will_undo and batch_common:
             pay_from = price_override = override_amount = override_reason = None
         if will_undo and (pay_from is not None or opening_balance is not None or price_override is not None):      # R3 П1 + stage 7 М3: the stay goes on as if he had not left - no new start, no new opening, no new individual price; refused BEFORE the cancel writes anything
-            raise ops_rules.unprocessable("LEAVE_UNDO_NO_START", "Ученик возвращается в день ухода — уход отменяется: дата начала оплаты, остаток и индивидуальная цена не меняются")
+            raise ops_rules.unprocessable("LEAVE_UNDO_NO_START", "Ученика убрали сегодня — он возвращается как был. Новую дату оплаты, остаток и цену при этом задать нельзя: цену можно изменить отдельно после возврата")
         if pay_from is not None:      # Money-1 B1: checked BEFORE anything is written - a refusal leaves nothing behind
             if closing or already_member:
                 raise ops_rules.unprocessable("PAY_FROM_NOT_APPLICABLE", "«Оплата с» задаётся только при добавлении ученика в группу: при переводе оплата идёт со следующего дня")

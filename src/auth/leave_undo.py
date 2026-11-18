@@ -31,7 +31,7 @@ from .membership_periods import naive_utc
 AUDIT_LEFT = "student_left_group"
 LEFT_REASON = "left_group"
 UNDONE_REASON = "leave_undone"
-FORGIVENESS_NOT_BACK = "Прощение долга, отменённое при уходе, не возвращено — простите заново, если нужно"
+FORGIVENESS_NOT_BACK = "Долг снова за учеником: прощение отменилось при уходе — простите заново, если нужно"
 
 
 def _item(code: str, text: str, **fields: Any) -> Dict[str, Any]:
@@ -51,19 +51,19 @@ def _blocker(db: Session, membership: StudentGroup, since: datetime, coming_from
     """What forbids the cancel: ``None`` when nothing does, else the sentence for the window."""
     refund = db.query(StudentRefund).filter(StudentRefund.membership_id == membership.id, StudentRefund.voided_at.is_(None), StudentRefund.created_at >= since).first()
     if refund is not None:
-        what = f"возвращён аванс {tx.money(int(refund.amount))}" if money else "возвращён аванс"
-        return f"Возврат обычный, а не отмена ухода: после ухода ученику {what}. Цена и паузы не восстанавливаются"
+        what = f"вернули аванс {tx.money(int(refund.amount))}" if money else "вернули аванс"
+        return f"Ученика убрали сегодня, но после этого ему {what} — поэтому он записывается заново: прежние индивидуальная цена и паузы не вернутся"
     forgiven = db.query(StudentWriteoff).filter(StudentWriteoff.membership_id == membership.id, StudentWriteoff.voided_at.is_(None), StudentWriteoff.created_at >= since).first()
     if forgiven is not None:
-        what = f"прощён долг {tx.money(int(forgiven.amount))}" if money else "прощён долг"
-        return f"Возврат обычный, а не отмена ухода: после ухода ученику {what}. Цена и паузы не восстанавливаются"
+        what = f"простили долг {tx.money(int(forgiven.amount))}" if money else "простили долг"
+        return f"Ученика убрали сегодня, но после этого ему {what} — поэтому он записывается заново: прежние индивидуальная цена и паузы не вернутся"
     link = db.query(MembershipTransfer).filter(MembershipTransfer.from_membership_id == membership.id, MembershipTransfer.voided_at.is_(None), MembershipTransfer.at >= since).first()
     if link is not None and str(link.to_membership_id) not in {str(x) for x in coming_from}:
         target = db.query(Group.name, StudentGroup.is_active).join(StudentGroup, StudentGroup.group_id == Group.id).filter(StudentGroup.id == link.to_membership_id).first()
         name, still_there = target if target is not None else ("", False)
         if not still_there:             # a chain A -> B -> C -> A in one day: he is not in B any more, there is nothing to transfer back from
-            return f"Возврат обычный, а не отмена ухода: сегодня ученика перевели в группу «{name}», а затем дальше. Цена и паузы не восстанавливаются"
-        return f"Возврат обычный, а не отмена ухода: сегодня ученика перевели в группу «{name}». Отменить перевод можно обратным переводом из неё"
+            return f"Сегодня ученика перевели в группу «{name}», а оттуда дальше — поэтому он записывается заново: прежние индивидуальная цена и паузы не вернутся"
+        return f"Сегодня ученика перевели в группу «{name}». Чтобы вернуть всё как было, переведите его обратно из этой группы"
     return None
 
 
@@ -119,7 +119,7 @@ def try_undo(
     for pause, first, last in PauseService(db).restore_after_leave(org_id, membership, since, actor_id):
         ids.append(str(pause.id))
         restored.append(_item("pause", f"Пауза {_range(first, last)} восстановлена", first_day=first.isoformat(), last_day=last.isoformat()))
-    text = "Ученик вернулся в день ухода — уход отменён: " + "; ".join(i["text"][0].lower() + i["text"][1:] for i in restored) if restored else "Ученик вернулся в день ухода — уход отменён"
+    text = "Ученика убрали сегодня — возвращаем как было: " + "; ".join(i["text"][0].lower() + i["text"][1:] for i in restored) if restored else "Ученика убрали сегодня — возвращаем как было"
     from .leave_service import EMPTY_STAY_REASON  # lazy
     from .payments_service import PaymentService  # lazy
 

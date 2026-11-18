@@ -40,7 +40,7 @@ def test_the_returning_debtor_sees_his_old_debt_of_this_group_and_what_this_addi
     (row,) = dry["past_balances"]
     assert (row["group_id"], row["group_name"], row["kind"], row["amount"], row["left_on"]) == (str(b.id), b.name, "debt", 38_000, TUE.isoformat())
     assert row["membership_id"] == str(membership(world, s, b).id)
-    assert row["text"] == "В этой группе с прошлого раза (ушёл 17.11.2026) остался долг 38\xa0000\xa0сум"
+    assert row["text"] == "Уже был в этой группе, ушёл 17.11.2026 — остался долг 38\xa0000\xa0сум"
     imm = dry["billing"]["immediate"]
     assert (imm["amount"], imm["lessons"]) == (187_000, 5) and imm["text"] == "Сразу начислится ещё 187\xa0000\xa0сум (за 5 уроков)"
     assert sum(p["amount"] for p in imm["parts"]) == 187_000 and sum(p["lessons"] for p in imm["parts"]) == 5
@@ -66,7 +66,7 @@ def test_an_advance_left_by_the_first_stay_is_named_as_an_advance(world, fixed_t
     b, s = _left_with_a_lesson(world, fixed_today, paid=500_000)
     (row,) = _window(world, b, s)["past_balances"]
     assert (row["kind"], row["amount"]) == ("advance", 462_000)
-    assert row["text"] == "В этой группе с прошлого раза (ушёл 17.11.2026) остался аванс 462\xa0000\xa0сум"
+    assert row["text"] == "Уже был в этой группе, ушёл 17.11.2026 — остался аванс 462\xa0000\xa0сум"
 
 
 def test_personal_period_the_adding_brings_the_rest_of_the_period(world, fixed_today):
@@ -89,7 +89,7 @@ def test_without_the_money_right_the_row_has_no_sum_and_nothing_is_charged_at_on
     admin = make_client(world, user=world.admin, org_role="admin")
     dry = add(world, s, client=admin, group=b, mode="add", dry_run=True)
     (row,) = dry["past_balances"]
-    assert "amount" not in row and row["kind"] == "debt" and row["text"] == "В этой группе с прошлого раза (ушёл 17.11.2026) остался долг"
+    assert "amount" not in row and row["kind"] == "debt" and row["text"] == "Уже был в этой группе, ушёл 17.11.2026 — остался долг"
     assert "immediate" not in dry["billing"]
 
 

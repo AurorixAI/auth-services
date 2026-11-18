@@ -137,7 +137,7 @@ def _balance_rows(db: Session, org_id: Any, ids: Sequence[Any], money: bool, *, 
         sum_text = f" {tx.money(amount)}" if money else ""
         if same_group:
             row["same_group"] = True      # stage 7 М4: the row of THIS group (the window may say «в этой группе»); the rows of other groups have no such field
-            row["text"] = f"В этой группе с прошлого раза{f' (ушёл {_dmy(left_on)})' if left_on else ''} остался {word}{sum_text}"
+            row["text"] = f"Уже был в этой группе{f', ушёл {_dmy(left_on)}' if left_on else ''} — остался {word}{sum_text}"
         else:
             row["text"] = f"В группе «{name}»{f' (ушёл {_dmy(left_on)})' if left_on else ''} остался {word}{sum_text}: смотрите её выписку"
         if money:

@@ -65,7 +65,7 @@ def test_p1_an_explicit_pay_from_or_opening_balance_with_a_cancelled_leaving_is_
     gone = snap(world, s0, a)
     for body in ({"pay_from": "2026-12-01"}, {"opening_balance": {"debt_amount": 100_000, "debt_on": "2026-11-10"}}):
         r = add(world, s0, group=a, mode="add", expect=422, **body)
-        assert r["detail"]["code"] == "LEAVE_UNDO_NO_START" and "уход отменяется" in r["detail"]["message"]
+        assert r["detail"]["code"] == "LEAVE_UNDO_NO_START" and "он возвращается как был" in r["detail"]["message"]
         assert snap(world, s0, a) == gone and membership(world, s0, a).is_active is False
 
 
@@ -347,7 +347,7 @@ def test_small_a_chain_a_b_c_a_in_one_day_does_not_advise_a_transfer_back_from_t
     add(world, s0, group=c, mode="transfer", from_group_id=str(b.id))
     out = add(world, s0, group=a, mode="transfer", from_group_id=str(c.id))
     text = out["leave_undo"]["text"]
-    assert out["leave_undo"]["undone"] is False and "обратным переводом" not in text and "«Бета», а затем дальше" in text
+    assert out["leave_undo"]["undone"] is False and "обратным переводом" not in text and "«Бета», а оттуда дальше" in text
 
 
 def test_small_one_code_one_text_and_no_default_roles():
