@@ -284,7 +284,7 @@ def test_r3_4_a_cheaper_price_and_a_student_whose_next_period_costs_the_same(wor
 
 
 def test_r3_9_a_correction_of_the_source_opening_after_a_transfer_explains_the_moved_paid_until(world):
-    """(the real clock: the records of the database are stamped by its own ``now()``)"""
+    """(the real clock: nothing is frozen; the records are stamped by the business clock ``utc_now``, which here is the real one)"""
     from datetime import timedelta
 
     from src.auth import money_reconcile as mr

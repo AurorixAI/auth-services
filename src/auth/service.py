@@ -3719,11 +3719,13 @@ class AuthService:
             if override
             else dict(baseline_payload or {})
         )
+        at = business_clock.utc_now()  # TIME-TESTS: ONE moment for the edit - the override row and its audit line
         if override:
             override.payload = payload
             flag_modified(override, "payload")
             override.reason = reason
             override.changed_by = actor_id
+            override.updated_at = at
         else:
             override = GroupScheduleOverride(
                 org_id=group.org_id,
@@ -3734,6 +3736,8 @@ class AuthService:
                 payload=payload,
                 reason=reason,
                 changed_by=actor_id,
+                created_at=at,
+                updated_at=at,
             )
             self.db.add(override)
             self.db.flush()
@@ -3750,6 +3754,7 @@ class AuthService:
                 before_payload=before_payload,
                 after_payload=payload,
                 reason=reason,
+                created_at=at,
             )
         )
 
@@ -4204,7 +4209,9 @@ class AuthService:
             "effectiveFrom": effective_iso,
             "affectedExamCount": affected_count,
         }
+        end_at = business_clock.utc_now()  # TIME-TESTS: ONE moment for the end of the series - the override row and its audit line
         if existing_end:
+            existing_end.updated_at = end_at
             existing_end.effective_date = effective_iso
             existing_end.payload = end_payload
             existing_end.reason = req.reason.strip()
@@ -4221,6 +4228,8 @@ class AuthService:
                 payload=end_payload,
                 reason=req.reason.strip(),
                 changed_by=UUID(str(actor_id)),
+                created_at=end_at,
+                updated_at=end_at,
             )
             self.db.add(end_override)
             self.db.flush()
@@ -4236,6 +4245,7 @@ class AuthService:
             before_payload=before_payload,
             after_payload=end_payload,
             reason=req.reason.strip(),
+            created_at=end_at,
         )
         self.db.add(end_audit)
         self.db.flush()

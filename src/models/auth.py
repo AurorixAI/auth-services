@@ -33,9 +33,14 @@ from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import Session, relationship
 from sqlalchemy.sql import func
 
+from src.auth import business_clock as bc
 from src.models.base import Base
 
 
+# TIME-TESTS (the stand clock): the default of ``created_at`` / ``updated_at`` / ``joined_at`` / ``changed_at`` / ``occurred_at`` of every table that the
+# business rules read (money, schedule, attendance, journals, memberships) is the BUSINESS clock, ``bc.utc_now`` - one "now" for the rule and for the
+# row; the ``server_default`` of the database stays as the fallback of a raw insert.  The real-clock islands (users, sessions, diagnostic invites
+# and results here; the platform, support and analytics models) keep the database clock.  ``tests/test_time_defaults_guard.py`` parses the models.
 # ============================================================================
 # ORGANIZATION
 # ============================================================================
@@ -77,8 +82,8 @@ class Organization(Base):
     # см. student_id_service.ensure_org_prefix.
     student_id_prefix = Column(String(16), nullable=True)
 
-    created_at = Column(DateTime, default=func.now())
-    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+    created_at = Column(DateTime, default=bc.utc_now)
+    updated_at = Column(DateTime, default=bc.utc_now, onupdate=bc.utc_now)
 
     members = relationship(
         "OrganizationMember", back_populates="organization", lazy="dynamic"
@@ -291,7 +296,7 @@ class OrganizationMember(Base):
     )
     org_role = Column(String(20), nullable=False, default="teacher")
     is_active = Column(Boolean, default=True)
-    joined_at = Column(DateTime, default=func.now())
+    joined_at = Column(DateTime, default=bc.utc_now)
     invited_by = Column(UUID(as_uuid=True), ForeignKey("users.id"))
 
     organization = relationship("Organization", back_populates="members")
@@ -327,7 +332,7 @@ class Invitation(Base):
     expires_at = Column(DateTime, nullable=False)
     accepted_at = Column(DateTime)
     accepted_by = Column(UUID(as_uuid=True), ForeignKey("users.id"))
-    created_at = Column(DateTime, default=func.now())
+    created_at = Column(DateTime, default=bc.utc_now)
     # K2-2 (G2): the letter goes in the background; ``mail_status`` says where it is (pending -> sent | failed), ``mail_status_at`` when that was set
     mail_status = Column(String(10), nullable=False, default="sent", server_default="sent")
     mail_status_at = Column(DateTime)
@@ -402,8 +407,8 @@ class Student(Base):
     archived_at = Column(DateTime, nullable=True)
     archive_reason = Column(String(300), nullable=True)
     created_by = Column(UUID(as_uuid=True), ForeignKey("users.id"))
-    created_at = Column(DateTime, default=func.now())
-    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+    created_at = Column(DateTime, default=bc.utc_now)
+    updated_at = Column(DateTime, default=bc.utc_now, onupdate=bc.utc_now)
 
     organization = relationship("Organization", back_populates="students")
     primary_group = relationship("Group", foreign_keys=[group_id])
@@ -485,8 +490,8 @@ class Group(Base):
     # retried (idempotent) by the next archive-related call and by ``scripts/sweep_exam_releases.py``.
     exam_release_pending = Column(Boolean, nullable=False, default=False, server_default=text("false"))
 
-    created_at = Column(DateTime, default=func.now())
-    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+    created_at = Column(DateTime, default=bc.utc_now)
+    updated_at = Column(DateTime, default=bc.utc_now, onupdate=bc.utc_now)
 
     organization = relationship("Organization", back_populates="groups")
     teacher = relationship("User", foreign_keys=[teacher_id])
@@ -534,7 +539,7 @@ class StudentAudit(Base):
     action = Column(String(30), nullable=False, default="profile_updated", server_default="profile_updated")
     changes = Column(JSONB, nullable=False)
     # UTC wall time from the database itself (the same expression as the migration sa1b2c3d4e5: no schema drift between create_all and alembic)
-    created_at = Column(DateTime, nullable=False, server_default=text("timezone('utc', now())"))
+    created_at = Column(DateTime, nullable=False, default=bc.utc_now, server_default=text("timezone('utc', now())"))
 
     __table_args__ = (
         CheckConstraint("actor_role IN ('owner', 'admin', 'teacher')", name="ck_student_audit_actor_role"),
@@ -566,7 +571,7 @@ class GroupAudit(Base):
     action = Column(String(30), nullable=False)
     assigned_teacher_id = Column(UUID(as_uuid=True), ForeignKey("users.id"))
     snapshot = Column(JSONB, nullable=False)
-    created_at = Column(DateTime, default=func.now(), nullable=False)
+    created_at = Column(DateTime, default=bc.utc_now, nullable=False)
 
     __table_args__ = (
         CheckConstraint(
@@ -607,7 +612,7 @@ class StudentGroup(Base):
         UUID(as_uuid=True), ForeignKey("groups.id", ondelete="CASCADE"), nullable=False
     )
     is_active = Column(Boolean, default=True)
-    joined_at = Column(DateTime, default=func.now())
+    joined_at = Column(DateTime, default=bc.utc_now)
     left_at = Column(DateTime)
 
     # This acknowledgement belongs to the concrete membership, rather than
@@ -674,7 +679,7 @@ class GroupPrice(Base):
     valid_from = Column(Date, nullable=False)
     note = Column(String(200), nullable=True)
     created_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
-    created_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
+    created_at = Column(DateTime, nullable=False, default=bc.utc_now)
 
     __table_args__ = (
         UniqueConstraint("group_id", "valid_from", name="uq_group_prices_group_from"),
@@ -701,7 +706,7 @@ class MembershipPriceOverride(Base):
     valid_from = Column(Date, nullable=False)
     reason = Column(String(200), nullable=True)
     created_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
-    created_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
+    created_at = Column(DateTime, nullable=False, default=bc.utc_now)
 
     __table_args__ = (
         UniqueConstraint("membership_id", "valid_from", name="uq_membership_price_overrides_from"),
@@ -732,7 +737,7 @@ class StudentGroupPeriod(Base):
     )
     joined_at = Column(DateTime, nullable=False)
     left_at = Column(DateTime, nullable=True)
-    created_at = Column(DateTime, nullable=False, server_default=func.now())
+    created_at = Column(DateTime, nullable=False, default=bc.utc_now, server_default=func.now())
     # Money-1 B1 «Оплата с»: the first day this stay is CHARGED from (business date); NULL = the day he joined.  The roster / attendance still follow ``joined_at``.
     billing_from = Column(Date, nullable=True)
 
@@ -770,7 +775,7 @@ def give_new_memberships_a_period(session, flush_context, instances):
             continue
         started = _as_naive_utc(obj.joined_at)
         if started is None:
-            started = datetime.now(timezone.utc).replace(tzinfo=None)
+            started = bc.utc_now()
             obj.joined_at = started
         active = obj.is_active is not False  # NULL = the column default, true
         left = None
@@ -993,8 +998,8 @@ class GroupAttendance(Base):
 
     # TIME_CONVENTIONS: ``started_at`` / ``completed_at`` are TASHKENT wall time, ``created_at`` / ``updated_at`` are
     # UTC.  Compare them only through ``src/auth/business_clock.py``.
-    created_at = Column(DateTime, default=func.now())
-    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+    created_at = Column(DateTime, default=bc.utc_now)
+    updated_at = Column(DateTime, default=bc.utc_now, onupdate=bc.utc_now)
 
     group = relationship("Group")
 
@@ -1051,7 +1056,7 @@ class OrgDayOff(Base):
     date_to = Column(Date, nullable=False)
     reason = Column(String(200), nullable=False)
     created_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
-    created_at = Column(DateTime, default=func.now(), nullable=False)
+    created_at = Column(DateTime, default=bc.utc_now, nullable=False)
     voided_at = Column(DateTime, nullable=True)
     voided_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     # What voiding the day off gave back (the cancellation rows are deleted): [{groupId, groupName, lessonId, date, cancelledBy, cancelledAt, reason}]
@@ -1103,7 +1108,7 @@ class GroupAttendanceAudit(Base):
     cancellation_reason = Column(String(500))
     # Structured facts of the event (excuse decisions, files); ids only, no names.
     details = Column(JSONB, nullable=True)
-    created_at = Column(DateTime, default=func.now(), nullable=False)
+    created_at = Column(DateTime, default=bc.utc_now, nullable=False)
 
     __table_args__ = (
         CheckConstraint(
@@ -1229,7 +1234,7 @@ class LessonTeacherAssignment(Base):
     teacher_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
     reason = Column(String(300), nullable=False)
     set_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
-    created_at = Column(DateTime, default=func.now(), nullable=False)
+    created_at = Column(DateTime, default=bc.utc_now, nullable=False)
     cancelled_at = Column(DateTime, nullable=True)
     cancelled_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
 
@@ -1282,8 +1287,8 @@ class LessonSubstitutionRequest(Base):
     moved_to_end = Column(String(5), nullable=True)
     closed_reason = Column(String(30), nullable=True)
     previous_request_id = Column(UUID(as_uuid=True), ForeignKey("lesson_substitution_requests.id", ondelete="SET NULL"), nullable=True)
-    created_at = Column(DateTime, nullable=False, default=func.now())
-    updated_at = Column(DateTime, nullable=False, default=func.now(), onupdate=func.now())
+    created_at = Column(DateTime, nullable=False, default=bc.utc_now)
+    updated_at = Column(DateTime, nullable=False, default=bc.utc_now, onupdate=bc.utc_now)
 
     __table_args__ = (
         CheckConstraint(
@@ -1314,7 +1319,7 @@ class LessonSubstitutionEvent(Base):
     actor_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
     action = Column(String(24), nullable=False)
     snapshot = Column(JSONB, nullable=False, default=dict)
-    created_at = Column(DateTime, nullable=False, default=func.now())
+    created_at = Column(DateTime, nullable=False, default=bc.utc_now)
 
     __table_args__ = (
         CheckConstraint(
@@ -1339,7 +1344,7 @@ class MemberAudit(Base):
     actor_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
     action = Column(String(30), nullable=False)
     snapshot = Column(JSONB, nullable=False, default=dict)
-    created_at = Column(DateTime, default=func.now(), nullable=False)
+    created_at = Column(DateTime, default=bc.utc_now, nullable=False)
 
     __table_args__ = (
         CheckConstraint(
@@ -1374,8 +1379,8 @@ class GroupScheduleOverride(Base):
     payload = Column(JSONB, nullable=False)
     reason = Column(String(500), nullable=False)
     changed_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
-    created_at = Column(DateTime, default=func.now(), nullable=False)
-    updated_at = Column(DateTime, default=func.now(), onupdate=func.now(), nullable=False)
+    created_at = Column(DateTime, default=bc.utc_now, nullable=False)
+    updated_at = Column(DateTime, default=bc.utc_now, onupdate=bc.utc_now, nullable=False)
 
     __table_args__ = (
         UniqueConstraint(
@@ -1410,8 +1415,8 @@ class GroupScheduleOneOffLesson(Base):
     lesson_date = Column(String(10), nullable=False)  # YYYY-MM-DD
     payload = Column(JSONB, nullable=False)
     created_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
-    created_at = Column(DateTime, default=func.now(), nullable=False)
-    updated_at = Column(DateTime, default=func.now(), onupdate=func.now(), nullable=False)
+    created_at = Column(DateTime, default=bc.utc_now, nullable=False)
+    updated_at = Column(DateTime, default=bc.utc_now, onupdate=bc.utc_now, nullable=False)
     # #154: what the lesson is for.  ``makeup`` = a make-up of a cancelled lesson (money as an ordinary lesson), ``extra`` = an additional lesson (free for the students whatever
     # their mode of payment; the teacher: ``money``), ``moved`` = the copy a move of a lesson made (nothing changes).  The kind is THIS column, never the prefix of the id.
     purpose = Column(String(10), nullable=False)
@@ -1453,7 +1458,7 @@ class GroupScheduleAudit(Base):
     before_payload = Column(JSONB, nullable=True)
     after_payload = Column(JSONB, nullable=False)
     reason = Column(String(500), nullable=False)
-    created_at = Column(DateTime, default=func.now(), nullable=False)
+    created_at = Column(DateTime, default=bc.utc_now, nullable=False)
 
     __table_args__ = (
         CheckConstraint(
@@ -1522,7 +1527,7 @@ class StudentPayment(Base):
     # only what happened while the student was still in the group.  NULL = it did not move.
     carried_out_at = Column(DateTime, nullable=True)
     created_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
-    created_at = Column(DateTime, nullable=False, default=func.now(), server_default=func.now())
+    created_at = Column(DateTime, nullable=False, default=bc.utc_now, server_default=func.now())
     voided_at = Column(DateTime, nullable=True)
     voided_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
     void_reason = Column(String(500), nullable=True)
@@ -1634,7 +1639,7 @@ class StudentWriteoff(Base):
     reason = Column(String(500), nullable=False)
     effective_on = Column(Date, nullable=False)
     created_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
-    created_at = Column(DateTime, nullable=False, default=func.now(), server_default=func.now())
+    created_at = Column(DateTime, nullable=False, default=bc.utc_now, server_default=func.now())
     voided_at = Column(DateTime, nullable=True)
     voided_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
     void_reason = Column(String(500), nullable=True)
@@ -1670,7 +1675,7 @@ class StudentRefund(Base):
     note = Column(String(500), nullable=True)
     effective_on = Column(Date, nullable=False)
     created_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
-    created_at = Column(DateTime, nullable=False, default=func.now(), server_default=func.now())
+    created_at = Column(DateTime, nullable=False, default=bc.utc_now, server_default=func.now())
     voided_at = Column(DateTime, nullable=True)
     voided_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
     void_reason = Column(String(500), nullable=True)
@@ -1711,7 +1716,7 @@ class MembershipTransfer(Base):
     to_membership_id = Column(UUID(as_uuid=True), ForeignKey("student_groups.id", ondelete="RESTRICT"), nullable=False)
     at = Column(DateTime, nullable=False)  # naive UTC, the instant of left_at / joined_at
     created_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
-    created_at = Column(DateTime, nullable=False, default=func.now(), server_default=func.now())
+    created_at = Column(DateTime, nullable=False, default=bc.utc_now, server_default=func.now())
     voided_at = Column(DateTime, nullable=True)
     voided_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
     void_reason = Column(String(500), nullable=True)
@@ -1733,7 +1738,7 @@ class PaymentReceiptSnapshot(Base):
     payment_id = Column(UUID(as_uuid=True), ForeignKey("student_payments.id", ondelete="CASCADE"), primary_key=True)
     org_id = Column(UUID(as_uuid=True), nullable=False)
     snapshot = Column(JSONB, nullable=False)
-    created_at = Column(DateTime, nullable=False, default=func.now(), server_default=func.now())
+    created_at = Column(DateTime, nullable=False, default=bc.utc_now, server_default=func.now())
 
 
 # ============================================================================
@@ -1768,9 +1773,9 @@ class PayrollSheet(Base):
     source_fingerprint = Column(Text, nullable=False)
     revision = Column(Integer, nullable=False, default=1, server_default="1")
     created_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
-    created_at = Column(DateTime, nullable=False, default=func.now(), server_default=func.now())
+    created_at = Column(DateTime, nullable=False, default=bc.utc_now, server_default=func.now())
     updated_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
-    updated_at = Column(DateTime, nullable=False, default=func.now(), server_default=func.now())
+    updated_at = Column(DateTime, nullable=False, default=bc.utc_now, server_default=func.now())
     # Money-1 (I-4): the unresolved lessons of the month that the owner CONFIRMED when he saved the sheet after the month ended (``confirm_open_lessons: true``): a list of keys
     # ``"<lessonDate>|<groupId>|<lessonId>"``.  Replaced by every save of the sheet (a save without the question clears it); a reopening and a recalculation (PATCH) leave it as it is.
     # The nightly reconciliation does not call a lesson of this list a failure of the system: it is a decision of the centre.
@@ -1809,7 +1814,7 @@ class PayrollSheetRevision(Base):
     lines = Column(JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb"))
     total_amount = Column(BigInteger, nullable=False, default=0, server_default="0")
     changed_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
-    changed_at = Column(DateTime, nullable=False, default=func.now(), server_default=func.now())
+    changed_at = Column(DateTime, nullable=False, default=bc.utc_now, server_default=func.now())
     change_note = Column(String(300), nullable=True)
 
     sheet = relationship("PayrollSheet", back_populates="revisions")
@@ -1840,7 +1845,7 @@ class PayrollRate(Base):
     valid_from = Column(Date, nullable=False)
     note = Column(String(300), nullable=True)
     created_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
-    created_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
+    created_at = Column(DateTime, nullable=False, default=bc.utc_now)
 
     __table_args__ = (
         CheckConstraint(
@@ -1876,7 +1881,7 @@ class MembershipPause(Base):
     last_day = Column(Date, nullable=False)
     reason = Column(String(300), nullable=True)
     created_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
-    created_at = Column(DateTime, nullable=False, default=func.now(), server_default=func.now())
+    created_at = Column(DateTime, nullable=False, default=bc.utc_now, server_default=func.now())
     voided_at = Column(DateTime, nullable=True)
     voided_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
     void_reason = Column(String(500), nullable=True)
@@ -1903,7 +1908,7 @@ class OrgMoneyAudit(Base):
     org_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False)
     actor_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
     action = Column(String(40), nullable=False)
-    occurred_at = Column(DateTime, nullable=False, default=func.now(), server_default=func.now())
+    occurred_at = Column(DateTime, nullable=False, default=bc.utc_now, server_default=func.now())
     details = Column(JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb"))
 
     __table_args__ = (Index("ix_org_money_audit_org_time", "org_id", "occurred_at"),)
@@ -1929,7 +1934,7 @@ class MembershipOpeningBalance(Base):
     note = Column(String(300), nullable=True)
     source = Column(String(10), nullable=False, default="manual", server_default="manual")
     created_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
-    created_at = Column(DateTime, nullable=False, default=func.now(), server_default=func.now())
+    created_at = Column(DateTime, nullable=False, default=bc.utc_now, server_default=func.now())
     voided_at = Column(DateTime, nullable=True)
     voided_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
     void_reason = Column(String(500), nullable=True)
@@ -1960,7 +1965,7 @@ class GroupLessonTypeHistory(Base):
     valid_from = Column(Date, nullable=False)
     lesson_type = Column(String(16), nullable=False)
     created_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
-    created_at = Column(DateTime, nullable=False, default=func.now(), server_default=func.now())
+    created_at = Column(DateTime, nullable=False, default=bc.utc_now, server_default=func.now())
 
     __table_args__ = (
         UniqueConstraint("group_id", "valid_from", name="uq_group_lesson_type_from"),
@@ -1982,7 +1987,7 @@ class PayrollDivisor(Base):
     divisor = Column(SmallInteger, nullable=False)
     note = Column(String(300), nullable=True)
     created_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
-    created_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
+    created_at = Column(DateTime, nullable=False, default=bc.utc_now)
 
     __table_args__ = (
         CheckConstraint("EXTRACT(DAY FROM valid_from) = 1", name="ck_payroll_divisors_first_day"),
@@ -2011,7 +2016,7 @@ class PayrollPayout(Base):
     sheet_total = Column(BigInteger, nullable=False)
     idempotency_key = Column(UUID(as_uuid=True), nullable=True)
     created_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
-    created_at = Column(DateTime, nullable=False, default=func.now(), server_default=func.now())
+    created_at = Column(DateTime, nullable=False, default=bc.utc_now, server_default=func.now())
     voided_at = Column(DateTime, nullable=True)
     voided_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
     void_reason = Column(String(500), nullable=True)
@@ -2050,7 +2055,7 @@ class PayrollPeriodReopening(Base):
     sheet_revision = Column(Integer, nullable=False)
     reopened_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
     reason = Column(String(500), nullable=False)
-    created_at = Column(DateTime, nullable=False, default=func.now(), server_default=func.now())
+    created_at = Column(DateTime, nullable=False, default=bc.utc_now, server_default=func.now())
 
     __table_args__ = (
         CheckConstraint("EXTRACT(DAY FROM period_month) = 1", name="ck_payroll_reopenings_first_day"),
@@ -2065,7 +2070,7 @@ class MoneyReconcileRun(Base):
     __tablename__ = "money_reconcile_runs"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
-    started_at = Column(DateTime, nullable=False, default=func.now(), server_default=func.now())
+    started_at = Column(DateTime, nullable=False, default=bc.utc_now, server_default=func.now())
     finished_at = Column(DateTime, nullable=True)
     status = Column(String(12), nullable=False, default="running", server_default="running")  # running | clean | findings | failed | partial | rebaselined
     centres_checked = Column(Integer, nullable=False, default=0, server_default="0")
@@ -2098,7 +2103,7 @@ class MoneyReconcileFinding(Base):
     actual = Column(BigInteger, nullable=True)
     details = Column(JSONB, nullable=True)
     is_new = Column(Boolean, nullable=False, default=True, server_default=text("true"))
-    created_at = Column(DateTime, nullable=False, default=func.now(), server_default=func.now())
+    created_at = Column(DateTime, nullable=False, default=bc.utc_now, server_default=func.now())
 
     __table_args__ = (
         CheckConstraint("invariant IN ('I-1', 'I-2', 'I-3', 'I-4', 'I-5')", name="ck_money_reconcile_findings_invariant"),
@@ -2117,7 +2122,7 @@ class MoneyReconcileSnapshot(Base):
     covered_through = Column(Date, nullable=True)
     lessons_covered = Column(Integer, nullable=True)
     paid = Column(BigInteger, nullable=True)          # the gross sum of the payments the ledger counts: it moves only with a record (a payment made / cancelled)
-    taken_at = Column(DateTime, nullable=False, default=func.now(), server_default=func.now())
+    taken_at = Column(DateTime, nullable=False, default=bc.utc_now, server_default=func.now())
 
     __table_args__ = (Index("ix_money_reconcile_snapshots_org", "org_id"),)
 
@@ -2154,6 +2159,6 @@ class MoneyRowBaseline(Base):
     void_fingerprint = Column(String(32), nullable=True)
     accepted = Column(JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb"))  # state-based finding codes the team accepted for this row
     first_run_id = Column(UUID(as_uuid=True), ForeignKey("money_reconcile_runs.id", ondelete="SET NULL"), nullable=True)
-    first_seen_at = Column(DateTime, nullable=False, default=func.now(), server_default=func.now())
+    first_seen_at = Column(DateTime, nullable=False, default=bc.utc_now, server_default=func.now())
 
     __table_args__ = (Index("ix_money_row_baseline_org", "org_id"),)

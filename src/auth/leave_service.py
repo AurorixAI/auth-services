@@ -227,10 +227,10 @@ class LeaveService:
     # ---- settling (inside the caller's transaction; the stays are already closed and flushed)
 
     def settle(
-        self, org_id: str, memberships: Sequence[StudentGroup], items: Sequence[SettleItem], actor_id: str, actor_role: str, *, money: bool,
+        self, org_id: str, memberships: Sequence[StudentGroup], items: Sequence[SettleItem], actor_id: str, actor_role: str, *, money: bool, at: Optional[datetime] = None,
     ) -> List[SettledOut]:
         """Carry out the choices.  Raises ``PaymentError`` (the caller rolls back): 403 without access to money, 422 for a bad choice,
-        409 ``BALANCE_CHANGED`` when the numbers moved."""
+        409 ``BALANCE_CHANGED`` when the numbers moved.  ``at``: the one moment of the whole action (leave / archive) - the rows of the settlement carry it too."""
         todo = [i for i in items if i.action != "keep"]
         if not todo:
             return []
@@ -262,7 +262,7 @@ class LeaveService:
                              refundable=after[by_id[i.membership_id].id][1]).model_dump() for i in todo])
         # 2. validation of what the choice needs
         out: List[SettledOut] = []
-        now = _utcnow()
+        now = (at.astimezone(timezone.utc).replace(tzinfo=None) if at is not None and at.tzinfo is not None else at) or _utcnow()
         for item in todo:
             membership = by_id[item.membership_id]
             ledger, refundable = after[membership.id]
@@ -281,7 +281,7 @@ class LeaveService:
                     "actor_id": str(actor_id), "membership_id": str(membership.id), "student_id": str(membership.student_id),
                     "writeoff_id": str(row.id), "amount": int(row.amount), "reason": reason, "effective_on": today.isoformat(),
                     "debt_before": ledger.debt, "debt_after": 0, "at_leave": True,
-                    "expected_debt": item.expected_debt})        # the numbers the client saw (null: it sent none) and the ones used
+                    "expected_debt": item.expected_debt}, at=now)        # the numbers the client saw (null: it sent none) and the ones used
                 out.append(SettledOut(membership_id=item.membership_id, action="writeoff", amount=int(row.amount), writeoff_id=str(row.id)))
             else:
                 if not item.method:
@@ -298,7 +298,7 @@ class LeaveService:
                     "actor_id": str(actor_id), "membership_id": str(membership.id), "student_id": str(membership.student_id),
                     "refund_id": str(row.id), "amount": int(refundable), "method": item.method, "effective_on": today.isoformat(),
                     "advance_before": ledger.advance, "advance_after": max(0, ledger.advance - int(refundable)), "debt_before": ledger.debt, "debt_after": ledger.debt, "at_leave": True,
-                    "expected_refundable": item.expected_refundable, "refundable_used": refundable})
+                    "expected_refundable": item.expected_refundable, "refundable_used": refundable}, at=now)
                 out.append(SettledOut(membership_id=item.membership_id, action="refund", amount=int(refundable), refund_id=str(row.id)))
         self.pay._family_check(org_id, [m.id for m in memberships])
         return out
@@ -339,20 +339,22 @@ class LeaveService:
             svc._lock_groups_for_membership_change(org_id, [group.id])
             svc._assert_no_open_attendance_for_groups(org_id, [group.id])
             before_close = leave_effects.snapshot(self.db, org_id, [sg], ps.business_today())      # Money-2 T3: read before the stay is closed
-            now = bc.utc_now().replace(tzinfo=timezone.utc)   # DM-005: the one clock
+            moment = bc.utc_now()   # DM-005: the one clock; TIME-TESTS: this ONE moment stamps the closed stay, the settlement rows and the journal line of the leave
+            now = moment.replace(tzinfo=timezone.utc)
             close_stay(self.db, sg, now, actor_id, "leave")
             if str(student.group_id or "") == str(group.id):
                 successor = (self.db.query(StudentGroup).join(Group, Group.id == StudentGroup.group_id)
                              .filter(StudentGroup.student_id == student.id, StudentGroup.is_active.is_(True), Group.org_id == org_id)
                              .order_by((Group.status != "active"), StudentGroup.joined_at, StudentGroup.id).first())
                 student.group_id = successor.group_id if successor else None
-            settled = self.settle(org_id, [sg], body.settle if body else [], actor_id, actor_role, money=money)
+            settled = self.settle(org_id, [sg], body.settle if body else [], actor_id, actor_role, money=money, at=moment)
             self.db.add(GroupAudit(
                 org_id=UUID(str(org_id)), group_id=group.id, actor_id=UUID(str(actor_id)),
                 actor_role=actor_role if actor_role in ("owner", "admin", "teacher") else "admin",
                 action=AUDIT_LEFT, assigned_teacher_id=group.teacher_id,
                 snapshot={"student_id": str(student.id), "membership_id": str(sg.id), "reason": (body.reason if body else None),
-                          "settled": [s.model_dump() for s in settled]}))
+                          "settled": [s.model_dump() for s in settled]},
+                created_at=moment))
             self.db.commit()
         except PaymentError:
             self.db.rollback()

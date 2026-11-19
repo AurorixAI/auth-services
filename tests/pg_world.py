@@ -24,6 +24,7 @@ from src.auth.schemas import (  # noqa: E402
     StartAttendanceRequest,
 )
 from src.auth.ops_schemas import SaveAttendanceRequestB  # noqa: E402
+from src.auth import business_clock as bc  # noqa: E402
 from src.auth.service import BUSINESS_TIMEZONE, AuthService  # noqa: E402
 from src.models.auth import (  # noqa: E402
     Group,
@@ -172,7 +173,7 @@ def give_price(db, membership, amount, *, reason="тест", valid_from=EPOCH):
         row = db.query(MembershipPriceOverride).filter_by(membership_id=membership.id, valid_from=valid_from).first()
         if row is None:
             db.add(MembershipPriceOverride(membership_id=membership.id, amount=amount, valid_from=valid_from,
-                                           reason=reason, created_at=datetime.utcnow()))
+                                           reason=reason, created_at=bc.utc_now()))
         else:
             row.amount, row.reason = amount, reason
     db.commit()
@@ -188,7 +189,7 @@ def give_group_price(db, group, amount, valid_from=EPOCH, note=None):
         row = db.query(GroupPrice).filter_by(group_id=group.id, valid_from=valid_from).first()
         if row is None:
             db.add(GroupPrice(group_id=group.id, amount=amount, valid_from=valid_from, note=note,
-                              created_at=datetime.utcnow()))
+                              created_at=bc.utc_now()))
         else:
             row.amount = amount
     db.commit()

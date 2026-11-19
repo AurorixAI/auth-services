@@ -1548,9 +1548,9 @@ class PaymentService:
 
     def _insert(
         self, membership: StudentGroup, org_id: str, actor_id: str, data: PaymentCreate, method: str,
-        key: Optional[UUID], *, replaces: Optional[StudentPayment] = None,
+        key: Optional[UUID], *, replaces: Optional[StudentPayment] = None, at: Optional[datetime] = None,
     ) -> StudentPayment:
-        created_at = _utcnow()
+        created_at = at or _utcnow()              # TIME-TESTS: the action gives its one moment
         return self._add_with_receipt(
             org_id,
             lambda receipt_no: StudentPayment(
@@ -1636,13 +1636,13 @@ class PaymentService:
     ) -> None:
         """Where the money went AT THE MOMENT (the printed receipt); the statement always shows the fact."""
         snap = ReceiptSnapshot(
-            computed_at=_utcnow().isoformat(), business_date=today, amount=int(payment.amount), method=method,
+            computed_at=payment.created_at.isoformat(), business_date=today, amount=int(payment.amount), method=method,
             allocations=pv.allocations_of(after, str(payment.id)), debt_before=before.debt, debt_after=after.debt,
             advance_after=after.advance, paid_until_before=before.status.paid_until, paid_until_after=after.status.paid_until,
             price=SnapshotPrice(amount=price.amount, source=price.source), mode=after.mode,
             recalc=self._recalc_news(payment.membership_id, after, exclude_payment=payment.id),
         )
-        self.db.add(PaymentReceiptSnapshot(payment_id=payment.id, org_id=UUID(str(org_id)),
+        self.db.add(PaymentReceiptSnapshot(payment_id=payment.id, org_id=UUID(str(org_id)), created_at=payment.created_at,
                                            snapshot=snap.model_dump(mode="json")))
 
     def _created(self, org_id: str, payment: StudentPayment, before: bl.Ledger, today: date, moved: Optional["_Moved"] = None) -> PaymentCreated:
@@ -1675,7 +1675,7 @@ class PaymentService:
             before = before_entry[0].ledger
             if self._is_left(membership):
                 self._check_left_ceiling(data.amount, before.debt)
-            payment = self._insert(membership, org_id, actor_id, data, method, idempotency_key)
+            payment = self._insert(membership, org_id, actor_id, data, method, idempotency_key, at=_utcnow())
             after_entry = self._loader(org_id, today).run([membership_id])[0]
             self._save_snapshot(org_id, payment, before, after_entry.ledger, after_entry.price, today, method)
             self.db.commit()
@@ -1758,7 +1758,8 @@ class PaymentService:
             was = self._accounts(org_id, family)
             before = was[membership.id].ledger
             data = PaymentCreate(amount=int(old.amount), paid_on=old.paid_on, note=old.note)
-            payment = self._insert(membership, org_id, actor_id, data, old.method or "other", None, replaces=old)
+            moment = _utcnow()
+            payment = self._insert(membership, org_id, actor_id, data, old.method or "other", None, replaces=old, at=moment)
             files_moved = self._copy_files(old, payment)
             now = self._accounts(org_id, family)
             after_entry = now[membership.id]
@@ -1769,7 +1770,7 @@ class PaymentService:
                 "actor_id": str(actor_id), "membership_id": str(membership.id), "student_id": str(membership.student_id),
                 "payment_id": str(old.id), "new_payment_id": str(payment.id), "receipt_no": old.receipt_no, "new_receipt_no": payment.receipt_no,
                 "amount": int(old.amount), "new_amount": int(payment.amount), "paid_on": old.paid_on.isoformat(), "new_paid_on": payment.paid_on.isoformat(),
-                "method": old.method, "new_method": payment.method, "cancelled_reason": old.void_reason, "reason": reason, **moved.audit_fields()}, consequence=consequence)
+                "method": old.method, "new_method": payment.method, "cancelled_reason": old.void_reason, "reason": reason, **moved.audit_fields()}, consequence=consequence, at=moment)
             self._family_check(org_id, family)
             self.db.commit()
         except PaymentError:
@@ -1820,11 +1821,12 @@ class PaymentService:
             before = bl.run_ledger(before_inp)
             if self._is_left(membership):
                 self._check_left_correction(org_id, data.amount, before.debt, old)          # С1: the same sum (a new date, a new method) always fits
-            old.voided_at = _utcnow()
+            moment = _utcnow()              # TIME-TESTS: the one moment of the action - the old row is cancelled, the new one is made, the journal line is written at it
+            old.voided_at = moment
             old.voided_by = UUID(str(actor_id))
             old.void_reason = reason
             self.db.flush()
-            payment = self._insert(membership, org_id, actor_id, data, method, idempotency_key, replaces=old)
+            payment = self._insert(membership, org_id, actor_id, data, method, idempotency_key, replaces=old, at=moment)
             # Money-1 V10 (ОП-09): the photo of the cheque goes with the correction (the old payment keeps its own copy as the trace); R3 К9: ONE ``INSERT ... SELECT`` in the database, the bytes never reach Python
             files_moved = self._copy_files(old, payment)
             now = self._accounts(org_id, family)
@@ -1836,7 +1838,7 @@ class PaymentService:
                 "actor_id": str(actor_id), "membership_id": str(membership.id), "student_id": str(membership.student_id),
                 "payment_id": str(old.id), "new_payment_id": str(payment.id), "receipt_no": old.receipt_no, "new_receipt_no": payment.receipt_no,
                 "amount": int(old.amount), "new_amount": int(payment.amount), "paid_on": old.paid_on.isoformat(), "new_paid_on": payment.paid_on.isoformat(),
-                "method": old.method, "new_method": payment.method, "reason": old.void_reason, **moved.audit_fields()}, consequence=consequence)
+                "method": old.method, "new_method": payment.method, "reason": old.void_reason, **moved.audit_fields()}, consequence=consequence, at=moment)
             self._family_check(org_id, family)
             self.db.commit()
         except PaymentError:
@@ -1861,7 +1863,8 @@ class PaymentService:
             payment = self._lock_payment(org_id, payment_id)
             self._check_backdate(payment.paid_on, ps.business_today(), actor_role, changing=True)      # R3 П4: an administrator does not cancel an old record
             was = self._accounts(org_id, family)
-            payment.voided_at = _utcnow()
+            moment = _utcnow()
+            payment.voided_at = moment
             payment.voided_by = UUID(str(actor_id))
             payment.void_reason = reason
             self.db.flush()
@@ -1870,7 +1873,7 @@ class PaymentService:
             self._audit(org_id, membership, actor_id, actor_role, AUDIT_PAYMENT_VOID, {
                 "actor_id": str(actor_id), "membership_id": str(membership.id), "student_id": str(membership.student_id),
                 "payment_id": str(payment.id), "receipt_no": payment.receipt_no, "amount": int(payment.amount), "paid_on": payment.paid_on.isoformat(),
-                "method": payment.method, "reason": reason, **moved.audit_fields()}, consequence=consequence)
+                "method": payment.method, "reason": reason, **moved.audit_fields()}, consequence=consequence, at=moment)
             self._family_check(org_id, family)
             self.db.commit()
         except PaymentError:
@@ -1916,14 +1919,14 @@ class PaymentService:
     # ------------------------------------------------ write-off and refund
 
     def _audit(self, org_id: str, membership: StudentGroup, actor_id: str, actor_role: str, action: str,
-               snapshot: Dict[str, Any], consequence: Optional[Dict[str, str]] = None) -> None:
+               snapshot: Dict[str, Any], consequence: Optional[Dict[str, str]] = None, at: Optional[datetime] = None) -> None:
         """One line of the journal of decisions, in the transaction of the action.  ``consequence`` (G3M Р3-2): the payroll sentence of the answer, worked out before the real run (``money_effects.run_with_effects(journal=True)``)."""
         snapshot = {**snapshot, **(consequence or {})}
         self.db.add(
             GroupAudit(
                 org_id=UUID(str(org_id)), group_id=membership.group_id, actor_id=UUID(str(actor_id)),
                 actor_role=actor_role if actor_role in ("owner", "admin", "teacher") else "admin",
-                action=action, snapshot=snapshot, created_at=_utcnow(),      # the one clock (Money-1 V2: the journal of decisions reads the business day of this moment)
+                action=action, snapshot=snapshot, created_at=at or _utcnow(),      # the one clock (Money-1 V2: the journal of decisions reads the business day of this moment)
             )
         )
 
@@ -2057,10 +2060,11 @@ class PaymentService:
                 raise WriteoffExceedsDebt(
                     f"Простить можно не больше долга: {_sum(before.debt)}" if before.debt else "Долга нет — прощать нечего",
                     debt=before.debt)
+            moment = _utcnow()
             row = StudentWriteoff(
                 org_id=UUID(str(org_id)), membership_id=membership.id, student_id=membership.student_id,
                 group_id=membership.group_id, amount=amount, reason=reason, effective_on=effective_on,
-                created_by=UUID(str(actor_id)), created_at=_utcnow(), idempotency_key=idempotency_key,
+                created_by=UUID(str(actor_id)), created_at=moment, idempotency_key=idempotency_key,
             )
             self.db.add(row)
             self.db.flush()
@@ -2069,7 +2073,7 @@ class PaymentService:
                 "actor_id": str(actor_id), "membership_id": str(membership.id), "student_id": str(membership.student_id),
                 "writeoff_id": str(row.id), "amount": int(amount), "reason": reason, "effective_on": effective_on.isoformat(),
                 "debt_before": before.debt, "debt_after": after.debt, "advance_before": before.advance,
-                "advance_after": after.advance}, consequence=consequence)
+                "advance_after": after.advance}, consequence=consequence, at=moment)
             self.db.commit()
         except PaymentError:
             self.db.rollback()
@@ -2105,14 +2109,15 @@ class PaymentService:
             self._check_backdate(row.effective_on, today, actor_role, changing=True)      # R3 П4
             before = self._entry_of(org_id, row.membership_id, today).ledger
             self._check_seen("debt", expected_debt, before.debt, debt=before.debt, advance=before.advance)
-            row.voided_at, row.voided_by, row.void_reason = _utcnow(), UUID(str(actor_id)), reason
+            moment = _utcnow()
+            row.voided_at, row.voided_by, row.void_reason = moment, UUID(str(actor_id)), reason
             self.db.flush()
             after = self._entry_of(org_id, row.membership_id, today).ledger
             self._audit(org_id, membership, actor_id, actor_role, AUDIT_WRITEOFF_VOID, {
                 "actor_id": str(actor_id), "membership_id": str(membership.id), "student_id": str(membership.student_id),
                 "writeoff_id": str(row.id), "amount": int(row.amount), "reason": reason, "effective_on": row.effective_on.isoformat(),
                 "debt_before": before.debt, "debt_after": after.debt, "advance_before": before.advance,
-                "advance_after": after.advance}, consequence=consequence)
+                "advance_after": after.advance}, consequence=consequence, at=moment)
             self.db.commit()
         except PaymentError:
             self.db.rollback()
@@ -2153,18 +2158,19 @@ class PaymentService:
             limit = bl.refund_limit(inp, effective_on)
             if amount > limit.amount:
                 raise RefundExceedsAdvance(self._refund_refusal(limit, membership.id), refundable=limit.amount)
+            moment = _utcnow()
             row = self._add_refund(
                 org_id, lambda number: StudentRefund(
                     org_id=UUID(str(org_id)), membership_id=membership.id, student_id=membership.student_id,
                     group_id=membership.group_id, amount=amount, method=method, reason=reason, note=note,
-                    effective_on=effective_on, created_by=UUID(str(actor_id)), created_at=_utcnow(), idempotency_key=idempotency_key, receipt_no=number))
+                    effective_on=effective_on, created_by=UUID(str(actor_id)), created_at=moment, idempotency_key=idempotency_key, receipt_no=number))
             after = self._entry_of(org_id, membership_id, today).ledger
             self._family_check(org_id, family)
             self._audit(org_id, membership, actor_id, actor_role, AUDIT_REFUND, {
                 "actor_id": str(actor_id), "membership_id": str(membership.id), "student_id": str(membership.student_id),
                 "refund_id": str(row.id), "amount": int(amount), "method": method, "reason": reason,
                 "effective_on": effective_on.isoformat(), "debt_before": before.debt, "debt_after": after.debt,
-                "advance_before": before.advance, "advance_after": after.advance}, consequence=consequence)
+                "advance_before": before.advance, "advance_after": after.advance}, consequence=consequence, at=moment)
             self.db.commit()
         except PaymentError:
             self.db.rollback()
@@ -2217,14 +2223,15 @@ class PaymentService:
             self._check_backdate(row.effective_on, today, actor_role, changing=True)      # R3 П4
             before = self._entry_of(org_id, row.membership_id, today).ledger
             self._check_seen("advance", expected_advance, before.advance, advance=before.advance, debt=before.debt)
-            row.voided_at, row.voided_by, row.void_reason = _utcnow(), UUID(str(actor_id)), reason
+            moment = _utcnow()
+            row.voided_at, row.voided_by, row.void_reason = moment, UUID(str(actor_id)), reason
             self.db.flush()
             after = self._entry_of(org_id, row.membership_id, today).ledger
             self._audit(org_id, membership, actor_id, actor_role, AUDIT_REFUND_VOID, {
                 "actor_id": str(actor_id), "membership_id": str(membership.id), "student_id": str(membership.student_id),
                 "refund_id": str(row.id), "amount": int(row.amount), "method": row.method, "reason": reason, "effective_on": row.effective_on.isoformat(),
                 "debt_before": before.debt, "debt_after": after.debt, "advance_before": before.advance,
-                "advance_after": after.advance}, consequence=consequence)
+                "advance_after": after.advance}, consequence=consequence, at=moment)
             self.db.commit()
         except PaymentError:
             self.db.rollback()
@@ -2272,7 +2279,7 @@ class PaymentService:
             link = MembershipTransfer(
                 org_id=UUID(str(org_id)), student_id=UUID(str(target.student_id)), from_membership_id=source.id,
                 to_membership_id=target.id, at=moment, created_by=UUID(str(actor_id)) if actor_id else None,
-                created_at=_utcnow(),
+                created_at=moment,
             )
             self.db.add(link)
             made.append(link)
@@ -2289,7 +2296,7 @@ class PaymentService:
                 self._audit(org_id, target, actor_id, self.role_of(org_id, actor_id), AUDIT_TRANSFER, {
                     "actor_id": str(actor_id), "student_id": str(link.student_id), "transfer_id": str(link.id), "from_membership_id": str(link.from_membership_id),
                     "to_membership_id": str(link.to_membership_id), "amount": int(carried), "at": link.at.isoformat(),
-                    "pay_from": pay_from.isoformat() if pay_from is not None else None})
+                    "pay_from": pay_from.isoformat() if pay_from is not None else None}, at=moment)
         logger.info("transfer recorded to=%s from=%s actor=%s", target.id, [str(m.id) for m in sources], actor_id)
         invalidate_summary(org_id)
         notes: List[Dict[str, Any]] = []

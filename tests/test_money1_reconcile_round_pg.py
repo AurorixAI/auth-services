@@ -1,7 +1,7 @@
 """Money-1 R3 #3 #16 #18: the nightly reconciliation checks the CALCULATION and does not cry wolf (PostgreSQL).
 
 Every honest chain of the R3-деньги report must give 0 findings (strict: the list is compared with ``[]``, after a check that the run really looked at something); every distortion they injected
-must be found - exactly once, by the invariant that owns it.  The clock is the real one: the records of the database are stamped by its own ``now()``."""
+must be found - exactly once, by the invariant that owns it.  The clock is the real one: nothing is frozen, the records are stamped by the business clock ``utc_now`` (the real time here)."""
 from datetime import date
 
 import pytest

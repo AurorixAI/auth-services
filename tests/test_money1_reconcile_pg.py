@@ -95,7 +95,7 @@ def test_a_closed_month_with_a_lesson_still_going_on_is_found_and_an_open_month_
 
 
 def test_paid_until_that_moves_under_the_feet_of_the_journal_is_found_and_a_new_payment_is_not(world):
-    """(the real clock: the records of the database are stamped by its own ``now()``)"""
+    """(the real clock: nothing is frozen; the records are stamped by the business clock ``utc_now``, which here is the real one)"""
     ensure_billing(world)
     s0 = world.students[0]
     pay(world, s0, amount=450_000)

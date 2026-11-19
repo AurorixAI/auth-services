@@ -367,7 +367,7 @@ class StudentArchiveService:
         if settle:
             try:
                 self.db.flush()
-                settled = LeaveService(self.db).settle(org_id, memberships, settle, actor_id, actor_role, money=money)
+                settled = LeaveService(self.db).settle(org_id, memberships, settle, actor_id, actor_role, money=money, at=now)
             except PaymentError:
                 self.db.rollback()
                 raise
