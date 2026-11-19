@@ -82,7 +82,9 @@ class Settings(BaseSettings):
     # ── Derived properties ────────────────────────────────────────────────────
     @property
     def is_development(self) -> bool:
-        return self.app_env == "development"
+        from src.core.startup_guard import is_dev_env
+
+        return is_dev_env()
 
     @property
     def is_testing(self) -> bool:

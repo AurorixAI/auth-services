@@ -46,7 +46,9 @@ from src.auth.support_router import router as support_router
 
 # Настройка логирования через structlog
 from src.core.middleware import configure_logging, RequestIDMiddleware
-configure_logging(is_development=os.getenv("APP_ENV", "production") == "development")
+from src.core.startup_guard import is_dev_env
+from src.auth import business_clock as bc
+configure_logging(is_development=is_dev_env())
 logger = logging.getLogger(__name__)
 
 
@@ -136,7 +138,7 @@ async def lifespan(app: FastAPI):
 # ПРИЛОЖЕНИЕ
 # ============================================================================
 
-_is_dev = os.getenv("APP_ENV", "production") == "development"
+_is_dev = is_dev_env()
 app = FastAPI(
     title="ALGO Auth Service",
     description="Аутентификация, управление организациями, студентами, группами и diagnostic invites.",
@@ -269,6 +271,7 @@ class HealthResponse(BaseModel):
     version: str
     database: str
     timestamp: datetime
+    test_clock: bool = False  # TIME-TESTS: true only on the end-to-end stand; the smoke check of stage / prod requires false
 
 
 # ============================================================================
@@ -332,6 +335,7 @@ async def health_check(db: Session = Depends(get_db)):
         version="1.0.0",
         database=db_status,
         timestamp=datetime.now(timezone.utc),
+        test_clock=bc.TEST_CLOCK_MODE,
     )
 
 if __name__ == "__main__":

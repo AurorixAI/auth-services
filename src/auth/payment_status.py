@@ -178,11 +178,9 @@ def business_date(moment: datetime, tz=None) -> date:
     return moment.astimezone(tz).date()
 
 
-def business_today(tz=None) -> date:
-    """MN-22: today of the business clock (``set_clock`` of the tests reaches it); a given ``tz`` reads the real clock in that zone."""
-    if tz is None:
-        return bc.business_today()
-    return business_date(datetime.now(timezone.utc), tz)
+def business_today() -> date:
+    """MN-22: today of the business clock (``set_clock`` of the tests and the stand clock reach it)."""
+    return bc.business_today()
 
 
 # --------------------------------------------------------------- status ----

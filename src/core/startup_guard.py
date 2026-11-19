@@ -28,6 +28,32 @@ def app_env(environ: Optional[Mapping[str, str]] = None) -> str:
     return (env.get("APP_ENV") or "").strip().lower()
 
 
+def is_dev_env(environ: Optional[Mapping[str, str]] = None) -> bool:
+    """The ONE definition of "this is a development stack": ``APP_ENV`` trimmed and lower-cased equals ``development``.
+
+    Mounts the dev router and ``/docs`` (``main_v2``), lets the invitation code be remembered (``invites``) and, together with ``ALGO_TEST_CLOCK``,
+    switches the controllable business clock on (``business_clock``).  Nothing else reads the name for this decision.
+    """
+    return app_env(environ) == "development"
+
+
+TEST_CLOCK_VARIABLE = "ALGO_TEST_CLOCK"
+TEST_CLOCK_REDIS_VARIABLE = "ALGO_TEST_CLOCK_REDIS_URL"
+
+
+def check_test_clock_allowed(environ: Optional[Mapping[str, str]] = None) -> None:
+    """TIME-TESTS: ``ALGO_TEST_CLOCK`` with ANY non-empty value outside ``APP_ENV=development`` stops the start.
+
+    The controllable clock is for the end-to-end stand only; stage and prod (``APP_ENV=staging``) must never carry it.
+    """
+    env = os.environ if environ is None else environ
+    if (env.get(TEST_CLOCK_VARIABLE) or "").strip() and not is_dev_env(env):
+        raise RuntimeError(
+            f"CRITICAL: {TEST_CLOCK_VARIABLE} задан при APP_ENV={app_env(env)!r}: управляемые часы допустимы только на сквозном стенде "
+            f"(APP_ENV=development И {TEST_CLOCK_VARIABLE}=1). Уберите {TEST_CLOCK_VARIABLE} (и {TEST_CLOCK_REDIS_VARIABLE}) из окружения этого сервера."
+        )
+
+
 def is_strict_env(environ: Optional[Mapping[str, str]] = None) -> bool:
     return app_env(environ) in STRICT_ENVS
 

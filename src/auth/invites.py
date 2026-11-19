@@ -19,7 +19,6 @@
 from __future__ import annotations
 
 import logging
-import os
 import re
 from datetime import timedelta, timezone
 from typing import Any, Dict, Optional
@@ -32,6 +31,7 @@ from . import password_rules, user_sessions
 from .models import Invitation, MemberAudit, Organization, OrganizationMember, User
 from .ops_rules import ERROR_CATALOGUE, OpsError, conflict, forbidden, unprocessable
 from .platform_errors import PlatformError
+from src.core.startup_guard import is_dev_env
 
 logger = logging.getLogger(__name__)
 
@@ -196,7 +196,7 @@ class Invites:
             self.db.commit()
             break
         logger.info("Invitation created: id=%s role=%s org=%s", invite.id, request.org_role, org_id)
-        if os.getenv("APP_ENV") == "development":  # the e2e harness of a development stack has no mailbox: it asks for the code (dev_router)
+        if is_dev_env():  # the e2e harness of a development stack has no mailbox: it asks for the code (dev_router)
             from .dev_router import remember_code
 
             remember_code(email, raw)

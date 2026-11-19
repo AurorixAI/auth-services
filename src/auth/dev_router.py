@@ -5,6 +5,7 @@ ALGO V1 - Dev Router (Quick Login for Development)
 """
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from pydantic import BaseModel, ConfigDict, Field
 from fastapi.responses import JSONResponse
 from typing import Optional
 from sqlalchemy.orm import Session
@@ -22,9 +23,10 @@ from .service import (
 )
 from .schemas import UserResponse, TokenPair, OrgResponse, SessionResponse
 from .cookies import set_auth_cookies
-from . import payment_status, user_sessions
+from . import business_clock as bc, payment_status, user_sessions
 
 from src.core.database import get_db
+from src.core.startup_guard import is_dev_env
 
 router = APIRouter(prefix="/auth", tags=["Dev (Development Only)"])
 
@@ -236,3 +238,53 @@ def dev_invite_code(email: str = Query(..., min_length=5, max_length=255)):
     if code is None:
         raise HTTPException(status_code=404, detail="No invitation made for this e-mail")
     return {"code": code}
+
+
+# ─── TIME-TESTS: the controllable clock of the end-to-end stand ───
+# GET/PUT /api/v1/auth/dev/clock.  Both signs are required (APP_ENV=development AND ALGO_TEST_CLOCK=1, decided once in business_clock);
+# without them every call is a 404, as if the route did not exist.  No DELETE: the clock only moves forward and a reset is a fresh stand.
+
+def _require_test_clock() -> None:
+    if not (bc.TEST_CLOCK_MODE and is_dev_env()):
+        raise HTTPException(status_code=404, detail="Not Found")
+
+
+class ClockPut(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    business_now: Optional[str] = Field(default=None, pattern=r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$")
+    offset_seconds: Optional[int] = None
+
+
+def _clock_view() -> dict:
+    return {
+        "now_business": bc.business_now().isoformat(timespec="seconds"),
+        "now_utc": bc.utc_now().replace(tzinfo=timezone.utc).isoformat(timespec="seconds"),
+        "offset_seconds": bc.current_offset_seconds(),
+    }
+
+
+@router.get("/dev/clock", dependencies=[Depends(_require_test_clock)])
+def get_dev_clock() -> dict:
+    try:
+        return _clock_view()
+    except bc.TestClockError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@router.put("/dev/clock", dependencies=[Depends(_require_test_clock)])
+def put_dev_clock(body: ClockPut) -> dict:
+    if (body.business_now is None) == (body.offset_seconds is None):
+        raise HTTPException(status_code=422, detail="Укажите ровно одно: business_now или offset_seconds")
+    try:
+        if body.business_now is not None:
+            offset = bc.offset_for_business_now(datetime.strptime(body.business_now, "%Y-%m-%dT%H:%M"))
+        else:
+            offset = body.offset_seconds  # type: ignore[assignment]
+        bc.set_offset(offset)
+    except bc.ClockMovedBackError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except bc.TestClockError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return _clock_view()

@@ -13,17 +13,123 @@ anywhere else.  Business dates are stored as ``YYYY-MM-DD`` strings.
 
 Tests replace the clock with ``set_clock`` (a callable returning an aware datetime) or with the ``freeze`` helper
 of ``tests/ops_helpers.py``.
+
+TIME-TESTS (the controllable clock of the end-to-end stand).  The stand shifts the business time by an offset in seconds kept in Redis
+(``algo:test:clock_offset_seconds``, shared with exam-service) and set through ``/api/v1/auth/dev/clock`` (``dev_router``).  The mode is decided ONCE,
+at import: ``APP_ENV=development`` AND ``ALGO_TEST_CLOCK=1`` (``TEST_CLOCK_MODE``); ``ALGO_TEST_CLOCK`` with any value on another ``APP_ENV`` refuses
+to import this module (``startup_guard.check_test_clock_allowed``).  Outside the mode the offset is 0 and Redis is never touched.  The clock only moves
+forward (``set_offset`` refuses a smaller offset); a reset is a fresh stand.
 """
 from __future__ import annotations
 
+import math
 import os
+import threading
+import time
 from datetime import date, datetime, timedelta, timezone
 from typing import Callable, Optional
 from zoneinfo import ZoneInfo
 
+from src.core.startup_guard import TEST_CLOCK_REDIS_VARIABLE, TEST_CLOCK_VARIABLE, check_test_clock_allowed, is_dev_env
+
 BUSINESS_TIMEZONE = ZoneInfo(os.getenv("BUSINESS_TIMEZONE", "Asia/Tashkent"))
 
+check_test_clock_allowed()  # ALGO_TEST_CLOCK outside APP_ENV=development: the service does not start
+TEST_CLOCK_MODE: bool = is_dev_env() and (os.environ.get(TEST_CLOCK_VARIABLE) or "").strip() == "1"  # decided once; the only gate of the offset code
+
+OFFSET_KEY = "algo:test:clock_offset_seconds"
+OFFSET_CACHE_SECONDS = 0.2
+MAX_OFFSET_SECONDS = 10 * 366 * 86400  # a sanity bound for a typed value
+
 _clock: Optional[Callable[[], datetime]] = None
+
+_offset_lock = threading.Lock()
+_offset_cache: tuple[int, float] = (0, 0.0)  # (seconds, valid until a ``time.monotonic()`` value)
+_redis_client = None
+
+
+class TestClockError(RuntimeError):
+    """The test clock is on but cannot be read or written (no Redis address, Redis down, a junk value): loud, never a silent zero."""
+
+    __test__ = False  # not a pytest class
+
+
+class ClockMovedBackError(ValueError):
+    """The stand clock moves forward only."""
+
+
+def _redis():
+    global _redis_client
+    if _redis_client is None:
+        url = (os.environ.get(TEST_CLOCK_REDIS_VARIABLE) or "").strip()
+        if not url:
+            raise TestClockError(f"{TEST_CLOCK_VARIABLE}=1, но не задан {TEST_CLOCK_REDIS_VARIABLE}: нет адреса Redis со смещением часов")
+        import redis
+
+        _redis_client = redis.Redis.from_url(url, socket_connect_timeout=1.0, socket_timeout=1.0, decode_responses=True)
+    return _redis_client
+
+
+def _read_offset() -> int:
+    try:
+        raw = _redis().get(OFFSET_KEY)
+    except TestClockError:
+        raise
+    except Exception as exc:  # noqa: BLE001 - any Redis failure in the test mode must stop the request, not become "no shift"
+        raise TestClockError(f"управляемые часы: Redis недоступен ({type(exc).__name__}: {exc})") from exc
+    if raw in (None, ""):
+        return 0
+    try:
+        return int(raw)
+    except (TypeError, ValueError) as exc:
+        raise TestClockError(f"управляемые часы: в {OFFSET_KEY} не целое число ({raw!r})") from exc
+
+
+def current_offset_seconds() -> int:
+    """The shift of the stand clock in seconds.  Outside the test mode: 0, at once, with no Redis call and no lock."""
+    global _offset_cache
+    if not TEST_CLOCK_MODE:
+        return 0
+    with _offset_lock:
+        value, valid_until = _offset_cache
+        now = time.monotonic()
+        if now < valid_until:
+            return value
+        value = _read_offset()
+        _offset_cache = (value, now + OFFSET_CACHE_SECONDS)
+        return value
+
+
+def set_offset(seconds: int) -> int:
+    """Test mode only: move the stand clock to ``seconds`` of shift (never back); the local cache is updated at once.  Returns the new offset."""
+    global _offset_cache
+    if not TEST_CLOCK_MODE:
+        raise TestClockError("управляемые часы выключены (нужны APP_ENV=development и ALGO_TEST_CLOCK=1)")
+    if not isinstance(seconds, int) or isinstance(seconds, bool) or abs(seconds) > MAX_OFFSET_SECONDS:
+        raise ValueError("смещение должно быть целым числом секунд в разумных пределах")
+    with _offset_lock:
+        current = _read_offset()  # fresh, not the cache: the other service (exam) may share the key
+        if seconds < current:
+            raise ClockMovedBackError("часы стенда идут только вперёд; сброс - свежий стенд")
+        try:
+            _redis().set(OFFSET_KEY, str(seconds))
+        except TestClockError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            raise TestClockError(f"управляемые часы: Redis недоступен ({type(exc).__name__}: {exc})") from exc
+        _offset_cache = (seconds, time.monotonic() + OFFSET_CACHE_SECONDS)
+        return seconds
+
+
+def offset_for_business_now(target_naive: datetime) -> int:
+    """The shift that makes the business time ``target_naive`` (a naive Tashkent wall time) right now."""
+    target = target_naive.replace(tzinfo=BUSINESS_TIMEZONE)
+    return math.ceil((target - datetime.now(timezone.utc)).total_seconds())   # rounded UP: the stand time is the target or a fraction of a second after it, never before
+
+
+def real_utc_now() -> datetime:
+    """The real clock, aware UTC (for the dev clock endpoint only)."""
+    return datetime.now(timezone.utc)
 
 
 def set_clock(clock: Optional[Callable[[], datetime]]) -> None:
@@ -34,7 +140,13 @@ def set_clock(clock: Optional[Callable[[], datetime]]) -> None:
 
 def business_now() -> datetime:
     """Now, aware, in the business timezone."""
-    moment = _clock() if _clock is not None else datetime.now(timezone.utc)
+    if _clock is not None:
+        moment = _clock()
+    else:
+        moment = datetime.now(timezone.utc)
+        offset = current_offset_seconds()  # 0 and no Redis call outside the test mode
+        if offset:
+            moment += timedelta(seconds=offset)
     if moment.tzinfo is None:
         raise ValueError("the business clock must return an aware datetime")
     return moment.astimezone(BUSINESS_TIMEZONE)
