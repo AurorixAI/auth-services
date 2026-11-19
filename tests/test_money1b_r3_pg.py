@@ -171,7 +171,7 @@ def test_r3_8_the_suggested_day_is_accepted_at_62_days_and_at_the_accounting_sta
     w = world
     opening_world(w, fixed_today, schedule=[slot("tue", 2, "2026-12-22")])                   # today 21.10 + 62 days = Tuesday 22.12: the first lesson is the last allowed day
     got = owner(w).get(f"{API}/org/groups/{w.group.id}/pay-from-default").json()
-    assert got == {"today": "2026-10-21", "first_lesson": "2026-12-22", "default_pay_from": "2026-12-22", "text": "Оплата с 22.12.2026 — первое занятие группы с сегодня"}
+    assert got == {"today": "2026-10-21", "first_lesson": "2026-12-22", "default_pay_from": "2026-12-22", "text": "Оплата с 22.12.2026 — ближайшее занятие группы"}
     s = fresh_student(w, "Граница")
     done = add(w, s, pay_from=got["default_pay_from"])                                       # before the round the window searched 70 days: 63..70 was suggested and then refused
     assert done["billing"]["pay_from"] == "2026-12-22"

@@ -88,7 +88,7 @@ def test_b1_a_lesson_cancelled_by_the_centre_is_not_the_first_lesson(world, fixe
     w.db.add(GroupAttendance(org_id=w.org.id, group_id=w.group.id, lesson_date="2026-11-06", lesson_id="fri", status="cancelled", cancellation_kind="centre", records={}))
     w.db.commit()
     got = owner(w).get(f"{API}/org/groups/{w.group.id}/pay-from-default").json()
-    assert got == {"today": "2026-10-21", "first_lesson": "2026-11-09", "default_pay_from": "2026-11-09", "text": "Оплата с 09.11.2026 — первое занятие группы с сегодня"}      # Friday 06.11 is cancelled: Monday 09.11
+    assert got == {"today": "2026-10-21", "first_lesson": "2026-11-09", "default_pay_from": "2026-11-09", "text": "Оплата с 09.11.2026 — ближайшее занятие группы"}      # Friday 06.11 is cancelled: Monday 09.11
 
 
 def test_b1_the_default_of_the_dialog_is_readable_by_an_administrator_and_not_across_centres(world, fixed_today):
@@ -188,8 +188,13 @@ def test_b1_the_default_of_the_dialog_carries_the_ready_phrase_of_every_case(wor
     assert got["first_lesson"] is None and got["text"] == "Оплата с 21.10.2026 — у группы нет занятий в ближайшие дни"
     opening_world(w, fixed_today)                                                       # Monday .. Friday lessons: the first one from 21.10
     got = owner(w).get(f"{API}/org/groups/{w.group.id}/pay-from-default").json()
-    assert got["text"] == f"Оплата с {D.fromisoformat(got['default_pay_from']).strftime('%d.%m.%Y')} — первое занятие группы с сегодня"
+    assert got["default_pay_from"] > got["today"]                                        # the first lesson is a coming day: «ближайшее», not «сегодня»
+    assert got["text"] == f"Оплата с {D.fromisoformat(got['default_pay_from']).strftime('%d.%m.%Y')} — ближайшее занятие группы"
     assert got["text"] == make_client(w, user=w.admin).get(f"{API}/org/groups/{w.group.id}/pay-from-default").json()["text"]       # a phrase without a sum: the same for the administrator
+    opening_world(w, fixed_today, schedule=[slot("wed", 3, "2026-10-21")])              # today 21.10.2026 is a Wednesday: the group has a lesson today
+    got = owner(w).get(f"{API}/org/groups/{w.group.id}/pay-from-default").json()
+    assert got["first_lesson"] == got["default_pay_from"] == got["today"] == "2026-10-21"
+    assert got["text"] == "Оплата с 21.10.2026 — сегодня у группы занятие"
 
 
 def test_b1_the_phrase_of_the_default_names_the_start_of_the_accounting_when_it_moves_the_day(world, fixed_today):

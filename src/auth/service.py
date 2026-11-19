@@ -2591,7 +2591,7 @@ class AuthService:
                 results.append({"student_id": str(student_id), "status": "added"})
                 students.append({"student_id": str(student_id), "billing": result.get("billing"), "individual_price_ends": bool(result.get("individual_price_ends")),
                                  "closing_prices": result.get("closing_prices") or [], "past_balances": result.get("past_balances") or [],
-                                 "leave_undo": result.get("leave_undo")})      # stage 7 М1: the same object as in the single answer (null = an ordinary adding)
+                                 "leave_undo": result.get("leave_undo"), "effects": result.get("effects")})      # stage 7 М1: the same object as in the single answer (null = an ordinary adding)
                 for warning in result.get("warnings", []):
                     warnings.append({"student_id": str(student_id), **warning})
             except ValueError as exc:

@@ -78,11 +78,11 @@ def default_pay_from(db: Session, group: Group, today: Optional[date] = None, ac
 
 
 def default_text(info: Dict[str, Any], accounting_start: Optional[date] = None) -> str:
-    """The sentence under the field «Оплата с» of the dialog (ONE phrase, LESSONS 104): ``Оплата с 25.10.2026 — первое занятие группы с сегодня``."""
+    """The sentence under the field «Оплата с» of the dialog (ONE phrase, LESSONS 104): ``Оплата с 25.10.2026 — ближайшее занятие группы`` (today: «сегодня у группы занятие»)."""
     chosen = info["default_pay_from"]
     when = chosen.strftime("%d.%m.%Y")
     if info["first_lesson"] is not None and chosen == info["first_lesson"]:
-        return f"Оплата с {when} — первое занятие группы с сегодня"
+        return f"Оплата с {when} — " + ("сегодня у группы занятие" if chosen == info["today"] else "ближайшее занятие группы")
     if accounting_start is not None and chosen == accounting_start and chosen > info["today"]:
         return f"Оплата с {when} — начало учёта центра"
     return f"Оплата с {when} — у группы нет занятий в ближайшие дни"
