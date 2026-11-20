@@ -560,6 +560,7 @@ def e1_previews(store):
             due_until_after=names.due_until if names.due else None, overdue_days_after=names.overdue if names.debt else None,
             advance_after=t["advance"], paid_until_before=t0["through"], paid_until_after=t["through"],
             status_after=shown_status(status, t["debt"]), partial_credit_after=exp["partial"], lessons=None,
+            after_text=tx.after_text(names.debt, names.due, t["through"], None, t["advance"]),
             summary_text=tx.summary_text(
                 debt_paid=to_debt, debt_before=names0.debt, due_paid=to_due, due_before=names0.due,
                 advance=sum(a.amount for a in allocs if a.bucket == "advance"),
@@ -677,6 +678,7 @@ def e9_price_ahead(store):
         allocations=allocs, unpaid_after=0, advance_after=300_000,
         paid_until_before=t0["through"], paid_until_after=t["through"], status_after="active",
         partial_credit_after=0, lessons=None,
+        after_text=tx.after_text(0, 0, t["through"], None, 300_000),
         summary_text=tx.summary_text(debt_paid=769_000, debt_before=769_000, due_paid=0, due_before=0, advance=300_000,
                                      debt_after=0, paid_until_after=t["through"],
                                      advance_periods=[(D(2026, 11, 15), D(2026, 12, 14))]),
@@ -801,6 +803,7 @@ def e2_e3(store):
             allocations=allocs, unpaid_after=t["debt"], debt_amount_after=names.debt, due_amount_after=0, overdue_days_after=names.overdue if names.debt else None,
             advance_after=t["advance"], paid_until_before=None, paid_until_after=t["through"], status_after=shown_status(st, t["debt"]),
             partial_credit_after=partial_exp, lessons=None,
+            after_text=tx.after_text(names.debt, 0, t["through"], None, t["advance"]),
             summary_text=tx.summary_text(
                 debt_paid=to_debt, debt_before=323_000, due_paid=0, due_before=0,
                 advance=sum(a.amount for a in allocs if a.bucket == "advance"),
@@ -854,6 +857,7 @@ def e2_e3(store):
             allocations=allocs, unpaid_after=t["debt"], debt_amount_after=names.debt, overdue_days_after=names.overdue if names.debt else None,
             advance_after=0, paid_until_before=None, paid_until_after=t["through"], status_after=shown_status(st, t["debt"]),
             partial_credit_after=partial_exp, lessons=None,
+            after_text=tx.after_text(names.debt, 0, t["through"], None, 0),
             summary_text=tx.summary_text(debt_paid=amount, debt_before=213_000, due_paid=0, due_before=0, advance=0, debt_after=t["debt"],
                                          paid_until_after=t["through"]))
         write(f"e3_preview_{amount}.json", PaymentPreview(
@@ -907,6 +911,7 @@ def e10(store):
             allocations=allocs, unpaid_after=left_, debt_amount_after=0, due_amount_after=names.due, due_until_after=names.due_until if names.due else None,
             advance_after=0, paid_until_before=None, paid_until_after=t["through"], status_after=shown_status(st, left_), partial_credit_after=partial_exp,
             lessons=None,
+            after_text=tx.after_text(names.debt, names.due, t["through"], None, 0),
             summary_text=tx.summary_text(debt_paid=0, debt_before=0, due_paid=to_due, due_before=500_000, advance=0, debt_after=left_, paid_until_after=t["through"]))
         write(f"e10_preview_{amount}.json", PaymentPreview(as_of=today, mode="calendar", price=price, due=due, suggested_amount=500_000, amount=amount,
                                                            result=res, warnings=[]), store)
@@ -950,7 +955,8 @@ def e4(store):
     rows = [
         StatementRow(seq=1, date=T, type="transfer_in", title="Перенос из «Математика 7А»", debit=0, credit=x,
                      outflow=0, balance_after=x, balance_text="Аванс 323 000", details=StatementDetails(
-                         from_group_name="Математика 7А", from_membership_id=uid(1), allocations=al)),        # a transfer: no ``open_*`` (10.11)
+                         from_group_name="Математика 7А", from_membership_id=uid(1), allocations=al),
+                     **open_of("payment", names, advance_left=x - charge_b)),     # PAY-DUE 13.2: the transfer INTO the group brings money: «Аванс 65 000» (323 000 - 258 000 laid on the charge); a transfer out stays empty
         StatementRow(seq=2, date=D(2026, 10, 12), type="charge", title="Стоимость 01.10–31.10",
                      debit=charge_b, credit=0, outflow=0, balance_after=x - charge_b, balance_text="Аванс 65 000",
                      details=StatementDetails(segment=sm[0]), **open_of("charge", names, segs[0].id)),
@@ -1077,6 +1083,7 @@ def e5(store):
             advance_after=leftover, paid_until_before=None, paid_until_after=None,
             status_after=shown_status(st, debt_after), partial_credit_after=partial,
             lessons=PreviewLessons(covered_before=0, covered_after=covered_lessons, left_after=left, unpaid_after=unpaid),
+            after_text=tx.after_text(names.debt, names.due, None, left, leftover),
             summary_text=tx.summary_text(
                 debt_paid=to_debt, debt_before=names0.debt, due_paid=to_due, due_before=names0.due,
                 advance=leftover, debt_after=debt_after, paid_until_after=None,

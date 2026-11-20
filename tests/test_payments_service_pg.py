@@ -586,6 +586,8 @@ def test_settings_defaults_patch_semantics_and_audit_stamp(world):
     r = client.get(f"{API}/org/settings/payments")
     got = r.json()
     assert got.pop("accounting_start_date")                       # the effective date: the day the centre was created
+    example = got.pop("pay_due_example")                          # the sentences of the example under the term (the words of the server; the date follows the clock: tested with a frozen clock in test_pay_due_screen_texts_pg)
+    assert example["period"].startswith("Период с ") and example["package"] == "Третий неоплаченный урок или 15-й день после урока — уже долг" and example["text"] == example["period"]
     assert got == {"period_mode": "calendar", "billing_anchor": "payment_date", "billing_day": 1,
                    "lessons_per_payment": 12, "expiring_days": 3,
                    "expiring_lessons": 3, "excuse_deadline_days": 5, "excuse_deadline_lessons": 2,

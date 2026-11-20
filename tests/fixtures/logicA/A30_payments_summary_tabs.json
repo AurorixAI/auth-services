@@ -28,9 +28,17 @@
     "active": 4,
     "paused": 1
   },
+  "bucket_rows": {
+    "debtors": 0,
+    "to_pay": 0,
+    "expiring": 0,
+    "active": 0,
+    "paused": 0
+  },
   "price_missing": 1,
   "debt_ages": [],
   "students_paused": 1,
   "pay_due_days": 5,
-  "pay_due_lessons": 2
+  "pay_due_lessons": 2,
+  "pay_due_package_max_days": 14
 }

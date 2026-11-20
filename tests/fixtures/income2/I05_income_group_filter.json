@@ -276,6 +276,8 @@
       "students": 2,
       "debtors": 1,
       "due_students": 0,
+      "debt_text": "Долг 150 000 сум",
+      "due_text": null,
       "pct": 75
     },
     "groups": [
@@ -292,6 +294,8 @@
         "students": 2,
         "debtors": 1,
         "due_students": 0,
+        "debt_text": "Долг 150 000 сум",
+        "due_text": null,
         "pct": 75
       }
     ]
@@ -304,6 +308,8 @@
     "advance_total": 300000,
     "memberships_with_debt": 1,
     "memberships_with_advance": 1,
+    "debt_text": "Долг 150 000 сум",
+    "due_text": null,
     "students_with_advance": 1
   },
   "checks": [

@@ -21,7 +21,7 @@
           "days": 15,
           "bucket": "past_debt",
           "closes": false,
-          "label": "Частично погашен долг за 15.09–14.10",
+          "label": "Частично погашено за 15.09–14.10",
           "price": 500000,
           "segment_remaining_after": 19000
         }
@@ -58,7 +58,7 @@
         "days": 15,
         "bucket": "past_debt",
         "closes": false,
-        "label": "Частично погашен долг за 15.09–14.10",
+        "label": "Частично погашено за 15.09–14.10",
         "price": 500000,
         "segment_remaining_after": 19000
       }
@@ -81,6 +81,8 @@
     "debt_sub": "просрочено 32 дня · оплачено до 12.10",
     "due_text": null,
     "due_sub": null,
+    "debt_also_text": null,
+    "due_also_text": null,
     "state": "debt",
     "state_text": "Долг 519 000 сум",
     "membership_id": "00000000-0000-4000-8000-000000000001",
@@ -135,7 +137,7 @@
             "days": 15,
             "bucket": "past_debt",
             "closes": false,
-            "label": "Частично погашен долг за 15.09–14.10",
+            "label": "Частично погашено за 15.09–14.10",
             "price": 500000,
             "segment_remaining_after": 19000
           }

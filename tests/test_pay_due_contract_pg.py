@@ -17,7 +17,7 @@ def test_the_summary_names_the_two_parts_and_they_add_up_to_the_unpaid_sum(pg_se
     w, g, st, ms = world(pg_session, clock)
     s = summary(w)
     assert (s["debt_total"], s["debtors"], s["due_total"], s["due_students"]) == (1_200_000, 2, 600_000, 1)
-    assert s["due_nearest"] == {"date": "2026-10-13", "text": "до завтра, 13.10"}
+    assert s["due_nearest"] == {"date": "2026-10-13", "text": "завтра, 13.10"}
     assert s["buckets"]["debtors"] == 2 and s["buckets"]["to_pay"] == 1
     assert s["debt_total"] + s["due_total"] == 1_800_000
     ages = {b["bucket"]: b for b in s["debt_ages"]}
@@ -52,7 +52,7 @@ def test_a_student_with_a_debt_and_a_sum_within_the_term_is_in_both_tabs_and_the
     w, g, st, ms = world(pg_session, clock, today="2026-11-01")
     s = summary(w)
     assert (s["debt_total"], s["debtors"], s["due_total"], s["due_students"]) == (1_800_000, 3, 600_000, 1)      # October of A, B, C; November of A
-    assert s["due_nearest"] == {"date": "2026-11-05", "text": "до 05.11"}
+    assert s["due_nearest"] == {"date": "2026-11-05", "text": "05.11"}
     debtors, to_pay = status_page(w, "debtors"), status_page(w, "to_pay")
     assert (debtors["students"], debtors["amount_total"]) == (s["debtors"], s["debt_total"])
     assert (to_pay["students"], to_pay["amount_total"]) == (s["due_students"], s["due_total"])

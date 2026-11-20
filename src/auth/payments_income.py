@@ -63,7 +63,7 @@ MAX_EXPORT_ROWS = 20_000
 
 
 DECISION_LABELS = {
-    AUDIT_PAYMENT_VOID: "Оплата отменена", AUDIT_PAYMENT_REPLACE: "Оплата исправлена", AUDIT_WRITEOFF: "Долг прощён", AUDIT_WRITEOFF_VOID: "Прощение отменено",
+    AUDIT_PAYMENT_VOID: "Оплата отменена", AUDIT_PAYMENT_REPLACE: "Оплата исправлена", AUDIT_WRITEOFF: "Прощено", AUDIT_WRITEOFF_VOID: "Прощение отменено",
     AUDIT_REFUND: "Аванс возвращён", AUDIT_REFUND_VOID: "Возврат отменён", AUDIT_TRANSFER: "Ученик переведён: деньги перенесены в новую группу"}
 
 # Money-2 Э7: events that share the ``action`` of another line (the list of actions of the journal is a CHECK of the table) and say what they are in ``snapshot``: kind -> (action, the condition on the snapshot, the label)
@@ -381,6 +381,8 @@ class IncomeReports:
             advance_total=sum(e.ledger.advance for e in shown),
             memberships_with_debt=sum(1 for e in shown if e.due.debt_amount > 0),
             memberships_with_advance=sum(1 for e in shown if e.ledger.advance > 0),
+            debt_text=tx.debt_text(sum(e.due.debt_amount for e in shown)) if any(e.due.debt_amount > 0 for e in shown) else None,
+            due_text=tx.due_text(sum(e.due.due_amount for e in shown)) if any(e.due.due_amount > 0 for e in shown) else None,
             students_with_advance=len({e.student.id for e in shown if e.ledger.advance > 0}))
 
         series, series_by = self._series(cur, daily)
@@ -627,7 +629,8 @@ class IncomeReports:
             rows.append(CollectionRow(
                 group_id=str(group.id), group_name=group.name, teacher_id=str(group.teacher_id) if group.teacher_id else None,
                 teacher_name=_staff(teacher), charged=g["charged"], paid=g["paid"], forgiven=g["forgiven"], debt=g["debt"], due=g["due"],
-                students=len(g["students"]), debtors=len(g["debtors"]), due_students=len(g["due_students"]), pct=pct(g["paid"], g["charged"])))
+                students=len(g["students"]), debtors=len(g["debtors"]), due_students=len(g["due_students"]), pct=pct(g["paid"], g["charged"]),
+                debt_text=tx.debt_text(g["debt"]) if g["debt"] > 0 else None, due_text=tx.due_text(g["due"]) if g["due"] > 0 else None))
         rows.sort(key=lambda r: (r.paid / r.charged, -r.debt, r.group_name or ""))
         name = tx.MONTHS_NOMINATIVE[first.month - 1]
         return MonthCollection(
@@ -635,7 +638,8 @@ class IncomeReports:
             text=tx.collection_text(total["paid"], total["charged"], pct(total["paid"], total["charged"])),
             total=CollectionRow(charged=total["charged"], paid=total["paid"], forgiven=total["forgiven"], debt=total["debt"], due=total["due"],
                                 students=len(all_students), debtors=len(debtors), due_students=len(due_students),
-                                pct=pct(total["paid"], total["charged"])),
+                                pct=pct(total["paid"], total["charged"]),
+                                debt_text=tx.debt_text(total["debt"]) if total["debt"] > 0 else None, due_text=tx.due_text(total["due"]) if total["due"] > 0 else None),
             groups=rows)
 
     # ------------------------------------------------------------------ journal

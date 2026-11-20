@@ -23,6 +23,8 @@
     "debt_sub": null,
     "due_text": null,
     "due_sub": null,
+    "debt_also_text": null,
+    "due_also_text": null,
     "state": "paid",
     "state_text": "Оплачено до 04.11",
     "charged": 258000,
@@ -49,10 +51,16 @@
       "outflow": 0,
       "balance_after": 323000,
       "balance_text": "Аванс 323 000",
-      "open_amount": null,
-      "open_name": null,
-      "open_text": null,
-      "open_parts": [],
+      "open_amount": 65000,
+      "open_name": "advance",
+      "open_text": "Аванс 65 000 сум",
+      "open_parts": [
+        {
+          "name": "advance",
+          "amount": 65000,
+          "text": "Аванс 65 000 сум"
+        }
+      ],
       "voided_at": null,
       "void_reason": null,
       "voided_by_name": null,

@@ -52,7 +52,7 @@ def test_the_preview_is_the_state_after_for_both_kinds_and_writes_nothing(pg_ses
     assert seen["dryRun"] is True and seen["moneyEffects"]["dryRun"] is True and seen["cancelled"] is True
     assert sorted(d["amount"] for d in seen["deductions"]) == [each] * 5 * bool(each) and all(d["name"] for d in seen["deductions"])
     assert seen["moneyEffects"]["deductions"] == seen["deductions"]
-    assert seen["moneyEffects"]["text"] == (f"Ученикам — перерасчёт: долг уменьшится сразу на {each * 5:,} сум (5 учеников)".replace(",", NB).replace(" сум", NB + "сум") if each else "Ученикам перерасчёта не будет")
+    assert seen["moneyEffects"]["text"] == (f"Ученикам — перерасчёт: неоплаченная сумма уменьшится сразу на {each * 5:,} сум (5 учеников)".replace(",", NB).replace(" сум (", NB + "сум (") if each else "Ученикам перерасчёта не будет")
     def balance():
         w.db.expire_all()
         return sum(statement(w, m)["summary"]["advance"] - statement(w, m)["summary"]["unpaid"] for m in ms)

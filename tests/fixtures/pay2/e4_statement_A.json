@@ -23,6 +23,8 @@
     "debt_sub": null,
     "due_text": null,
     "due_sub": null,
+    "debt_also_text": null,
+    "due_also_text": null,
     "state": "none",
     "state_text": null,
     "charged": 177000,

@@ -271,6 +271,8 @@
       "students": 6,
       "debtors": 0,
       "due_students": 0,
+      "debt_text": null,
+      "due_text": null,
       "pct": 100
     },
     "groups": [
@@ -287,6 +289,8 @@
         "students": 2,
         "debtors": 0,
         "due_students": 0,
+        "debt_text": null,
+        "due_text": null,
         "pct": 100
       },
       {
@@ -302,6 +306,8 @@
         "students": 3,
         "debtors": 0,
         "due_students": 0,
+        "debt_text": null,
+        "due_text": null,
         "pct": 100
       },
       {
@@ -317,6 +323,8 @@
         "students": 1,
         "debtors": 0,
         "due_students": 0,
+        "debt_text": null,
+        "due_text": null,
         "pct": 100
       }
     ]
@@ -329,6 +337,8 @@
     "advance_total": 450000,
     "memberships_with_debt": 3,
     "memberships_with_advance": 2,
+    "debt_text": "Долг 500 000 сум",
+    "due_text": null,
     "students_with_advance": 2
   },
   "checks": [

@@ -97,7 +97,10 @@ def _blank_to_none(value):
 @router.get("/org/settings/payments", response_model=PaymentSettings)
 def get_payment_settings(user: dict = Depends(require_payments_settings), db: Session = Depends(get_db)):
     """Режим периода оплаты, пороги «скоро», право администратора."""
-    return PaymentService(db).get_settings(user["org_id"])
+    service = PaymentService(db)
+    settings = service.get_settings(user["org_id"])
+    settings.pay_due_example = service.pay_due_example(user["org_id"], settings.pay_due_days, settings.pay_due_lessons)
+    return settings
 
 
 @router.put("/org/settings/payments", response_model=PaymentSettingsChanged)

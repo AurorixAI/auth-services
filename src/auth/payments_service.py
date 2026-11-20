@@ -99,6 +99,7 @@ from .payments_schemas import (
     PaymentQuote,
     PaymentSettings,
     PaymentSettingsChanged,
+    PayDueExample,
     PayDueImpact,
     PaymentSettingsUpdate,
     PaymentsSummary,
@@ -564,12 +565,12 @@ class PaymentService:
         if dry_run:
             if new_start is not None and new_start != before.accounting_start_date:
                 impact = self._accounting_start_impact(org_id, new_start)
-            merged = {k: changes.get(k, getattr(before, k)) for k in PaymentSettings.model_fields if k not in ("accounting_start_date", "updated_by", "updated_at")}
+            merged = {k: changes.get(k, getattr(before, k)) for k in PaymentSettings.model_fields if k not in ("accounting_start_date", "updated_by", "updated_at", "pay_due_example")}
             regime_impact = None
             wanted = PaymentSettings(**{**merged})
             if self._regime_fields(wanted) != self._regime_fields(before):
                 regime_impact = self._regime_impact(org_id, wanted, today)
-            return PaymentSettingsChanged(**before.model_dump(), dry_run=True, impact=impact or AccountingStartImpact(),
+            return PaymentSettingsChanged(**{**before.model_dump(), "pay_due_example": self.pay_due_example(org_id, wanted.pay_due_days, wanted.pay_due_lessons)}, dry_run=True, impact=impact or AccountingStartImpact(),
                                           regime_impact=regime_impact,
                                           pay_due_impact=self._pay_due_impact(org_id, wanted.pay_due_days, wanted.pay_due_lessons) if due_wanted else None)
         block.update(changes)
@@ -632,6 +633,20 @@ class PaymentService:
             org_id, actor_id, sorted(list(changes) + (["accounting_start_date"] if new_start is not None else []) + (["centre_cancel_recalc"] if recalc is not None else [])),
         )
         return PaymentSettingsChanged(**self.get_settings(org_id).model_dump())
+
+    def pay_due_example(self, org_id: str, days: int, lessons: int) -> PayDueExample:
+        """PAY-DUE: the example under the setting of the term for the values ``days`` / ``lessons``, in the words of the server: the NEXT period of the centre from the business today (a fixed day: the next such day; the payment
+        date: a period that starts today), the package sentence by M and the limit of days."""
+        today = ps.business_today()
+        regime = bl.regime_at(ls.load_settings(self.db, org_id).regimes, today)
+        start = today
+        if regime.mode == bl.CALENDAR and regime.anchor == ps.FIXED_DAY:
+            start = today.replace(day=regime.billing_day)
+            if start <= today:
+                start = (today.replace(day=1) + timedelta(days=32)).replace(day=regime.billing_day)
+        period = tx.pay_due_example_period(start, days)
+        package = tx.pay_due_example_package(lessons, pay_due.PACKAGE_DUE_MAX_DAYS)
+        return PayDueExample(period=period, package=package, text=package if regime.mode == bl.LESSONS else period)
 
     def _pay_due_impact(self, org_id: str, days: int, lessons: int) -> PayDueImpact:
         """PAY-DUE 10.6: who changes name by the term ``days`` / ``lessons``: ONE run of the ledgers and two classifications (the setting never reaches the ledger); nothing is written."""
@@ -1138,7 +1153,8 @@ class PaymentService:
         students_due: set = set()
         students_advance: set = set()
         students_paused: set = set()
-        buckets = {pv.BUCKET_DEBTORS: 0, pv.BUCKET_TO_PAY: 0, pv.BUCKET_EXPIRING: 0, pv.BUCKET_ACTIVE: 0, pv.BUCKET_PAUSED: 0}
+        buckets = {pv.BUCKET_DEBTORS: 0, pv.BUCKET_TO_PAY: 0, pv.BUCKET_EXPIRING: 0, pv.BUCKET_ACTIVE: 0, pv.BUCKET_PAUSED: 0}      # ROWS (memberships) per tab
+        bucket_students: Dict[str, set] = {k: set() for k in buckets}                                                                   # DISTINCT students per tab
         price_missing = 0
         nearest: Optional[date] = None
         ages = {k: {"students": set(), "memberships": 0, "debt_total": 0} for k in pv.DEBT_AGE_BASKETS}      # Money-2 T18: the debtors by the age of the debt (K)
@@ -1163,9 +1179,11 @@ class PaymentService:
             for tab in (pv.BUCKET_DEBTORS, pv.BUCKET_TO_PAY):
                 if pv.in_tab(e, tab):
                     buckets[tab] += 1
+                    bucket_students[tab].add(e.student.id)
             calm = pv.calm_bucket(e)
             if calm:
                 buckets[calm] += 1
+                bucket_students[calm].add(e.student.id)
                 if calm == pv.BUCKET_PAUSED:
                     students_paused.add(e.student.id)
             if e.membership.id in tracked and pv.price_missing(e) and l.status.status != ps.FREE and d.unpaid <= 0:
@@ -1186,12 +1204,12 @@ class PaymentService:
             period_mode=loader.settings.current.mode,
             lessons_per_payment=settings.lessons_per_payment,
             debt_total=debt_total, debtors=len(students_debt), due_total=due_total, due_students=len(students_due),
-            due_nearest=DueNearest(date=nearest, text=tx.due_until_words(nearest, loader.today)) if nearest is not None else None,
+            due_nearest=DueNearest(date=nearest, text=tx.due_until_phrase(nearest, loader.today)) if nearest is not None else None,
             advance_total=advance_total, students_with_advance=len(students_advance), memberships_with_debt=with_debt,
             accounting_start_date=loader.settings.accounting_start,
             paused=counts[ps.PAUSED],
-            buckets=PaymentsBuckets(**buckets), price_missing=price_missing, students_paused=len(students_paused),
-            pay_due_days=settings.pay_due_days, pay_due_lessons=settings.pay_due_lessons,
+            buckets=PaymentsBuckets(**{k: len(v) for k, v in bucket_students.items()}), bucket_rows=PaymentsBuckets(**buckets), price_missing=price_missing, students_paused=len(students_paused),
+            pay_due_days=settings.pay_due_days, pay_due_lessons=settings.pay_due_lessons, pay_due_package_max_days=pay_due.PACKAGE_DUE_MAX_DAYS,
             debt_ages=[DebtAgeBasket(bucket=k, students=len(v["students"]), memberships=v["memberships"], debt_total=v["debt_total"]) for k, v in ages.items()],
         )
         if SUMMARY_TTL_SECONDS > 0:

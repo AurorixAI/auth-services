@@ -57,6 +57,8 @@
     "debt_sub": null,
     "due_text": null,
     "due_sub": null,
+    "debt_also_text": null,
+    "due_also_text": null,
     "state": "paused",
     "state_text": "Пауза",
     "membership_id": "00000000-0000-4000-8000-000000000101",

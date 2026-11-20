@@ -203,6 +203,7 @@ class PaymentSettings(BaseModel):
     # the two numbers (read only) also come with ``GET /org/payments/summary`` for the roles that see the money.
     pay_due_days: int = Field(5, ge=0, le=14)
     pay_due_lessons: int = Field(2, ge=0, le=4)
+    pay_due_example: Optional["PayDueExample"] = None      # the sentences of the example under the term (the owner's GET and the dry run: for the REQUESTED values); computed by the server, not a stored setting
     # An excuse must be confirmed this many days before the end of the paid
     # period, or when this many lessons are left in a lessons package.
     excuse_deadline_days: int = Field(5, ge=0, le=30)
@@ -321,8 +322,10 @@ class UnpaidFields(BaseModel):
     debt_sub: Optional[str] = None
     due_text: Optional[str] = None
     due_sub: Optional[str] = None
+    debt_also_text: Optional[str] = None      # the second line of a row that holds BOTH sums: «и долг 600 000 сум · просрочено 45 дней» (null: no second sum)
+    due_also_text: Optional[str] = None       # «и к оплате 231 000 сум до 24.11» (a package: «и к оплате 100 000 сум · 2 урока · до 24.11»)
     state: Literal["debt", "to_pay", "expiring", "paused", "paid", "free", "none"] = "none"
-    state_text: Optional[str] = None
+    state_text: Optional[str] = None          # the words of the worst state for EVERY state: «Долг ...», «К оплате ...», «Оплачено до ДД.ММ», «Осталось K урока», «Аванс N сум», «На паузе до ДД.ММ», «Бесплатно», «Нет цены»
 
 
 class MembershipPaymentRow(UnpaidFields):
@@ -384,7 +387,7 @@ class DebtAgeBasket(BaseModel):
 
 
 class PaymentsBuckets(BaseModel):
-    """Memberships per tab of the payments page (the same sets ``GET /org/payments/status?bucket=`` lists); ``debtors`` and ``to_pay`` overlap (a membership with both sums is in both)."""
+    """DISTINCT STUDENTS per tab of the payments page (the numbers on the tabs); a student with both sums is in ``debtors`` and in ``to_pay``.  The count of ROWS (memberships) of a tab is ``PaymentsSummary.bucket_rows``."""
 
     debtors: int = 0
     to_pay: int = 0
@@ -393,8 +396,17 @@ class PaymentsBuckets(BaseModel):
     paused: int = 0
 
 
+class PayDueExample(BaseModel):
+    """PAY-DUE: the example under the setting of the term, in the words of the server: ``period`` - «Период с 01.12 — платить до 05.12 включительно» (the next period of the centre; 0 days - «Неоплата — долг с первого дня»),
+    ``package`` - «Третий неоплаченный урок или 15-й день после урока — уже долг»; ``text`` - the one of the current mode of the centre."""
+
+    period: str
+    package: str
+    text: str
+
+
 class DueNearest(BaseModel):
-    """PAY-DUE 10.2: the nearest term among the sums that are «К оплате»: the day and the words (``до сегодня`` / ``до завтра, 21.11`` / ``до 24.11``)."""
+    """PAY-DUE 10.2: the nearest term among the sums that are «К оплате»: the day and the words for the phrase «ближайший срок ...» (no preposition: ``сегодня`` / ``завтра, 21.11`` / ``24.11``)."""
 
     date: date_type
     text: str
@@ -425,11 +437,13 @@ class PaymentsSummary(BaseModel):
     accounting_start_date: Optional[date_type] = None
     paused: int = 0  # LOGIC-A: memberships whose today is inside a pause
     buckets: "PaymentsBuckets" = Field(default_factory=lambda: PaymentsBuckets())
+    bucket_rows: "PaymentsBuckets" = Field(default_factory=lambda: PaymentsBuckets())      # the same five tabs counted by memberships (the rows of the list)
     price_missing: int = 0              # the students outside the tabs (a warning line)
     debt_ages: List["DebtAgeBasket"] = Field(default_factory=list)       # Money-2 T18: always the four baskets, in order (by ``overdue_days``, the sum of ``debt_amount``)
     students_paused: int = 0  # DISTINCT students with a membership on pause today (== the students of the «На паузе» tab); ``buckets.paused`` counts memberships
     pay_due_days: int = 5           # PAY-DUE: the term of the centre, READ ONLY here (the roles with the right to the money read it; the settings of it are the owner's)
     pay_due_lessons: int = 2
+    pay_due_package_max_days: int = 14        # read only: an unpaid lesson stops being «к оплате» this many days after its date whatever the setting is
 
 
 class PaymentStatusPage(BaseModel):
@@ -894,6 +908,7 @@ class PreviewResult(PayModel):
     partial_credit_after: int = 0
     lessons: Optional[PreviewLessons] = None
     summary_text: str = ""
+    after_text: str = ""        # the state after the payment in the words of the server: «Останется: долг X сум · к оплате Y сум» / «Оплачено до ДД.ММ» / «Осталось K урока»
     price_ahead: List[PriceAhead] = Field(default_factory=list)
 
 
@@ -1192,6 +1207,8 @@ class ReceiptsPosition(PayModel):
     advance_total: int = 0
     memberships_with_debt: int = 0
     memberships_with_advance: int = 0
+    debt_text: Optional[str] = None           # «Долг 600 000 сум» / null at zero: the words of the server, the screen glues nothing
+    due_text: Optional[str] = None            # «К оплате 231 000 сум» / null at zero
 
 
 class ReconciliationCheck(PayModel):

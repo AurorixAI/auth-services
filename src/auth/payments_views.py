@@ -179,6 +179,9 @@ def unpaid_fields(e, today: date) -> dict:
         "debt_sub": tx.debt_sub(d.overdue_days, paid_until) if d.debt_amount > 0 else None,
         "due_text": tx.due_text(d.due_amount, d.due_lessons["used"] if packages and d.due_lessons else None) if d.due_amount > 0 else None,
         "due_sub": tx.due_sub(d.due_until, today) if d.due_amount > 0 else None,
+        # the second line of a row that holds BOTH sums (the tab decides which is the main one): null when the row has no second sum
+        "debt_also_text": tx.debt_also_text(d.debt_amount, d.debt_lessons if packages else None, d.overdue_days) if d.debt_amount > 0 and d.due_amount > 0 else None,
+        "due_also_text": tx.due_also_text(d.due_amount, d.due_lessons["used"] if packages and d.due_lessons else None, d.due_until) if d.debt_amount > 0 and d.due_amount > 0 else None,
     }
     state = state_of(e)
     out["state"] = state
@@ -199,11 +202,13 @@ def state_text(e, state: str, fields: dict, today: date) -> Optional[str]:
         return "Нет цены" if price_missing(e) else None
     if state == STATE_PAUSED:
         until = l.status.paused_until
-        return f"Пауза до {tx.ddmm(until)}" if until else "Пауза"
+        return f"На паузе до {tx.ddmm(until)}" if until else "На паузе"
     if state == STATE_EXPIRING:
         if l.status.period_mode == bl.LESSONS and l.status.lessons_left is not None:
             return tx.lessons_left_text(l.status.lessons_left)
         return tx.paid_until_text(l.status.paid_until)
+    if l.status.period_mode == bl.LESSONS and l.status.lessons_left is not None:      # a paid package: how many lessons are left (before the advance: the money of a package IS the lessons)
+        return tx.lessons_left_text(l.status.lessons_left)
     if l.advance > 0 and not l.status.paid_until:
         return tx.advance_text(l.advance)
     return tx.paid_until_text(l.status.paid_until) if l.status.paid_until else (tx.advance_text(l.advance) if l.advance > 0 else None)
@@ -234,7 +239,8 @@ def open_of_row(kind: str, ref_id: str, ledger: bl.Ledger, due, segments: dict) 
         text = tx.open_both_text(out[0]["text"], out[1]["text"]) if len(out) == 2 else out[0]["text"]
         return {"open_amount": sum(p["amount"] for p in out), "open_name": out[0]["name"], "open_text": text, "open_parts": out}
     if kind in (bl.PAYMENT, bl.TRANSFER_IN):      # the money that came (a payment, a transfer into the group) - the part not laid on a charge yet is «Аванс»; a transfer OUT, a refund, a forgiveness stay empty
-        left = sum(a.amount for a in ledger.allocations if a.credit_id == ref_id and a.bucket == bl.ADVANCE)       # money laid on a period that has not begun, or on no period yet
+        # the part of the money that is laid on NO begun charge: on the «advance» of no period yet, or on a period that has not begun (the bucket of an allocation is relative to the DAY of the payment: a period that has begun since is no advance)
+        left = sum(a.amount for a in ledger.allocations if a.credit_id == ref_id and (a.segment_id == bl.ADVANCE_SEGMENT or (a.segment_id in segments and not segments[a.segment_id].begun)))
         if left > 0:
             text = tx.advance_text(left)
             return {"open_amount": left, "open_name": "advance", "open_text": text, "open_parts": [{"name": "advance", "amount": left, "text": text}]}
@@ -332,6 +338,7 @@ def preview_result(before: bl.Ledger, after: bl.Ledger, credit_id: str, price_to
         advance_after=after.advance, paid_until_before=before.status.paid_until, paid_until_after=after.status.paid_until,
         status_after=status_without_paid_until(after.status.status, after.debt),
         partial_credit_after=after.partial_credit, lessons=lessons, summary_text=text,
+        after_text=tx.after_text(due_after.debt_amount, due_after.due_amount, after.status.paid_until, after.lessons.left if lessons else None, after.advance),
         price_ahead=price_ahead(after, credit_id, price_today),
     )
 

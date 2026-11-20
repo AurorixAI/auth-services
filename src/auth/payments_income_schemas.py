@@ -103,6 +103,8 @@ class CollectionRow(PayModel):
     students: int = 0  # students charged in the month
     debtors: int = 0  # DISTINCT students with a debt part in the month (a student who owes in two groups counts once in the total)
     due_students: int = 0  # DISTINCT students with a sum «К оплате» in the month
+    debt_text: Optional[str] = None  # «Долг 120 000 сум» (null at zero): the words of the server
+    due_text: Optional[str] = None  # «К оплате 80 000 сум» (null at zero)
     pct: Optional[int] = None  # floor(paid * 100 / charged): 100 only when the whole cost is paid; null when nothing is charged
 
 

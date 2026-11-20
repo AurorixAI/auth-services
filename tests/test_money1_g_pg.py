@@ -409,12 +409,12 @@ def test_g4_the_confirmation_and_the_answer_name_the_debt_that_appears_in_the_ne
     assert after_b["transferred_in"] == 0 and after_b["unpaid"] > 0
     expected = [{"membership_id": str(mid(two, two.student, two.second)), "group_id": str(two.second.id), "group_name": "Вторая", "amount": after_b["unpaid"], "total": after_b["unpaid"]}]
     assert dry.json()["new_debts"] == expected == real.json()["new_debts"]                  # the numbers of the preview are the numbers after (I-5)
-    sentence = f"В группе «Вторая» появится долг {after_b['unpaid']:,}".replace(",", NBSP) + f"{NBSP}сум"
+    sentence = f"В группе «Вторая» появится неоплаченная сумма {after_b['unpaid']:,}".replace(",", NBSP) + f"{NBSP}сум"
     assert sentence in dry.json()["money_effects"]["text"], dry.json()["money_effects"]["text"]
-    assert sentence.replace("появится", "появился") in real.json()["money_effects"]["text"]
+    assert sentence.replace("появится", "появилась") in real.json()["money_effects"]["text"]
     (row,) = [r for r in owner(two).get(f"{PAY_URL}/decisions", params={"from": day(-1).isoformat(), "to": day(1).isoformat()}).json()["rows"] if r["kind"] == "payment_void"]
     assert row["debt_before"] == in_a["unpaid"] + in_b["unpaid"] and row["debt_after"] == after_a["unpaid"] + after_b["unpaid"]       # the debt of ALL the groups the payment touches
-    assert row["consequence"] == sentence.replace("появится", "появился")
+    assert row["consequence"] == sentence.replace("появится", "появилась")
 
 
 def test_g4_a_payment_nobody_took_over_names_no_other_group(two, monkeypatch):
@@ -440,12 +440,12 @@ def test_g4b_a_correction_to_a_smaller_sum_names_the_debt_that_appears_in_the_ne
     assert after_b["transferred_in"] < carried and after_b["unpaid"] > 0
     expected = [{"membership_id": str(mid(two, two.student, two.second)), "group_id": str(two.second.id), "group_name": "Вторая", "amount": after_b["unpaid"], "total": after_b["unpaid"]}]
     assert dry.json()["new_debts"] == expected == real.json()["new_debts"]
-    sentence = f"В группе «Вторая» появится долг {after_b['unpaid']:,}".replace(",", NBSP) + f"{NBSP}сум"
+    sentence = f"В группе «Вторая» появится неоплаченная сумма {after_b['unpaid']:,}".replace(",", NBSP) + f"{NBSP}сум"
     assert sentence in dry.json()["money_effects"]["text"], dry.json()["money_effects"]["text"]
-    assert sentence.replace("появится", "появился") in real.json()["money_effects"]["text"]
+    assert sentence.replace("появится", "появилась") in real.json()["money_effects"]["text"]
     (row,) = [r for r in owner(two).get(f"{PAY_URL}/decisions", params={"from": day(-1).isoformat(), "to": day(1).isoformat()}).json()["rows"] if r["kind"] == "payment_replace"]
     assert row["debt_before"] == in_a["unpaid"] + in_b["unpaid"] and row["debt_after"] == after_a["unpaid"] + after_b["unpaid"]
-    assert row["consequence"] == sentence.replace("появится", "появился")
+    assert row["consequence"] == sentence.replace("появится", "появилась")
 
 
 def test_g4b_a_correction_to_the_same_or_a_bigger_sum_names_no_other_group(two):
@@ -518,10 +518,10 @@ def test_c1_a_correction_of_a_transferred_student_with_no_debt_of_his_own_goes_t
     assert after_b["unpaid"] > 0 and after_b["transferred_in"] < in_b["transferred_in"]
     expected = [{"membership_id": str(mid(two, two.student, two.second)), "group_id": str(two.second.id), "group_name": "Вторая", "amount": after_b["unpaid"], "total": after_b["unpaid"]}]
     assert dry["new_debts"] == expected == real["new_debts"]
-    sentence = f"В группе «Вторая» появится долг {after_b['unpaid']:,}".replace(",", NBSP) + f"{NBSP}сум"
-    assert sentence in dry["money_effects"]["text"] and sentence.replace("появится", "появился") in real["money_effects"]["text"]
+    sentence = f"В группе «Вторая» появится неоплаченная сумма {after_b['unpaid']:,}".replace(",", NBSP) + f"{NBSP}сум"
+    assert sentence in dry["money_effects"]["text"] and sentence.replace("появится", "появилась") in real["money_effects"]["text"]
     (row,) = [r for r in owner(two).get(f"{PAY_URL}/decisions", params={"from": day(-1).isoformat(), "to": day(1).isoformat()}).json()["rows"] if r["kind"] == "payment_replace"]
-    assert row["consequence"] == sentence.replace("появится", "появился")
+    assert row["consequence"] == sentence.replace("появится", "появилась")
     assert statement(two, two.group)["paid"] == 200_000 == _c1_live_sum(two, two.group)
 
 
@@ -554,7 +554,7 @@ def test_c1_the_correction_stays_within_the_ceiling_of_the_sum_it_corrects(two, 
     p = _c1_world(two, monkeypatch)
     new = _c1_replace(two, p, 200_000)["payment"]
     d = _c1_replace(two, new, 700_000, expect=422)                                      # С8: the ceiling is the biggest sum of the chain (600 000), not the sum being corrected
-    assert d["debt"] == 600_000
+    assert d["unpaid"] == 600_000
     assert _c1_replace(two, new, 200_000, paid_on=day(-8).isoformat())["payment"]["amount"] == 200_000
     assert statement(two, two.group)["paid"] == 200_000
 
@@ -603,7 +603,7 @@ def test_c8_a_cancelled_payment_does_not_extend_the_chain(two, monkeypatch):
     with at_day(monkeypatch, day(-3), 12):
         transfer(two, two.second)
     cut = _c1_replace(two, p, 200_000)["payment"]
-    assert _c1_replace(two, cut, 700_000, expect=422)["debt"] == 600_000               # not 900 000: the cancelled payment is no version of this one
+    assert _c1_replace(two, cut, 700_000, expect=422)["unpaid"] == 600_000               # not 900 000: the cancelled payment is no version of this one
 
 
 def test_c8_the_hint_of_the_preview_is_the_same_ceiling(two, monkeypatch):
@@ -825,7 +825,7 @@ def test_r5_a_tick_on_a_reopened_month_whose_rate_changed_is_refused_and_the_mon
     assert world.db.query(PayrollSheet).filter_by(id=first["id"]).one().revision == first["revision"]
 
 
-# ---- Р-2 (R3 В1): «появится долг» is the GROWTH of the debt of the new group, not all of its debt ---------------------------------------------------------
+# ---- Р-2 (R3 В1): «появится неоплаченная сумма» is the GROWTH of the unpaid sum of the new group, not all of its debt ---------------------------------------------------------
 
 def _transferred_into_a_group_that_already_owes(two, monkeypatch):
     billing(two, price_b=2_000_000)                                   # the money that went with the student (3 000 000 less the use in A) does not cover the dearer group B
@@ -849,10 +849,10 @@ def test_r2_the_new_debt_is_the_growth_and_names_the_whole_debt_when_the_group_o
     expected = [{"membership_id": str(mid(two, two.student, two.second)), "group_id": str(two.second.id), "group_name": "Вторая", "amount": growth, "total": now}]
     assert dry.json()["new_debts"] == expected == real.json()["new_debts"]            # before: amount = the whole debt (2 000 000)
     money = lambda n: f"{n:,}".replace(",", NBSP) + f"{NBSP}сум"      # noqa: E731
-    assert f"В группе «Вторая» долг вырастет на {money(growth)} — до {money(now)}" in dry.json()["money_effects"]["text"]
-    assert f"В группе «Вторая» долг вырос на {money(growth)} — до {money(now)}" in real.json()["money_effects"]["text"]
+    assert f"В группе «Вторая» неоплаченная сумма вырастет на {money(growth)} — до {money(now)}" in dry.json()["money_effects"]["text"]
+    assert f"В группе «Вторая» неоплаченная сумма выросла на {money(growth)} — до {money(now)}" in real.json()["money_effects"]["text"]
     (row,) = [r for r in owner(two).get(f"{PAY_URL}/decisions", params={"from": day(-1).isoformat(), "to": day(1).isoformat()}).json()["rows"] if r["kind"] == "payment_void"]
-    assert row["consequence"] == f"В группе «Вторая» долг вырос на {money(growth)} — до {money(now)}"
+    assert row["consequence"] == f"В группе «Вторая» неоплаченная сумма выросла на {money(growth)} — до {money(now)}"
 
 
 # ---- Р-3 (R3 В2): the confirmation of a cancellation names the saved sheet of the teacher of the OTHER group the money went to ----------------------------------

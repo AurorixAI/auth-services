@@ -7,6 +7,7 @@
   "expiring_lessons": 3,
   "pay_due_days": 5,
   "pay_due_lessons": 2,
+  "pay_due_example": null,
   "excuse_deadline_days": 5,
   "excuse_deadline_lessons": 2,
   "admin_can_manage": false,

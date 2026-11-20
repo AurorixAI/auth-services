@@ -92,6 +92,7 @@
     "partial_credit_after": 3182,
     "lessons": null,
     "summary_text": "Погасит 100 000 сум из долга 213 000 сум → оплачено до 10.10 · останется 113 000 сум",
+    "after_text": "Останется: долг 113 000 сум",
     "price_ahead": []
   },
   "warnings": [],

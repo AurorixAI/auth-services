@@ -74,3 +74,35 @@ def test_the_archive_of_a_student_says_the_whole_unpaid_sum_of_every_group_becom
         (stay,) = [x for x in got[g.name]["effects"]["stays"] if x["code"] == "debt"]
         n = got[g.name]["money"]["debt"]
         assert stay["text"] == f"Ученик уходит из центра: вся неоплаченная сумма {tx.money(n)} в группе «{g.name}» станет долгом" and stay["turns"] == n > 0
+
+
+def rows_of(w, student, bucket="all"):
+    r = owner(w).get(f"{API}/org/payments/status", params={"bucket": bucket, "scope": "all", "limit": 100})
+    assert r.status_code == 200, r.text
+    return [x for x in r.json()["items"] if x["student_id"] == str(student.id)]
+
+
+def test_a_transfer_keeps_the_term_of_the_periods_of_the_old_group(world, fixed_today):
+    a, b, c = groups3(world, fixed_today)
+    s = fresh_student(world, "Переходит")
+    add(world, s, group=a, mode="add")
+    hold_lessons(world, s, [TODAY], group=a)
+    add(world, s, group=b, mode="transfer", from_group_id=str(a.id))
+    (old,) = [r for r in rows_of(world, s, "to_pay") if r["group_id"] == str(a.id)]
+    # the student stays in the centre: the part of the old group goes on to its term (20, 21, 22, 23, 24.11) - «к оплате», not a debt
+    assert (old["state"], old["due_amount"], old["debt_amount"], old["due_until"]) == ("to_pay", 10_000, 0, "2026-11-24")
+
+
+def test_a_return_on_the_day_of_leaving_gives_back_the_sum_to_pay_with_the_same_term(world, fixed_today):
+    a, b, c = groups3(world, fixed_today)
+    s = fresh_student(world, "Вернулся")
+    add(world, s, group=a, mode="add")
+    hold_lessons(world, s, [TODAY], group=a)
+    (before,) = rows_of(world, s, "to_pay")
+    assert (before["state"], before["due_until"]) == ("to_pay", "2026-11-24")
+    assert owner(world).post(f"{API}/org/groups/{a.id}/students/{s.id}/leave", json={}).status_code == 200
+    (gone,) = rows_of(world, s, "debtors")
+    assert (gone["state"], gone["debt_amount"]) == ("debt", 10_000)                     # the only group: a debt at once
+    add(world, s, group=a, mode="add")                                                  # the same day: the leaving is cancelled
+    (back,) = rows_of(world, s, "to_pay")
+    assert (back["state"], back["due_until"], back["debt_amount"]) == ("to_pay", "2026-11-24", 0) and back["due_amount"] == before["due_amount"]

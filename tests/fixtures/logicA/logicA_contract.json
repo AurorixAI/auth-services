@@ -850,7 +850,7 @@
         "type": "object"
       },
       "DueNearest": {
-        "description": "PAY-DUE 10.2: the nearest term among the sums that are «К оплате»: the day and the words (``до сегодня`` / ``до завтра, 21.11`` / ``до 24.11``).",
+        "description": "PAY-DUE 10.2: the nearest term among the sums that are «К оплате»: the day and the words for the phrase «ближайший срок ...» (no preposition: ``сегодня`` / ``завтра, 21.11`` / ``24.11``).",
         "properties": {
           "date": {
             "format": "date",
@@ -2521,6 +2521,17 @@
             ],
             "title": "Debt Age Bucket"
           },
+          "debt_also_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Debt Also Text"
+          },
           "debt_amount": {
             "default": 0,
             "title": "Debt Amount",
@@ -2563,6 +2574,17 @@
               }
             ],
             "title": "Display Id"
+          },
+          "due_also_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Due Also Text"
           },
           "due_amount": {
             "default": 0,
@@ -4106,6 +4128,30 @@
         "title": "PausedRange",
         "type": "object"
       },
+      "PayDueExample": {
+        "description": "PAY-DUE: the example under the setting of the term, in the words of the server: ``period`` - «Период с 01.12 — платить до 05.12 включительно» (the next period of the centre; 0 days - «Неоплата — долг с первого дня»),\n``package`` - «Третий неоплаченный урок или 15-й день после урока — уже долг»; ``text`` - the one of the current mode of the centre.",
+        "properties": {
+          "package": {
+            "title": "Package",
+            "type": "string"
+          },
+          "period": {
+            "title": "Period",
+            "type": "string"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "period",
+          "package",
+          "text"
+        ],
+        "title": "PayDueExample",
+        "type": "object"
+      },
       "PayDueImpact": {
         "description": "``to_due``: students who are debtors now and would not be (their unpaid sum becomes «К оплате»); ``to_debt``: the other way round.  ``texts``: the words for the line before saving (none at zero).",
         "properties": {
@@ -5036,6 +5082,16 @@
             "title": "Pay Due Days",
             "type": "integer"
           },
+          "pay_due_example": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PayDueExample"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "pay_due_impact": {
             "anyOf": [
               {
@@ -5363,7 +5419,7 @@
         "type": "object"
       },
       "PaymentsBuckets": {
-        "description": "Memberships per tab of the payments page (the same sets ``GET /org/payments/status?bucket=`` lists); ``debtors`` and ``to_pay`` overlap (a membership with both sums is in both).",
+        "description": "DISTINCT STUDENTS per tab of the payments page (the numbers on the tabs); a student with both sums is in ``debtors`` and in ``to_pay``.  The count of ROWS (memberships) of a tab is ``PaymentsSummary.bucket_rows``.",
         "properties": {
           "active": {
             "default": 0,
@@ -5421,6 +5477,9 @@
           "as_of": {
             "title": "As Of",
             "type": "string"
+          },
+          "bucket_rows": {
+            "$ref": "#/components/schemas/PaymentsBuckets"
           },
           "buckets": {
             "$ref": "#/components/schemas/PaymentsBuckets"
@@ -5500,6 +5559,11 @@
           "pay_due_lessons": {
             "default": 2,
             "title": "Pay Due Lessons",
+            "type": "integer"
+          },
+          "pay_due_package_max_days": {
+            "default": 14,
+            "title": "Pay Due Package Max Days",
             "type": "integer"
           },
           "period_mode": {
@@ -6196,6 +6260,11 @@
             "title": "Advance After",
             "type": "integer"
           },
+          "after_text": {
+            "default": "",
+            "title": "After Text",
+            "type": "string"
+          },
           "allocations": {
             "items": {
               "$ref": "#/components/schemas/Allocation"
@@ -6321,6 +6390,7 @@
           "partial_credit_after",
           "lessons",
           "summary_text",
+          "after_text",
           "price_ahead"
         ],
         "title": "PreviewResult",
@@ -9235,6 +9305,17 @@
             "title": "Charged",
             "type": "integer"
           },
+          "debt_also_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Debt Also Text"
+          },
           "debt_amount": {
             "default": 0,
             "title": "Debt Amount",
@@ -9266,6 +9347,17 @@
               }
             ],
             "title": "Debt Text"
+          },
+          "due_also_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Due Also Text"
           },
           "due_amount": {
             "default": 0,
@@ -9434,6 +9526,8 @@
           "debt_sub",
           "due_text",
           "due_sub",
+          "debt_also_text",
+          "due_also_text",
           "state",
           "state_text",
           "charged",

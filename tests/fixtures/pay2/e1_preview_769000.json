@@ -113,7 +113,7 @@
         "days": 17,
         "bucket": "past_debt",
         "closes": true,
-        "label": "Погашен долг за 15.09–14.10",
+        "label": "Погашено за 15.09–14.10",
         "price": 500000,
         "segment_remaining_after": 0
       },
@@ -142,6 +142,7 @@
     "partial_credit_after": 0,
     "lessons": null,
     "summary_text": "Погасит долг 769 000 сум → оплачено до 14.11",
+    "after_text": "Оплачено до 14.11",
     "price_ahead": []
   },
   "warnings": [],

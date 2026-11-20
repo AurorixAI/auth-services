@@ -149,7 +149,9 @@
     "due_students": 0,
     "advance_total": 21000,
     "memberships_with_debt": 1,
-    "memberships_with_advance": 1
+    "memberships_with_advance": 1,
+    "debt_text": null,
+    "due_text": null
   },
   "reconciliation": {
     "ok": true,

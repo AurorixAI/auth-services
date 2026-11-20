@@ -123,6 +123,8 @@
     "advance_total": 300000,
     "memberships_with_debt": 1,
     "memberships_with_advance": 1,
+    "debt_text": "Долг 150 000 сум",
+    "due_text": null,
     "students_with_advance": 1
   },
   "checks": [

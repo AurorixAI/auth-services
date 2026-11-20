@@ -37,6 +37,8 @@
     "debt_sub": "просрочено 1 день · оплачено до 30.10",
     "due_text": null,
     "due_sub": null,
+    "debt_also_text": null,
+    "due_also_text": null,
     "state": "debt",
     "state_text": "Долг 20 000 сум",
     "membership_id": "00000000-0000-4000-8000-000000000101",

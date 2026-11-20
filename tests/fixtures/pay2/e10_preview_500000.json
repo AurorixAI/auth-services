@@ -92,6 +92,7 @@
     "partial_credit_after": 0,
     "lessons": null,
     "summary_text": "Закроет «К оплате»: 500 000 сум → оплачено до 19.11",
+    "after_text": "Оплачено до 19.11",
     "price_ahead": []
   },
   "warnings": [],

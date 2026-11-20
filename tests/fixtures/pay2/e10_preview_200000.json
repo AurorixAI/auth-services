@@ -92,6 +92,7 @@
     "partial_credit_after": 6452,
     "lessons": null,
     "summary_text": "Закроет 200 000 сум из «К оплате» 500 000 сум → оплачено до 31.10 · останется 300 000 сум",
+    "after_text": "Останется: к оплате 300 000 сум",
     "price_ahead": []
   },
   "warnings": [],

@@ -810,19 +810,19 @@ def test_the_statement_xlsx_reads_like_the_page(world, fixed_today):
     who = "Иван Owner"
     assert sheet_grid(ws, head + 1) == [
         ["Август 2026"] + [None] * 7,
-        [dt(2026, 8, 18), "Август 2026 — неполный месяц (14 дней из 31)", 203_000, None, None, None, "Долг 203 000", "цена 450 000 сум в месяц · индивидуальная цена"],
-        [dt(2026, 8, 20), f"Оплата № 1 · наличные · внёс {who}", None, 200_000, None, None, "Долг 3 000", "комментарий: первый взнос\nза август — 200 000 (осталось 3 000)"],
+        [dt(2026, 8, 18), "Август 2026 — неполный месяц (14 дней из 31)", 203_000, None, None, None, "Оплачено", "цена 450 000 сум в месяц · индивидуальная цена"],
+        [dt(2026, 8, 20), f"Оплата № 1 · наличные · внёс {who}", None, 200_000, None, None, None, "комментарий: первый взнос\nза август — 200 000 (осталось 3 000)"],
         ["Сентябрь 2026"] + [None] * 7,
-        [dt(2026, 9, 1), "Сентябрь 2026", 450_000, None, None, None, "Долг 453 000", "цена 450 000 сум в месяц · индивидуальная цена"],
-        [dt(2026, 9, 5), f"Оплата № 2 · карта · внёс {who}", None, 700_000, None, None, "Аванс 247 000",
+        [dt(2026, 9, 1), "Сентябрь 2026", 450_000, None, None, None, "Оплачено", "цена 450 000 сум в месяц · индивидуальная цена"],
+        [dt(2026, 9, 5), f"Оплата № 2 · карта · внёс {who}", None, 700_000, None, None, None,
          "за август — 3 000 (август оплачен)\nза сентябрь — 450 000 (сентябрь оплачен)\nаванс на октябрь — 247 000"],
         ["Октябрь 2026"] + [None] * 7,
-        [dt(2026, 10, 1), "Октябрь 2026", 450_000, None, None, None, "Долг 203 000", "цена 450 000 сум в месяц · индивидуальная цена"],
-        [dt(2026, 10, 15), f"Оплата № 3 · Click · внёс {who}", None, 153_000, None, None, "Долг 50 000", "за октябрь — 153 000 (осталось 50 000)"],
-        [dt(2026, 10, 19), f"Долг прощён — причина: болел · {who}", None, None, 50_000, None, "0", None],
-        [dt(2026, 10, 20), f"Оплата № 4 · Payme · внёс {who}", None, 100_000, None, None, "Аванс 100 000", "аванс на ноябрь — 60 000"],
-        [dt(2026, 10, 21), f"Возврат аванса — карта · {who}", None, None, None, 40_000, "Аванс 60 000", "причина: переехал"],
-        ["Итого", None, 1_103_000, 1_153_000, 50_000, 40_000, "Аванс 60 000", None],               # the blue total row of the flat table: sums of the money columns
+        [dt(2026, 10, 1), "Октябрь 2026", 450_000, None, None, None, "Оплачено", "цена 450 000 сум в месяц · индивидуальная цена"],
+        [dt(2026, 10, 15), f"Оплата № 3 · Click · внёс {who}", None, 153_000, None, None, None, "за октябрь — 153 000 (осталось 50 000)"],
+        [dt(2026, 10, 19), f"Прощено 50 000 сум — причина: болел · {who}", None, None, 50_000, None, None, None],
+        [dt(2026, 10, 20), f"Оплата № 4 · Payme · внёс {who}", None, 100_000, None, None, "Аванс 60 000 сум", "аванс на ноябрь — 60 000"],      # PAY-DUE 10.11: the part of the money laid on no begun charge (the 40 000 went back)
+        [dt(2026, 10, 21), f"Возврат аванса — карта · {who}", None, None, None, 40_000, None, "причина: переехал"],
+        ["Итого", None, 1_103_000, 1_153_000, 50_000, 40_000, None, None],               # the blue total row of the flat table: sums of the money columns
         [None] * 8,
         ["Следующие периоды (ещё не начались)"] + [None] * 7,
         ["01.11–30.11: оплачено 60 000 сум из 450 000 сум"] + [None] * 7,
@@ -842,18 +842,20 @@ def test_the_statement_xlsx_reads_like_the_page(world, fixed_today):
     assert not any("Начисл" in x for x in flat) and not any(x in flat for x in ("cash", "card", "click", "payme", "bank_transfer"))
     assert ws.cell(ws.max_row, 2).font.strike and ws.cell(ws.max_row, 8).value.startswith("Отменено:")
 
-    # one month: the carry line comes from the WHOLE ledger (the balance before October), the title says the month
+    # one month: the title says the month; no carry line (PAY-DUE 10.11: the column says what is open on the row itself)
     ws = export_sheet(world, m, **{"from": "2026-10-01", "to": "2026-10-31"})
     head = 5
     assert ws.cell(2, 1).value.endswith("Период: Октябрь 2026")
     got = sheet_grid(ws, head + 1)
-    assert got[0][0] == "Октябрь 2026" and got[1][0] == "С сентября перенесён аванс 247 000"
-    assert [g[1] for g in got[2:]] == ["Октябрь 2026", f"Оплата № 3 · Click · внёс {who}", f"Долг прощён — причина: болел · {who}",
+    assert got[0][0] == "Октябрь 2026"
+    assert [g[1] for g in got[1:]] == ["Октябрь 2026", f"Оплата № 3 · Click · внёс {who}", f"Прощено 50 000 сум — причина: болел · {who}",
                                          f"Оплата № 4 · Payme · внёс {who}", f"Возврат аванса — карта · {who}", None]
-    assert got[-1][0] == "Итого" and got[-1][2:7] == [450_000, 253_000, 50_000, 40_000, "Аванс 60 000"]
-    assert ws.max_row == head + 8                                            # a month: the total row, no «Следующие периоды», no cancelled block
-    assert got[2][6] == "Долг 203 000"                                       # the ledger's balance, not a sum over the cut rows
-    assert any(str(x) == f"A{head + 2}:H{head + 2}" for x in ws.merged_cells.ranges)
+    assert got[-1][0] == "Итого" and got[-1][2:7] == [450_000, 253_000, 50_000, 40_000, None]
+    assert ws.max_row == head + 7                                            # a month: the band, five rows, the total row; no «Следующие периоды», no cancelled block
+    assert got[1][6] == "Оплачено"                                           # the words of the server for the October charge, not a sum over the cut rows
+    # the equalities that replace the running total (decision 7): the advance of the rows is the advance of the summary (60 000), the cost - paid - forgiven + refunded = - advance
+    assert [g[6] for g in sheet_grid(export_sheet(world, m), head + 1) if g[6] and g[6].startswith("Аванс")] == ["Аванс 60 000 сум"]
+    assert 1_103_000 - 1_153_000 - 50_000 + 40_000 == -60_000
     # all months: no carry line anywhere
     ws = export_sheet(world, m)
     assert not any(str(ws.cell(r, 1).value).startswith("С ") and "перенесён" in str(ws.cell(r, 1).value) for r in range(1, ws.max_row + 1))

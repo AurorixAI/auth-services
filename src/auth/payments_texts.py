@@ -337,7 +337,7 @@ def after_text(debt: int, due: int, paid_until: Optional[date], lessons_left: Op
     parts = [f"долг {money(debt)}" if debt > 0 else None, f"к оплате {money(due)}" if due > 0 else None]
     if any(parts):
         return "Останется: " + " · ".join(p for p in parts if p)
-    if lessons_left is not None:
+    if lessons_left:
         return lessons_left_text(lessons_left)
     if paid_until:
         return f"Оплачено до {ddmm(paid_until)}"

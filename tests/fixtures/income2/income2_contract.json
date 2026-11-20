@@ -94,6 +94,17 @@
             "title": "Debt",
             "type": "integer"
           },
+          "debt_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Debt Text"
+          },
           "debtors": {
             "default": 0,
             "title": "Debtors",
@@ -108,6 +119,17 @@
             "default": 0,
             "title": "Due Students",
             "type": "integer"
+          },
+          "due_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Due Text"
           },
           "forgiven": {
             "default": 0,
@@ -193,6 +215,8 @@
           "students",
           "debtors",
           "due_students",
+          "debt_text",
+          "due_text",
           "pct"
         ],
         "title": "CollectionRow",
@@ -644,6 +668,17 @@
             "title": "Advance Total",
             "type": "integer"
           },
+          "debt_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Debt Text"
+          },
           "debt_total": {
             "default": 0,
             "title": "Debt Total",
@@ -658,6 +693,17 @@
             "default": 0,
             "title": "Due Students",
             "type": "integer"
+          },
+          "due_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Due Text"
           },
           "due_total": {
             "default": 0,
@@ -688,6 +734,8 @@
           "advance_total",
           "memberships_with_debt",
           "memberships_with_advance",
+          "debt_text",
+          "due_text",
           "students_with_advance"
         ],
         "title": "IncomePosition",

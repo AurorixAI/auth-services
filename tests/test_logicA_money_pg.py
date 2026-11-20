@@ -205,7 +205,7 @@ def test_backdated_price_with_payments_is_refused_and_without_payments_it_shows_
     r = c.put(f"{API}/org/groups/{world.group.id}/price", json={"amount": 600_000, "valid_from": "2026-10-01"})
     assert r.status_code == 409 and r.json()["detail"]["code"] == "PRICE_BACKDATE_WITH_PAYMENTS"
     assert [s["membership_id"] for s in r.json()["detail"]["students"]] == [str(a.id)]
-    assert "Нельзя изменить цену задним числом" in r.json()["detail"]["message"] and "прощением долга" in r.json()["detail"]["message"]
+    assert "Нельзя изменить цену задним числом" in r.json()["detail"]["message"] and "прощением или возвратом" in r.json()["detail"]["message"]
     for dry in (True, False):                                      # the refusal is the same for the dry run; nothing was written
         assert c.put(f"{API}/org/groups/{world.group.id}/price", params={"dry_run": dry}, json={"amount": 600_000, "valid_from": "2026-10-01"}).status_code == 409
     # only B (no money): allowed; the impact says «появится долг»
