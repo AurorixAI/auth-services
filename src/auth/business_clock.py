@@ -59,6 +59,7 @@ class ClockMovedBackError(ValueError):
 
 
 def _redis():
+    """The client of the clock's Redis.  Created lazily, ONLY under ``_offset_lock`` (every caller - the read and the write of the offset - holds it)."""
     global _redis_client
     if _redis_client is None:
         url = (os.environ.get(TEST_CLOCK_REDIS_VARIABLE) or "").strip()
@@ -110,7 +111,7 @@ def set_offset(seconds: int) -> int:
     with _offset_lock:
         current = _read_offset()  # fresh, not the cache: the other service (exam) may share the key
         if seconds < current:
-            raise ClockMovedBackError("часы стенда идут только вперёд; сброс - свежий стенд")
+            raise ClockMovedBackError("часы стенда идут только вперёд от настоящего времени; нужное время в прошлом - свежий стенд и дата впереди")
         try:
             _redis().set(OFFSET_KEY, str(seconds))
         except TestClockError:

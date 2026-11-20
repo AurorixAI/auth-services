@@ -14,7 +14,7 @@ from src.models.auth import GroupPrice, MoneyReconcileSnapshot
 from tests.pg_world import ensure_billing, give_group_price, needs_pg, pg_session, world  # noqa: F401  (fixtures)
 from tests.test_income2_pg import income
 from tests.test_payments_service_pg import pay
-from tests.time_clock_helpers import stand_clock  # noqa: F401  (fixture)
+from tests.time_clock_helpers import no_stand_clock, stand_clock  # noqa: F401  (fixtures)
 
 pytestmark = needs_pg
 
@@ -47,7 +47,7 @@ def _scenario(world, move_to):
     world.db.commit()
     pay(world, s0, amount=50_000)
     _, coverage = mr._explaining_events(world.db, world.org.id, snaps)
-    out["price_explains_coverage"] = set(coverage) == set(snaps) or bool(coverage)
+    out["price_explains_coverage"] = set(coverage) == set(snaps)
     out["day1_cash"] = income(world, day1.isoformat(), day1.isoformat())["cash"]["expected"]
     out["day0_cash_after"] = income(world, day0.isoformat(), day0.isoformat())["cash"]["expected"]
     second = mr.run(world.db, apply=True, only=[world.org.id])
@@ -88,3 +88,11 @@ def test_under_the_stand_clock_the_scenario_gives_the_same_answers(world, stand_
     assert by_stand["findings_tomorrow"] == [] and by_stand["findings_next_month"] == []
     assert by_stand["price_explains_coverage"]
     assert by_stand["price_rows_stamped_on_the_business_day"] == [by_stand["day1"]]
+
+
+def test_an_ordinary_money_request_with_the_clock_off_never_asks_redis(world, no_stand_clock):
+    """What stage and prod run: the clock mode is off, so taking a payment (the HTTP route of the product) reads the time without one call to the Redis of the clock."""
+    ensure_billing(world)
+    paid = pay(world, world.students[0], amount=100_000)
+    assert paid["payment"]["amount"] == 100_000
+    assert no_stand_clock.calls == 0

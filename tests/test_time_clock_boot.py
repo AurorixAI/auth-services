@@ -27,7 +27,7 @@ APP = ("from fastapi.testclient import TestClient\nfrom src.api.main_v2 import a
        "print('CLOCK_GET', TestClient(app).get('/api/v1/auth/dev/clock').status_code); print('DOCS', app.docs_url)")
 
 
-@pytest.mark.parametrize("app_env", ["staging", "production", "preview", "testing", "Staging", ""])
+@pytest.mark.parametrize("app_env", ["staging", "production", "preview", "testing", "Staging", "", "Development", " development"])
 @pytest.mark.parametrize("value", ["1", "0", "true", "x"])
 def test_any_non_empty_variable_outside_development_stops_the_start_and_names_both_variables(app_env, value):
     r = child(MODE, APP_ENV=app_env, ALGO_TEST_CLOCK=value, SECRET_KEY=GOOD)
@@ -50,9 +50,10 @@ def test_development_alone_does_not_switch_the_clock_on():
 
 
 def test_development_with_the_variable_switches_it_on_and_a_dead_redis_is_a_loud_error():
+    # the name must be exactly "development": a trimmed / lower-cased spelling neither opens the stand nor starts with the variable (see the parametrized refusal above)
     r = child("import src.auth.business_clock as bc\nprint('MODE', bc.TEST_CLOCK_MODE)\n"
               "try:\n    bc.business_now()\nexcept bc.TestClockError as e:\n    print('ERR', e)",
-              APP_ENV=" Development ", ALGO_TEST_CLOCK="1", ALGO_TEST_CLOCK_REDIS_URL="redis://127.0.0.1:1/0")
+              APP_ENV="development", ALGO_TEST_CLOCK="1", ALGO_TEST_CLOCK_REDIS_URL="redis://127.0.0.1:1/0")
     assert r.returncode == 0, r.stderr[-400:]
     assert "MODE True" in r.stdout and "ERR управляемые часы: Redis недоступен" in r.stdout
 
@@ -86,7 +87,7 @@ def test_health_says_whether_the_clock_is_on():
 
 
 def test_one_definition_of_the_development_environment():
-    for raw, expected in (("development", True), (" Development ", True), ("DEVELOPMENT", True), ("dev", False), ("staging", False), ("", False), ("production", False)):
+    for raw, expected in (("development", True), (" Development ", False), ("development ", False), ("Development", False), ("DEVELOPMENT", False), ("dev", False), ("staging", False), ("", False), ("production", False)):
         assert guard.is_dev_env({"APP_ENV": raw}) is expected
     assert guard.is_dev_env({}) is False
 

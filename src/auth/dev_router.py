@@ -5,7 +5,7 @@ ALGO V1 - Dev Router (Quick Login for Development)
 """
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, StrictInt
 from fastapi.responses import JSONResponse
 from typing import Optional
 from sqlalchemy.orm import Session
@@ -252,7 +252,7 @@ def _require_test_clock() -> None:
 class ClockPut(BaseModel):
     model_config = ConfigDict(extra="forbid")
     business_now: Optional[str] = Field(default=None, pattern=r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$")
-    offset_seconds: Optional[int] = None
+    offset_seconds: Optional[StrictInt] = None
 
 
 def _clock_view() -> dict:

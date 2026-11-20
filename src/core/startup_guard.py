@@ -29,12 +29,13 @@ def app_env(environ: Optional[Mapping[str, str]] = None) -> str:
 
 
 def is_dev_env(environ: Optional[Mapping[str, str]] = None) -> bool:
-    """The ONE definition of "this is a development stack": ``APP_ENV`` trimmed and lower-cased equals ``development``.
+    """The ONE definition of "this is a development stack": ``APP_ENV`` equals ``development`` EXACTLY (no trimming, no case folding - as it always was).
 
     Mounts the dev router and ``/docs`` (``main_v2``), lets the invitation code be remembered (``invites``) and, together with ``ALGO_TEST_CLOCK``,
     switches the controllable business clock on (``business_clock``).  Nothing else reads the name for this decision.
     """
-    return app_env(environ) == "development"
+    env = os.environ if environ is None else environ
+    return (env.get("APP_ENV") or "") == "development"
 
 
 TEST_CLOCK_VARIABLE = "ALGO_TEST_CLOCK"

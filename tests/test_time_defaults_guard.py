@@ -86,7 +86,8 @@ def test_set_clock_is_called_nowhere_in_src_but_its_own_module_and_set_offset_on
 def test_the_name_of_the_environment_is_judged_by_one_function():
     """Nobody compares APP_ENV with "development" by hand any more: main_v2, invites, config and the clock use ``startup_guard.is_dev_env``."""
     pattern = re.compile(r"""(APP_ENV[^\n]{0,60}==\s*["']development["'])|(app_env\s*==\s*["']development["'])""")
-    offenders = [f"{p.relative_to(SRC)}:{n}" for p in _src_files() for n, line in enumerate(p.read_text(encoding="utf-8").splitlines(), 1) if pattern.search(line)]
+    offenders = [f"{p.relative_to(SRC)}:{n}" for p in _src_files() if p.name != "startup_guard.py"      # the one definition itself
+                 for n, line in enumerate(p.read_text(encoding="utf-8").splitlines(), 1) if pattern.search(line)]
     assert not offenders, offenders
 
 

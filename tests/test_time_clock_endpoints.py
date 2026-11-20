@@ -67,7 +67,16 @@ def test_put_refuses_to_go_back_and_the_state_is_unchanged(client, stand_clock):
     assert client.put(URL, json={"offset_seconds": before - 1}).status_code == 409
 
 
-@pytest.mark.parametrize("body", [{}, {"business_now": "2030-03-04T10:00", "offset_seconds": 5}, {"business_now": "tomorrow"}, {"business_now": "2030-13-04T10:00"},
+def test_the_first_put_with_a_negative_offset_on_an_empty_key_is_a_409_that_says_why(client, stand_clock):
+    """The stand clock runs forward from the real time only (rows made before the first move would otherwise be "in the future"): nothing is written."""
+    for body in ({"offset_seconds": -1}, {"offset_seconds": -86400}, {"business_now": _in_days(-1).strftime("%Y-%m-%dT%H:%M")}):
+        r = client.put(URL, json=body)
+        assert r.status_code == 409, r.text
+        assert "только вперёд от настоящего времени" in r.json()["detail"] and "свежий стенд" in r.json()["detail"]
+    assert stand_clock.store == {} and client.get(URL).json()["offset_seconds"] == 0
+
+
+@pytest.mark.parametrize("body", [{}, {"offset_seconds": True}, {"offset_seconds": 1.5}, {"business_now": "2030-03-04T10:00", "offset_seconds": 5}, {"business_now": "tomorrow"}, {"business_now": "2030-13-04T10:00"},
                                   {"offset_seconds": "soon"}, {"offset_seconds": 10 ** 12}, {"other": 1}])
 def test_put_rejects_a_malformed_body(client, stand_clock, body):
     assert client.put(URL, json=body).status_code == 422
