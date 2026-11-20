@@ -73,8 +73,8 @@ def test_u2_written_down_today_taken_out_today_the_window_the_record_and_the_ans
     s = fresh_student(world, "Ошибка")
     add(world, s, group=b, mode="add")
     row = window(world, s, b)
-    assert row["money"]["debt"] == 0 and row["has_open_balance"] is False and row["allowed"] == ["keep"], row
-    done = leave(world, s, b)                                     # no expected_debt, no settle: passes
+    assert row["money"]["unpaid"] == 0 and row["has_open_balance"] is False and row["allowed"] == ["keep"], row
+    done = leave(world, s, b)                                     # no expected_unpaid, no settle: passes
     assert "долг" not in json.dumps(done["effects"], ensure_ascii=False).lower(), done["effects"]
 
 
@@ -86,7 +86,7 @@ def test_u2_paid_600000_the_refund_is_the_whole_600000(world, fixed_today):
     add(world, s, group=b, mode="add")
     pay(world, s, b, amount=600_000)
     row = window(world, s, b)
-    assert row["money"]["refundable"] == 600_000 and row["money"]["advance"] == 600_000 and row["money"]["debt"] == 0, row
+    assert row["money"]["refundable"] == 600_000 and row["money"]["advance"] == 600_000 and row["money"]["unpaid"] == 0, row
     done = leave(world, s, b, {"settle": [{"membership_id": row["membership_id"], "action": "refund", "method": "cash", "expected_refundable": 600_000}]})
     assert [(i["action"], i["amount"]) for i in done["settled"]] == [("refund", 600_000)]
 
@@ -108,8 +108,8 @@ def test_u2_an_ordinary_old_student_with_a_debt_the_window_equals_the_record(wor
     add(world, s, group=b, mode="add")
     stay(world, membership(world, s, b), date(2026, 11, 2))
     row = window(world, s, b)
-    assert row["money"]["debt"] == 263_000 and row["allowed"] == ["keep", "writeoff"], row
-    done = leave(world, s, b, {"settle": [{"membership_id": row["membership_id"], "action": "writeoff", "expected_debt": 263_000, "reason": "Договорились"}]})
+    assert row["money"]["unpaid"] == 263_000 and row["allowed"] == ["keep", "writeoff"], row
+    done = leave(world, s, b, {"settle": [{"membership_id": row["membership_id"], "action": "writeoff", "expected_unpaid": 263_000, "reason": "Договорились"}]})
     assert [(i["action"], i["amount"]) for i in done["settled"]] == [("writeoff", 263_000)]
 
 
@@ -192,7 +192,7 @@ def test_u4_forgiven_while_in_the_group_taken_out_the_same_day_without_a_mark_th
     add(world, s, group=b, mode="add")
     m, wid = forgive(world, s, b)
     row = window(world, s, b)
-    assert row["money"]["advance"] == 0 and row["money"]["debt"] == 0 and row["has_open_balance"] is False, row      # the window reads the account as the closing will leave it
+    assert row["money"]["advance"] == 0 and row["money"]["unpaid"] == 0 and row["has_open_balance"] is False, row      # the window reads the account as the closing will leave it
     leave(world, s, b)
     (row,) = writeoffs_of(world, m)
     assert row.voided_at is not None and row.voided_by == world.owner.id and "день записи" in row.void_reason, row

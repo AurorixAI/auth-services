@@ -38,7 +38,7 @@ def test_f1_a_forgiveness_of_the_real_old_debt_of_a_returned_student_is_not_canc
     s, b, m, debt = old_debtor(world, fixed_today)
     forgive(world, s, b, amount=debt)
     row = window(world, s, b)
-    assert row["money"]["debt"] == 0 and row["money"]["advance"] == 0, row
+    assert row["money"]["unpaid"] == 0 and row["money"]["advance"] == 0, row
     leave(world, s, b)
     assert [r.voided_at is None for r in writeoffs_of(world, m)] == [True]
     n = numbers(world, s, b)
@@ -53,7 +53,7 @@ def test_f1_partial_only_the_forgiveness_that_would_stand_as_an_advance_is_cance
     _, first = forgive(world, s, b, amount=debt)
     _, second = forgive(world, s, b, amount=5_000)
     row = window(world, s, b)
-    assert row["money"]["debt"] == 0 and row["money"]["advance"] == 0, row
+    assert row["money"]["unpaid"] == 0 and row["money"]["advance"] == 0, row
     leave(world, s, b)
     alive = {str(r.id): r.voided_at is None for r in writeoffs_of(world, m)}
     assert alive == {first: True, second: False}, alive
@@ -68,7 +68,7 @@ def test_f1_a_forgiveness_given_to_the_empty_stay_with_no_old_debt_is_still_canc
     s = fresh_student(world, "Простили")
     add(world, s, group=b, mode="add")
     m, wid = forgive(world, s, b)
-    assert window(world, s, b)["money"]["debt"] == 0
+    assert window(world, s, b)["money"]["unpaid"] == 0
     leave(world, s, b)
     (r,) = writeoffs_of(world, m)
     assert r.voided_at is not None

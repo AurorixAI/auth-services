@@ -39,7 +39,8 @@ class DuePart:
     due_until: Optional[date] = None    # the last day of «к оплате» (the oldest lesson + 14 for a package); ``None`` for a debt
     overdue_days: int = 0               # K: the days the debt is overdue (0 for «к оплате»)
     lessons: Optional[int] = None       # package: how many lessons the part holds
-    term: Optional[date] = None         # period: the day ``D`` the term ended / ends (``None`` when the term is 0 days: a debt from the first day; the opening balance has none; a package debt: the last day of the term of its oldest lesson)
+    term: Optional[date] = None         # period: the day ``D`` the term ended / ends (``None`` when the term is 0 days: a debt from the first day; the opening balance and packages have none)
+    lapsed: Optional[date] = None       # a package DEBT: the last day of the term of its oldest lesson (words only: «срок был ...» of a statement row)
 
 
 @dataclass(frozen=True)
@@ -52,6 +53,13 @@ class DueResult:
     overdue_days: int = 0                        # K of the oldest debt part (0 when the debt is not overdue yet or there is none)
     name: str = NONE
     parts: Tuple[DuePart, ...] = field(default_factory=tuple)
+
+    def lessons_said(self, name: str) -> Optional[int]:
+        """The number of lessons to say with the sum of ``name`` («debt» / «due»): only when EVERY part of that name is made of package lessons - a sum of a package and a period is not «N уроков» (17.2); else ``None``."""
+        parts = [p for p in self.parts if p.name == name]
+        if not parts or any(p.kind != "package" for p in parts):
+            return None
+        return sum(p.lessons or 0 for p in parts)
 
     @property
     def unpaid(self) -> int:
@@ -144,7 +152,7 @@ def classify(ledger: bl.Ledger, today: date, pay_due_days: int, pay_due_lessons:
     due = sum(p.unpaid for p in parts if p.name == DUE)
     until = min((p.due_until for p in parts if p.name == DUE and p.due_until), default=None)
     debt_parts = [p for p in parts if p.name == DEBT]
-    has_packages = ledger.mode == bl.LESSONS or any(s.kind == "package" for s in ledger.segments)
+    has_packages = any(p.kind == "package" for p in parts)          # the lessons are said of package PARTS only: a centre that once had packages is not a «package» centre (17.2)
     return DueResult(
         debt_amount=debt, due_amount=due, due_until=until,
         due_lessons={"used": sum(p.lessons or 0 for p in parts if p.name == DUE and p.kind == "package"), "limit": pay_due_lessons} if has_packages else None,
@@ -176,7 +184,7 @@ def _package_parts(lessons: List[Tuple[date, int, str]], closed: Dict[str, bool]
     for (seg_id, name), slot in grouped.items():
         out.append(DuePart(seg_id, "package", slot["unpaid"], name,
                            slot["oldest"] + timedelta(days=PACKAGE_DUE_MAX_DAYS) if name == DUE else None,
-                           slot["age"] if name == DEBT else 0, slot["n"], slot["term"] if name == DEBT else None))
+                           slot["age"] if name == DEBT else 0, slot["n"], None, slot["term"] if name == DEBT else None))
     return out
 
 
@@ -194,6 +202,6 @@ def _fit(parts: List[DuePart], debt: int) -> List[DuePart]:
             if p.name != name:
                 continue
             cut = min(excess, p.unpaid)
-            out[i] = DuePart(p.segment_id, p.kind, p.unpaid - cut, p.name, p.due_until, p.overdue_days, p.lessons, p.term)
+            out[i] = DuePart(p.segment_id, p.kind, p.unpaid - cut, p.name, p.due_until, p.overdue_days, p.lessons, p.term, p.lapsed)
             excess -= cut
     return [p for p in out if p.unpaid > 0]

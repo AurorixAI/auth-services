@@ -58,9 +58,9 @@ def test_an_archiving_with_two_settlement_lines_lists_them_in_the_order_of_writi
     a, b, s0 = _two_debts_and_an_advance(world, fixed_today)
     pv = owner(world).get(f"{API}/org/students/{s0.id}/archive-preview").json()["memberships"]
     by_group = {m["group_id"]: m for m in pv}
-    debt, refundable = by_group[str(a.id)]["money"]["debt"], by_group[str(b.id)]["money"]["refundable"]
+    debt, refundable = by_group[str(a.id)]["money"]["unpaid"], by_group[str(b.id)]["money"]["refundable"]
     assert debt > 0 and refundable > 0, pv
-    forgive = {"membership_id": by_group[str(a.id)]["membership_id"], "action": "writeoff", "expected_debt": debt, "reason": "договорённость"}
+    forgive = {"membership_id": by_group[str(a.id)]["membership_id"], "action": "writeoff", "expected_unpaid": debt, "reason": "договорённость"}
     refund = {"membership_id": by_group[str(b.id)]["membership_id"], "action": "refund", "expected_refundable": refundable, "method": "cash"}
     items = [forgive, refund] if order == "forgive_first" else [refund, forgive]
     _clock(frozen)
@@ -85,7 +85,7 @@ def test_a_leave_writes_its_own_line_before_the_settlement_line(world, fixed_tod
     a, b, s0 = _two_debts_and_an_advance(world, fixed_today)
     row = window(world, s0, a)
     _clock(frozen)
-    leave(world, s0, a, {"settle": [{"membership_id": row["membership_id"], "action": "writeoff", "expected_debt": row["money"]["debt"], "reason": "договорённость"}]})
+    leave(world, s0, a, {"settle": [{"membership_id": row["membership_id"], "action": "writeoff", "expected_unpaid": row["money"]["unpaid"], "reason": "договорённость"}]})
     world.db.expire_all()
     raw = (world.db.query(GroupAudit).filter(GroupAudit.org_id == world.org.id, GroupAudit.action.in_(("student_left_group", "payment_writeoff")))
            .order_by(GroupAudit.created_at, GroupAudit.id).all())
@@ -116,7 +116,7 @@ def test_a_leave_across_midnight_is_one_business_day_everywhere(world, fixed_tod
         return out
 
     monkeypatch.setattr(leave_service, "close_stay", close_then_the_clock_moves)
-    leave(world, s0, a, {"settle": [{"membership_id": row["membership_id"], "action": "writeoff", "expected_debt": row["money"]["debt"], "reason": "договорённость"}]})
+    leave(world, s0, a, {"settle": [{"membership_id": row["membership_id"], "action": "writeoff", "expected_unpaid": row["money"]["unpaid"], "reason": "договорённость"}]})
     assert bc.business_today() == DAY + timedelta(days=1)                                   # the clock really crossed midnight
     world.db.expire_all()
     wo = world.db.query(StudentWriteoff).filter_by(org_id=world.org.id).one()

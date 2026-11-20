@@ -434,3 +434,22 @@ def test_t12_decision_3_the_archive_of_a_group_says_which_unpaid_sums_become_a_d
     (blocker,) = [x for x in detail["blockers"] if x["code"] == "OPEN_BALANCES"]
     assert blocker["texts"] == [f"У 1 ученика осталась неоплаченная сумма {tx.money(190_000)} — это долг",
                                 f"У 1 ученика это последняя группа: неоплаченная сумма {tx.money(290_000)} станет долгом"]
+
+
+def test_17_3_the_second_group_that_is_archived_does_not_keep_the_student_in_the_centre(world, fixed_today, exams):
+    """PAY-DUE 17.3: s1 is in A and in B, but B is archived: after the archive of A he is out of the centre - the line «последняя группа» counts him (the same function ``in_centre`` of the loader as the lists).
+    Three students are in A: the count is of students, not of rows."""
+    from tests.money1b_helpers import add
+
+    a, b, c = groups3(world, fixed_today)
+    s0, s1, s2 = world.students
+    for s in (s0, s1, s2):
+        stay(world, membership(world, s, a), date(2026, 11, 2))
+    add(world, s1, group=b, mode="add")
+    texts = lambda: [x for x in owner(world).get(f"{API}/org/groups/{a.id}/archive-impact").json()["blockers"] if x["code"] == "OPEN_BALANCES"][0]["texts"]
+    assert texts()[0].startswith("У 2 учеников это последняя группа")                                                    # three students are in A, s1 has B too: two
+    world.db.expire_all()
+    world.db.get(type(b), b.id).status = "archived"
+    world.db.commit()
+    (line,) = texts()
+    assert line.startswith("У 3 учеников это последняя группа: неоплаченная сумма") and line.endswith("станет долгом"), line

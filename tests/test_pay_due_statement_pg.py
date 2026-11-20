@@ -146,3 +146,20 @@ def test_16b1_the_term_of_a_package_debt_is_the_last_day_of_its_oldest_lesson_an
     parts = {p.name: p for p in _package_parts(lessons, {"p": False}, date(2026, 10, 12), 1, True)}
     assert (parts[DEBT].lessons, parts[DEBT].term) == (2, date(2026, 10, 4))        # the lesson of 05.10 pushed the one of 01.10 out on 04.10
     assert parts["due"].term is None and parts["due"].due_until == date(2026, 10, 23)
+
+
+def test_17_1_the_recalculation_row_carries_the_advance_it_freed_and_the_equalities_hold(pg_session, clock):
+    """A month is paid (600 000), the centre cancels the lesson of Wed 21.10 (the recalculation is on): 46 000 is taken off the month and lies as an advance - the summary says «Аванс 46 000» and so does the row of the recalculation."""
+    from tests.payf_helpers import build_org, cancel
+    from tests.test_payf_recalc_pg import month_world
+
+    w = build_org(pg_session)
+    g, student, m = month_world(w, clock, paid=600_000)
+    cancel(w, g, "lesson-wed", "2026-10-21")
+    s = statement(w, m)
+    (recalc,) = [r for r in s["rows"] if r["type"] == "recalc"]
+    assert (recalc["open_name"], recalc["open_amount"], recalc["open_text"]) == ("advance", 46_000, f"Аванс 46{NB}000{NB}сум")
+    assert s["summary"]["advance"] == 46_000
+    assert [r["open_amount"] for r in s["rows"] if r["type"] == "payment"] == [None]           # the payment itself is fully laid on the charge
+    check_equalities(s)
+    assert open_sums(s)["advance"] == 46_000

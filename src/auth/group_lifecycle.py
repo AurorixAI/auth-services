@@ -120,6 +120,16 @@ class GroupLifecycle:
             return None
         return {"code": "OPEN_BALANCES", "count": len(rows), "balances": rows, "texts": self._balance_texts(group, rows, money)}
 
+    def _stays_in_centre(self, group: Group, student_id: str) -> bool:
+        """PAY-DUE 17.3: will the student still be in the centre after this group is archived - the ONE function of the loader (``in_centre`` with the memberships of this group as ``closing``): another group that
+        is archived itself, or a student who is archived, is not «elsewhere»."""
+        if getattr(self, "_centre_loader", None) is None or self._centre_loader[0] != group.id:
+            from . import ledger_service as ls  # lazy: ledger_service imports the pricing / status modules
+
+            ids = {row[0] for row in self.db.query(StudentGroup.id).filter(StudentGroup.group_id == group.id).all()}
+            self._centre_loader = (group.id, ls.LedgerLoader(self.db, str(group.org_id), ps.business_today(), closing=ids))
+        return self._centre_loader[1].in_centre(student_id)
+
     def _balance_texts(self, group: Group, rows: List[Dict[str, Any]], money: bool) -> List[str]:
         """PAY-DUE решение 3: what the archive does to the unpaid sums, by the facts of the window (each line only when its number is not zero): the students who already LEFT the group with a debt (it is a debt), and the students
         still in the group for whom it is the LAST group of the centre (after the archive they are out of the centre: the whole unpaid sum becomes a debt)."""
@@ -129,9 +139,7 @@ class GroupLifecycle:
         unpaid = [r for r in rows if r["kind"] in ("debt", "due")]
         gone = [r for r in unpaid if r["left_on"] and r["kind"] == "debt"]
         staying = [r for r in unpaid if not r["left_on"]]
-        elsewhere = {str(x[0]) for x in self.db.query(StudentGroup.student_id).filter(
-            StudentGroup.student_id.in_([r["student_id"] for r in staying]), StudentGroup.is_active.is_(True), StudentGroup.group_id != group.id).all()} if staying else set()
-        last = [r for r in staying if r["student_id"] not in elsewhere]
+        last = [r for r in staying if not self._stays_in_centre(group, r["student_id"])]
         out: List[str] = []
         left_students = {r["student_id"] for r in gone}
         if left_students:

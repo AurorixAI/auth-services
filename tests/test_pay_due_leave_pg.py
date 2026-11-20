@@ -33,7 +33,7 @@ def test_the_only_group_leaving_in_the_term_says_the_sum_becomes_a_debt_and_afte
     add(world, s, group=a, mode="add")
     hold_lessons(world, s, [TODAY], group=a)
     m = preview(world, a, s)
-    n = m["money"]["debt"]
+    n = m["money"]["unpaid"]
     assert n == 10_000 and (m["money"]["debt_amount"], m["money"]["due_amount"], m["money"]["becomes_debt"]) == (10_000, 0, 10_000)      # the lesson of today; all of it turns into a debt
     (stay,) = [x for x in m["effects"]["stays"] if x["code"] == "debt"]
     assert stay["text"] == f"К оплате {tx.money(n)}. Это единственная группа ученика: после ухода сумма станет долгом" and stay["turns"] == 10_000
@@ -72,7 +72,7 @@ def test_the_archive_of_a_student_says_the_whole_unpaid_sum_of_every_group_becom
     got = archive_preview(world, s)
     for g in (a, b):
         (stay,) = [x for x in got[g.name]["effects"]["stays"] if x["code"] == "debt"]
-        n = got[g.name]["money"]["debt"]
+        n = got[g.name]["money"]["unpaid"]
         assert stay["text"] == f"Ученик уходит из центра: вся неоплаченная сумма {tx.money(n)} в группе «{g.name}» станет долгом" and stay["turns"] == n > 0
 
 

@@ -122,7 +122,7 @@ def test_logicA_f9_z_nothing_to_settle_says_so_and_offers_only_keep(world, fixed
     stay(world, m, D(2026, 10, 21))
     mem = lp(world, world.group, world.students[0])["memberships"][0]
     assert mem["has_open_balance"] is False and mem["allowed"] == ["keep"]
-    assert (mem["money"]["debt"], mem["money"]["advance"], mem["money"]["refundable"]) == (0, 0, 0)
+    assert (mem["money"]["unpaid"], mem["money"]["advance"], mem["money"]["refundable"]) == (0, 0, 0)
 
 
 def test_logicA_f9_u_a_refund_made_at_leaving_can_be_voided_like_any_refund(world, fixed_today):
@@ -147,7 +147,7 @@ def test_logicA_f9_a_the_opening_debt_stays_the_debt_of_the_student_who_left(wor
     assert owner(world).put(f"{API}/org/memberships/{m.id}/opening-balance", json={"debt_amount": 250_000, "debt_on": "2026-09-30"}).status_code == 200
     fixed_today(D(2026, 10, 25))
     pv = owner(world).get(f"{API}/org/students/{m.student_id}/archive-preview").json()["memberships"][0]
-    assert pv["money"]["debt"] == 347_000 and pv["allowed"] == ["keep", "writeoff"]
+    assert pv["money"]["unpaid"] == 347_000 and pv["allowed"] == ["keep", "writeoff"]
 
 
 def test_logicA_f12_c_two_regime_saves_on_one_day_keep_one_history_entry_and_the_last_wins(world, fixed_today):

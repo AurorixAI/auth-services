@@ -1546,7 +1546,7 @@ SettleAction = Literal["keep", "writeoff", "refund"]
 
 
 class LeaveMoney(PayModel):
-    debt: int = 0                              # everything unpaid after the action (a debt and the sum «к оплате»; the name is kept for ``expected_debt`` of the settlement)
+    unpaid: int = 0                            # everything unpaid after the action (a debt and the sum «к оплате»: the one name of «всё неоплаченное», 17.4; ``expected_unpaid`` of the settlement is checked against it)
     debt_amount: int = 0                       # PAY-DUE 10.5: the part that is a DEBT after the action (the state AFTER it: the student in the centre or not)
     due_amount: int = 0                        # the part that stays «к оплате» (the student is still in the centre, the term goes on)
     due_until: Optional[date_type] = None
@@ -1577,7 +1577,7 @@ class SettleItem(BaseModel):
     membership_id: str
     action: SettleAction = "keep"
     expected_refundable: Optional[StrictInt] = None  # refund (R3 2)
-    expected_debt: Optional[StrictInt] = None  # writeoff (R3 2)
+    expected_unpaid: Optional[StrictInt] = None  # writeoff (R3 2): everything unpaid the person SAW
     method: Optional[NewPaymentMethod] = None  # refund: mandatory
     reason: Optional[str] = Field(None, max_length=500)  # writeoff: mandatory (3..500)
 

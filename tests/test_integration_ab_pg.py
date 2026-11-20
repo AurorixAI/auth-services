@@ -200,7 +200,7 @@ def test_group_archive_waits_for_the_students_and_a_settle_flow_closes_their_mon
     for s in (a, b):
         pv = own.get(f"{API}/org/groups/{group.id}/students/{s.id}/leave-preview").json()
         mem = pv["memberships"][0]
-        assert "writeoff" in mem["allowed"] and mem["money"]["debt"] > 0
+        assert "writeoff" in mem["allowed"] and mem["money"]["unpaid"] > 0
         out = own.post(f"{API}/org/groups/{group.id}/students/{s.id}/leave", json={"settle": [
             {"membership_id": str(owed[s.id].id), "action": "writeoff", "reason": "Группа закрывается"}]})
         assert out.status_code == 200, out.text

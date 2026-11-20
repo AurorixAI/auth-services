@@ -50,7 +50,7 @@ def test_leave_preview_and_leave_with_a_refund(world, fixed_today):
     pv = lp(world, world.group, world.students[0])
     mem = pv["memberships"][0]
     assert pv["as_of"] == "2026-10-21" and mem["membership_id"] == str(m.id) and mem["has_open_balance"] is True
-    assert mem["money"]["advance"] == 300_000 - 213_000 and mem["money"]["refundable"] == 87_000 and mem["money"]["debt"] == 0
+    assert mem["money"]["advance"] == 300_000 - 213_000 and mem["money"]["refundable"] == 87_000 and mem["money"]["unpaid"] == 0
     assert mem["allowed"] == ["keep", "refund"] and mem["money"]["charged_after_leave"] == 213_000
     body = {"settle": [{"membership_id": str(m.id), "action": "refund", "expected_refundable": 87_000, "method": "cash"}]}
     out = leave(world, world.group, world.students[0], body)
@@ -69,19 +69,19 @@ def test_leave_preview_and_leave_with_a_refund(world, fixed_today):
 def test_leave_with_a_writeoff_and_the_balance_changed_answer(world, fixed_today):
     m = money_world(world, paid=100_000)                          # debt: 213 000 - 100 000 = 113 000
     mem = lp(world, world.group, world.students[0])["memberships"][0]
-    assert mem["money"]["debt"] == 113_000 and mem["allowed"] == ["keep", "writeoff"]
-    stale = {"settle": [{"membership_id": str(m.id), "action": "writeoff", "expected_debt": 90_000, "reason": "договорённость"}]}
+    assert mem["money"]["unpaid"] == 113_000 and mem["allowed"] == ["keep", "writeoff"]
+    stale = {"settle": [{"membership_id": str(m.id), "action": "writeoff", "expected_unpaid": 90_000, "reason": "договорённость"}]}
     r = owner(world).post(f"{API}/org/groups/{world.group.id}/students/{world.students[0].id}/leave", json=stale)
     assert r.status_code == 409 and r.json()["detail"]["code"] == "BALANCE_CHANGED"
     assert r.json()["detail"]["fresh"] == [{"membership_id": str(m.id), "debt": 113_000, "advance": 0, "refundable": 0}]
     world.db.expire_all()
     assert world.db.get(StudentGroup, m.id).is_active and world.db.query(StudentWriteoff).filter_by(membership_id=m.id).count() == 0   # C: nothing done
-    bad = {"settle": [{"membership_id": str(m.id), "action": "writeoff", "expected_debt": 113_000, "reason": "а"}]}
+    bad = {"settle": [{"membership_id": str(m.id), "action": "writeoff", "expected_unpaid": 113_000, "reason": "а"}]}
     r = owner(world).post(f"{API}/org/groups/{world.group.id}/students/{world.students[0].id}/leave", json=bad)
     assert r.status_code == 422 and r.json()["detail"]["code"] == "REASON_REQUIRED"
     world.db.expire_all()
     assert world.db.get(StudentGroup, m.id).is_active                                              # atomic: the leaving rolled back too
-    ok = {"settle": [{"membership_id": str(m.id), "action": "writeoff", "expected_debt": 113_000, "reason": "договорённость"}]}
+    ok = {"settle": [{"membership_id": str(m.id), "action": "writeoff", "expected_unpaid": 113_000, "reason": "договорённость"}]}
     out = leave(world, world.group, world.students[0], ok)
     assert out["settled"][0]["amount"] == 113_000
     assert owner(world).get(f"{API}/org/students/{m.student_id}/memberships").json()[0]["unpaid"] == 0

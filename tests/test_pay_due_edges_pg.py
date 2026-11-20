@@ -97,6 +97,10 @@ def test_a_switch_from_packages_to_the_calendar_makes_the_whole_unpaid_package_a
     assert (total["debt_total"], total["due_total"], total["debtors"]) == (600_000, 600_000, 1)
     a = row_of(status_page(w, "debtors"), ms[0])
     assert (a["debt_amount"], a["due_amount"]) == (600_000, 600_000)                  # one participation, both names, the rows add up to the card
+    # 17.2: the lessons are said of the PACKAGE part only; the calendar sum is not «N уроков», and the counters of the lessons do not belong to the whole sum
+    assert "урок" in a["debt_text"] and "урок" not in a["due_text"], (a["debt_text"], a["due_text"])
+    assert a["debt_lessons"] == 3 and a["due_lessons"] == {"used": 0, "limit": 2}
+    assert "урок" not in a["due_also_text"] and "3 урока" in a["debt_also_text"]
 
 
 def test_a_lesson_marked_after_the_fact_moves_the_names_and_a_held_lesson_cannot_be_cancelled_to_take_them_back(pg_session, clock):

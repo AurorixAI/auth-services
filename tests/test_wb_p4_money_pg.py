@@ -154,7 +154,7 @@ PRICE_INPUTS = [
     ("post", "/org/opening-balances/batch/preview", lambda bad: {"items": [{"membership_id": M0, "version": "v", "lessons_left": bad}]}, "lessons_left"),
     ("post", f"/org/groups/{UUID0}/students/{M0}", lambda bad: {"price_override": {"amount": bad, "reason": "скидка семье"}}, "amount"),
     ("post", f"/org/groups/{UUID0}/students/{M0}/leave", lambda bad: {"settle": [{"membership_id": M0, "action": "refund", "expected_refundable": bad, "method": "cash"}]}, "expected_refundable"),
-    ("post", f"/org/groups/{UUID0}/students/{M0}/leave", lambda bad: {"settle": [{"membership_id": M0, "action": "writeoff", "expected_debt": bad, "reason": "договорились"}]}, "expected_debt"),
+    ("post", f"/org/groups/{UUID0}/students/{M0}/leave", lambda bad: {"settle": [{"membership_id": M0, "action": "writeoff", "expected_unpaid": bad, "reason": "договорились"}]}, "expected_unpaid"),
 ]
 
 

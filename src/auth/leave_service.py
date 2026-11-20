@@ -4,7 +4,7 @@ ALGO - LOGIC-A (F9, F13): a student leaves a group / is archived WITH his money.
 Before the leaving the server shows the account «after the leaving» (the ledger with every stay closed today) and the owner chooses per
 membership: ``keep`` (default), ``writeoff`` (only a debt; the reason is mandatory) or ``refund`` (only a refundable advance; the method is
 mandatory).  The choice is carried out in the SAME transaction as the leaving, after the stay is closed; the numbers the client saw
-(``expected_debt`` / ``expected_refundable``) are checked again under the locks - a difference is 409 ``BALANCE_CHANGED`` with the fresh
+(``expected_unpaid`` / ``expected_refundable``) are checked again under the locks - a difference is 409 ``BALANCE_CHANGED`` with the fresh
 numbers and nothing is done.  A debt that is kept can still be paid after the leaving (S-5: not more than the debt).
 
 Closing a stay also (F13) ends the individual price of the membership the day after, and (decision 2) cuts / cancels its pauses - the same
@@ -187,7 +187,7 @@ class LeaveService:
         price = loader.books.price(membership.id, membership.group_id, today)
         named = {"debt_amount": snap.named_debt, "due_amount": snap.named_due, "due_until": snap.due_until, "becomes_debt": snap.turns} if snap is not None else {}
         return LeaveMoney(
-            **named, debt=ledger.debt, advance=ledger.advance, refundable=refundable, paid_until=ledger.covered_through,
+            **named, unpaid=ledger.debt, advance=ledger.advance, refundable=refundable, paid_until=ledger.covered_through,
             charged_after_leave=ledger.charged, individual_price_ends=price.source == pricing.SOURCE_OVERRIDE and price.amount is not None)
 
     def _preview(self, org_id: str, memberships: Sequence[StudentGroup], groups: Dict[UUID, Group], money: bool, kind: str) -> LeavePreview:
@@ -252,7 +252,7 @@ class LeaveService:
         stale = []
         for item in todo:
             ledger, refundable = after[by_id[item.membership_id].id]
-            if item.action == "writeoff" and item.expected_debt is not None and item.expected_debt != ledger.debt:
+            if item.action == "writeoff" and item.expected_unpaid is not None and item.expected_unpaid != ledger.debt:
                 stale.append(item)
             if item.action == "refund" and item.expected_refundable is not None and item.expected_refundable != refundable:
                 stale.append(item)
@@ -283,7 +283,7 @@ class LeaveService:
                     "actor_id": str(actor_id), "membership_id": str(membership.id), "student_id": str(membership.student_id),
                     "writeoff_id": str(row.id), "amount": int(row.amount), "reason": reason, "effective_on": today.isoformat(),
                     "debt_before": ledger.debt, "debt_after": 0, "at_leave": True,
-                    "expected_debt": item.expected_debt}, at=stamps.next())        # the numbers the client saw (null: it sent none) and the ones used
+                    "expected_unpaid": item.expected_unpaid}, at=stamps.next())        # the numbers the client saw (null: it sent none) and the ones used
                 out.append(SettledOut(membership_id=item.membership_id, action="writeoff", amount=int(row.amount), writeoff_id=str(row.id)))
             else:
                 if not item.method:

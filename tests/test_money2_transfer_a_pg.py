@@ -437,7 +437,7 @@ def test_t6_a_forgiveness_made_with_the_leaving_forbids_the_cancel_as_well_and_t
     a, b, c = groups3(world, fixed_today, date(2026, 11, 22))
     s0 = world.students[0]
     joined(world, s0, a, date(2026, 11, 2))
-    r = owner(world).post(f"{API}/org/groups/{a.id}/students/{s0.id}/leave", json={"settle": [{"membership_id": str(membership(world, s0, a).id), "action": "writeoff", "expected_debt": 210_000, "reason": "договорённость"}]})
+    r = owner(world).post(f"{API}/org/groups/{a.id}/students/{s0.id}/leave", json={"settle": [{"membership_id": str(membership(world, s0, a).id), "action": "writeoff", "expected_unpaid": 210_000, "reason": "договорённость"}]})
     assert r.status_code == 200, r.text
     dry = add(world, s0, group=a, mode="add", dry_run=True)
     assert dry["leave_undo"]["undone"] is False and "простили долг" in dry["leave_undo"]["text"].lower()

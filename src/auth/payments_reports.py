@@ -110,12 +110,13 @@ class PaymentsReports:
             found = loader.members.get(mid)
             return found[2].name if found else ""
 
+        recalc_adv = pv.recalc_advance(ledger, segments)
         rows: List[StatementRow] = []
         for seq, e in enumerate(ledger.statement, 1):
             balance = e.balance_after
             common = dict(seq=seq, date=e.day, debit=e.debit, credit=e.credit, outflow=e.outflow, balance_after=balance,
                           balance_text=tx.balance_text(balance))
-            common.update(pv.open_of_row(e.kind, e.ref_id, ledger, entry.due, segments, today))
+            common.update(pv.open_of_row(e.kind, e.ref_id, ledger, entry.due, segments, today, recalc_adv))
             if e.kind == "charge":
                 seg = segments[e.ref_id]
                 title = f"Стоимость {tx.period_text(seg.period_start, seg.period_end)}" if seg.kind == "period" else (

@@ -169,19 +169,19 @@ def unpaid_fields(e, today: date) -> dict:
     """The words and numbers of the unpaid sum of a row, ALL from ``pay_due`` and the sentences of ``payments_texts``: ``debt_amount`` / ``due_amount`` / ``due_until`` / ``overdue_days`` / ``due_lessons`` /
     ``debt_lessons`` and the texts of both names (which of the two is the main one is the choice of the tab: a view, not a rule), ``state`` / ``state_text`` of the worst state."""
     d, l = e.due, e.ledger
-    packages = d.due_lessons is not None
-    paid_until = l.status.paid_until if not packages else None
+    debt_n, due_n = d.lessons_said(pay_due.DEBT), d.lessons_said(pay_due.DUE)
+    paid_until = l.status.paid_until if l.status.period_mode != bl.LESSONS else None           # «оплачено до» by the CURRENT mode of the participation (17.2)
     out = {
         "debt_amount": d.debt_amount, "due_amount": d.due_amount, "due_until": d.due_until,
         "overdue_days": d.overdue_days if d.debt_amount > 0 else None,
         "due_lessons": d.due_lessons if d.due_amount > 0 or d.debt_amount > 0 else None, "debt_lessons": d.debt_lessons,
-        "debt_text": tx.debt_text(d.debt_amount, d.debt_lessons if packages else None) if d.debt_amount > 0 else None,
+        "debt_text": tx.debt_text(d.debt_amount, debt_n) if d.debt_amount > 0 else None,
         "debt_sub": tx.debt_sub(d.overdue_days, paid_until) if d.debt_amount > 0 else None,
-        "due_text": tx.due_text(d.due_amount, d.due_lessons["used"] if packages and d.due_lessons else None) if d.due_amount > 0 else None,
+        "due_text": tx.due_text(d.due_amount, due_n) if d.due_amount > 0 else None,
         "due_sub": tx.due_sub(d.due_until, today) if d.due_amount > 0 else None,
         # the second line of a row that holds BOTH sums (the tab decides which is the main one): null when the row has no second sum
-        "debt_also_text": tx.debt_also_text(d.debt_amount, d.debt_lessons if packages else None, d.overdue_days) if d.debt_amount > 0 and d.due_amount > 0 else None,
-        "due_also_text": tx.due_also_text(d.due_amount, d.due_lessons["used"] if packages and d.due_lessons else None, d.due_until) if d.debt_amount > 0 and d.due_amount > 0 else None,
+        "debt_also_text": tx.debt_also_text(d.debt_amount, debt_n, d.overdue_days) if d.debt_amount > 0 and d.due_amount > 0 else None,
+        "due_also_text": tx.due_also_text(d.due_amount, due_n, d.due_until) if d.debt_amount > 0 and d.due_amount > 0 else None,
     }
     state = state_of(e)
     out["state"] = state
@@ -219,7 +219,30 @@ def parts_of_segment(due, seg_id: str) -> list:
     return [{"name": p.name, "unpaid": p.unpaid, "due_until": p.due_until, "lessons": p.lessons} for p in due.parts_of(seg_id)]
 
 
-def open_of_row(kind: str, ref_id: str, ledger: bl.Ledger, due, segments: dict, today: date) -> dict:
+def _advance_left(ledger: bl.Ledger, segments: dict, credit_id: str) -> int:
+    """The part of the money of one credit that is laid on NO begun charge: on the «advance» of no period yet, or on a period that has not begun."""
+    return sum(a.amount for a in ledger.allocations if a.credit_id == credit_id and (a.segment_id == bl.ADVANCE_SEGMENT or (a.segment_id in segments and not segments[a.segment_id].begun)))
+
+
+def recalc_advance(ledger: bl.Ledger, segments: dict) -> dict:
+    """PAY-DUE 17.1: a recalculation (the deduction for a lesson the centre cancelled) frees money like a payment does: when the month was paid and the lesson is taken off, the freed sum is an advance and the
+    row of the recalculation carries it.  The ledger gives a recalculation no allocation of its own, so the advance that the payments and transfers do not explain (``ledger.advance`` minus their parts) is laid on the
+    recalculations, the NEWEST first (the money that came last is the money that overflows), each not above its own amount.  By construction the advances of the rows add up to the advance of the summary."""
+    lines = sorted(ledger.recalcs, key=lambda line: (line.day, line.id))
+    if not lines or ledger.advance <= 0:
+        return {}
+    placed = sum(_advance_left(ledger, segments, e.ref_id) for e in ledger.statement if e.kind in (bl.PAYMENT, bl.TRANSFER_IN))
+    rest = max(0, int(ledger.advance) - placed)
+    out: dict = {}
+    for line in reversed(lines):
+        take = min(rest, int(line.amount))
+        if take > 0:
+            out[line.id] = take
+            rest -= take
+    return out
+
+
+def open_of_row(kind: str, ref_id: str, ledger: bl.Ledger, due, segments: dict, today: date, recalcs: Optional[dict] = None) -> dict:
     """PAY-DUE 10.11: ``open_amount`` / ``open_name`` / ``open_text`` / ``open_parts`` of a statement row (see ``StatementRow``).  A charge whose unpaid part holds BOTH names (a package) has two ``open_parts``
     (the debt first), ``open_name`` is the worst of them and ``open_text`` says both.  ``open_sub`` is the term of the row in words: «срок был 05.11» for the debt part (only when the term has really passed: a student
     who left before the term has a debt whose term is still ahead - nothing is said), «до 24.11» / «до сегодня» for the part «к оплате», both joined by « · » (the debt first); ``None`` for a paid charge and for the opening balance."""
@@ -227,40 +250,42 @@ def open_of_row(kind: str, ref_id: str, ledger: bl.Ledger, due, segments: dict, 
     if kind in ("charge", "opening_debt"):
         seg = segments[ref_id]
         parts = due.parts_of(seg.id)
-        packages = due.due_lessons is not None
         debt = sum(p.unpaid for p in parts if p.name == pay_due.DEBT)
         owed = sum(p.unpaid for p in parts if p.name == pay_due.DUE)
         out = []
         if debt > 0:
-            out.append({"name": "debt", "amount": debt, "text": tx.debt_text(debt, sum(p.lessons or 0 for p in parts if p.name == pay_due.DEBT) if packages else None)})
+            out.append({"name": "debt", "amount": debt, "text": tx.debt_text(debt, sum(p.lessons or 0 for p in parts if p.name == pay_due.DEBT) if all(p.kind == "package" for p in parts if p.name == pay_due.DEBT) else None)})
         if owed > 0:
-            out.append({"name": "due", "amount": owed, "text": tx.due_text(owed, sum(p.lessons or 0 for p in parts if p.name == pay_due.DUE) if packages else None)})
+            out.append({"name": "due", "amount": owed, "text": tx.due_text(owed, sum(p.lessons or 0 for p in parts if p.name == pay_due.DUE) if all(p.kind == "package" for p in parts if p.name == pay_due.DUE) else None)})
         if not out:
             out = [{"name": "paid", "amount": 0, "text": "Оплачено"}]
         text = tx.open_both_text(out[0]["text"], out[1]["text"]) if len(out) == 2 else out[0]["text"]
-        was = [p.term for p in parts if p.name == pay_due.DEBT and p.term and p.term < today]
+        was = [p.term or p.lapsed for p in parts if p.name == pay_due.DEBT and (p.term or p.lapsed) and (p.term or p.lapsed) < today]
         until = [p.due_until for p in parts if p.name == pay_due.DUE and p.due_until]
         words = ([f"срок был {tx.ddmm(min(was))}"] if was else []) + ([tx.due_until_words(min(until), today)] if until else [])
         return {"open_amount": sum(p["amount"] for p in out), "open_name": out[0]["name"], "open_text": text, "open_sub": " · ".join(words) or None, "open_parts": out}
     if kind in (bl.PAYMENT, bl.TRANSFER_IN):      # the money that came (a payment, a transfer into the group) - the part not laid on a charge yet is «Аванс»; a transfer OUT, a refund, a forgiveness stay empty
         # the part of the money that is laid on NO begun charge: on the «advance» of no period yet, or on a period that has not begun (the bucket of an allocation is relative to the DAY of the payment: a period that has begun since is no advance)
-        left = sum(a.amount for a in ledger.allocations if a.credit_id == ref_id and (a.segment_id == bl.ADVANCE_SEGMENT or (a.segment_id in segments and not segments[a.segment_id].begun)))
+        left = _advance_left(ledger, segments, ref_id)
         if left > 0:
             text = tx.advance_text(left)
             return {"open_amount": left, "open_name": "advance", "open_text": text, "open_sub": None, "open_parts": [{"name": "advance", "amount": left, "text": text}]}
+    if kind == bl.RECALC and recalcs and recalcs.get(ref_id):
+        text = tx.advance_text(recalcs[ref_id])
+        return {"open_amount": recalcs[ref_id], "open_name": "advance", "open_text": text, "open_sub": None, "open_parts": [{"name": "advance", "amount": recalcs[ref_id], "text": text}]}
     return none
 
 
 def due_block(before: bl.Ledger, due, today: date) -> PreviewDue:
     """PAY-DUE 10.2: what the student owes today (before the typed amount), named by ``pay_due``: the old ``past_debt`` / ``current_due`` are gone."""
     shown = [segment_out(s, due) for s in before.segments if s.begun and s.unpaid > 0]
-    packages = due.due_lessons is not None
+    debt_n, due_n = due.lessons_said(pay_due.DEBT), due.lessons_said(pay_due.DUE)
     return PreviewDue(
         unpaid=before.debt, debt_amount=due.debt_amount, due_amount=due.due_amount, due_until=due.due_until,
         overdue_days=due.overdue_days if due.debt_amount > 0 else None,
-        debt_text=tx.debt_text(due.debt_amount, due.debt_lessons if packages else None) if due.debt_amount > 0 else None,
-        debt_sub=tx.debt_sub(due.overdue_days, None if packages else before.status.paid_until) if due.debt_amount > 0 else None,
-        due_text=tx.due_text(due.due_amount, due.due_lessons["used"] if packages and due.due_lessons else None) if due.due_amount > 0 else None,
+        debt_text=tx.debt_text(due.debt_amount, debt_n) if due.debt_amount > 0 else None,
+        debt_sub=tx.debt_sub(due.overdue_days, None if before.status.period_mode == bl.LESSONS else before.status.paid_until) if due.debt_amount > 0 else None,
+        due_text=tx.due_text(due.due_amount, due_n) if due.due_amount > 0 else None,
         due_sub=tx.due_sub(due.due_until, today) if due.due_amount > 0 else None,
         advance=before.advance, segments=shown, paid_until=before.status.paid_until,
     )
