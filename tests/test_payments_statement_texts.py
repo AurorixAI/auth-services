@@ -1,5 +1,5 @@
 """The words of the statement FILE: the Python mirror of the page's rules (``payments-ledger.ts``: chargeWords, periodName,
-closedWords, balanceCell, carryLine, openingBalance, buildStatementItems).  Pure: no database."""
+closedWords, buildStatementItems).  Pure: no database."""
 from datetime import date
 
 import pytest
@@ -25,9 +25,11 @@ def alloc(start, end, amount, *, bucket="current", closes=False, after=None, sid
                       bucket=bucket, closes=closes, label="x", segment_remaining_after=after)
 
 
-def row(seq, day, type_, *, title="", debit=0, credit=0, outflow=0, balance=None, **details):
+def row(seq, day, type_, *, title="", debit=0, credit=0, outflow=0, balance=None, open=None, **details):
+    """``open`` = ``(name, amount, text)``: what the server says is open on the row (PAY-DUE 10.11); the running ``balance`` is no longer read by the file."""
+    fields = {"open_name": open[0], "open_amount": open[1], "open_text": open[2]} if open else {}
     return StatementRow(seq=seq, date=day, type=type_, title=title, debit=debit, credit=credit, outflow=outflow,
-                        balance_after=balance, details=StatementDetails(**details))
+                        balance_after=balance, details=StatementDetails(**details), **fields)
 
 
 # ---- methods ------------------------------------------------------------------------------------------------------
@@ -71,27 +73,22 @@ def test_period_label_one_month_a_range_or_all():
 
 # ---- balance and carry --------------------------------------------------------------------------------------------
 
-def test_balance_cell_words():
-    assert t.balance_cell(-92_000) == ("debt", "Долг 92 000")
-    assert t.balance_cell(508_000) == ("advance", "Аванс 508 000")
-    assert t.balance_cell(0) == ("none", "0")
-    assert t.balance_cell(None) == ("none", "")
+def test_balance_summary_words():
+    NB = "\u00a0"
+    debt = StatementSummary(unpaid=92_000, debt_amount=92_000, debt_text=f"Долг 92{NB}000{NB}сум")
+    assert t.balance_summary(debt) == f"Долг 92{NB}000{NB}сум"
+    both = StatementSummary(unpaid=192_000, debt_amount=92_000, debt_text=f"Долг 92{NB}000{NB}сум", due_amount=100_000, due_text=f"К оплате 100{NB}000{NB}сум")
+    assert t.balance_summary(both) == f"Долг 92{NB}000{NB}сум · К оплате 100{NB}000{NB}сум"
+    assert t.balance_summary(StatementSummary(advance=508_000)) == f"Аванс 508{NB}000"
+    assert t.balance_summary(StatementSummary()) == "0"
 
 
-def test_carry_line_genitive_month_and_the_year_only_when_it_differs():
-    assert t.carry_line("2026-10", 508_000) == "С сентября перенесён аванс 508 000"
-    assert t.carry_line("2026-10", -92_000) == "С сентября перенесён долг 92 000"
-    assert t.carry_line("2026-01", 1_000) == "С декабря 2025 перенесён аванс 1 000"
-    assert t.carry_line("2026-03", 0) is None
-
-
-def test_opening_balance_is_taken_from_the_whole_ledger():
-    rows = [row(1, D(2026, 8, 18), "charge", debit=100, balance=-100), row(2, D(2026, 9, 5), "payment", credit=600, balance=500),
+def test_the_column_of_a_row_is_the_server_text_and_there_is_no_carry_line():
+    rows = [row(1, D(2026, 8, 18), "charge", debit=100, balance=-100, open=("due", 100, "К оплате 100 сум")), row(2, D(2026, 9, 5), "payment", credit=600, balance=500),
             row(3, D(2026, 10, 1), "charge", debit=700, balance=-200)]
-    assert t.opening_balance(rows, "2026-10") == 500
-    assert t.opening_balance(rows, "2026-09") == -100
-    assert t.opening_balance(rows, "2026-08") == 0                           # before the first row
-    assert t.opening_balance(rows, "2026-11") == -200
+    got = entries_of(rows)
+    assert [(e.balance, e.balance_kind) for e in got] == [("К оплате 100 сум", "due"), ("", "none"), ("", "none")]         # the running balance of the ledger is not read any more
+    assert not hasattr(t, "carry_line") and not hasattr(t, "opening_balance") and not hasattr(t, "balance_cell")
 
 
 # ---- charge words -------------------------------------------------------------------------------------------------
@@ -149,7 +146,7 @@ def test_a_payment_reads_like_the_page_with_allocation_lines_in_the_details():
     ]
     first, second = entries_of(rows)[2:]
     assert first.title == "Оплата № 7 · наличные · внёс Айбек О."
-    assert first.paid == 700_000 and first.charged is None and first.balance == "Долг 300 000"
+    assert first.paid == 700_000 and first.charged is None and first.balance == ""
     assert first.allocations == ["за август — 474 000 (август оплачен)", "за сентябрь — 226 000 (осталось 274 000)"]
     assert first.details == "комментарий: за двоих\nза август — 474 000 (август оплачен)\nза сентябрь — 226 000 (осталось 274 000)"
     assert second.title == "Оплата № 8 · карта"
@@ -198,17 +195,17 @@ def test_writeoff_refund_transfers_opening_pause_and_a_charge_without_a_segment(
     assert got[1].title == "На начало учёта долга нет (оплачено до 31.08)" and got[1].paid is None and got[1].charged is None
     assert (got[2].charged, got[2].sub) == (40_000, "до запуска в ALGO")
     assert got[3].title.startswith("Пауза") and got[3].charged is None
-    assert got[4].title == "Долг прощён — причина: болел · Директор" and got[4].paid == 40_000
-    assert got[5].title == "Долг прощён"
+    assert got[4].title == "Прощено 40\u00a0000\u00a0сум — причина: болел · Директор" and got[4].paid == 40_000
+    assert got[5].title == "Прощено 1\u00a0сум"
     assert got[6].title == "Возврат аванса — карта · Айбек О." and got[6].paid == -30_000 and got[6].sub == "причина: переехал"
     assert got[7].title == "Возврат аванса — способ не указан"
     assert (got[8].title, got[8].paid) == ("Перенос из «Группа A»", 70_000)
     assert (got[9].title, got[9].paid) == ("Перенос в «Группа B»", -10_000)
     assert (got[10].title, got[10].sub, got[10].charged) == ("Стоимость 10.09–30.09", None, 5_000)
-    assert got[1].balance == "0" and got[2].balance == "Долг 40 000" and got[8].balance == "Аванс 40 000"
+    assert all(e.balance == "" for e in got.values())                                      # no open text on these rows: the column stays empty
 
 
-def test_group_by_month_bands_in_order_and_the_carry_only_for_one_month():
+def test_group_by_month_bands_in_order_and_a_quiet_line_for_an_empty_month():
     rows = [row(1, D(2026, 8, 18), "charge", title="a", debit=100, balance=-100), row(2, D(2026, 9, 5), "payment", credit=600, balance=500),
             row(3, D(2026, 10, 1), "charge", title="c", debit=700, balance=-200)]
     entries = entries_of(rows)
@@ -216,12 +213,9 @@ def test_group_by_month_bands_in_order_and_the_carry_only_for_one_month():
     assert [(type(i).__name__, getattr(i, "title", None)) for i in allm] == [
         ("Band", "Август 2026"), ("Entry", "a"), ("Band", "Сентябрь 2026"), ("Entry", "Оплата · способ не указан"), ("Band", "Октябрь 2026"), ("Entry", "c")]
     one = t.group_by_month([e for e in entries if e.date.month == 10], rows, "2026-10")
-    assert [type(i).__name__ for i in one] == ["Band", "Carry", "Entry"] and one[1].text == "С сентября перенесён аванс 500"
+    assert [type(i).__name__ for i in one] == ["Band", "Entry"]                  # PAY-DUE 10.11: no carry line before a single month
     empty = t.group_by_month([], rows, "2026-12")
-    assert [type(i).__name__ for i in empty] == ["Band", "Carry", "Quiet"] and empty[1].text == "С ноября перенесён долг 200"
-    assert empty[2].text == "Записей нет"
-    first = t.group_by_month([e for e in entries if e.date.month == 8], rows, "2026-08")
-    assert [type(i).__name__ for i in first] == ["Band", "Entry"]               # nothing before the first month
+    assert [type(i).__name__ for i in empty] == ["Band", "Quiet"] and empty[1].text == "Записей нет"
 
 
 def test_cancel_note_and_totals():
@@ -235,7 +229,7 @@ def test_cancel_note_and_totals():
     s = StatementSummary(charged=10, paid=100, transferred_in=5, refunded=7, transferred_out=3, advance=92)
     assert [x[0] for x in t.total_lines(s)] == ["Стоимость обучения", "Оплачено", "Деньги из других групп", "Возвращено",
                                                  "Деньги в другие группы", "Остаток"]
-    assert t.total_lines(StatementSummary(unpaid=92_000))[-1] == ("Остаток", "Долг 92 000")
+    assert t.total_lines(StatementSummary(unpaid=92_000, debt_amount=92_000, debt_text="Долг 92\u00a0000\u00a0сум"))[-1] == ("Остаток", "Долг 92\u00a0000\u00a0сум")
     assert t.total_lines(StatementSummary(advance=508_000))[-1] == ("Остаток", "Аванс 508 000")
 
 

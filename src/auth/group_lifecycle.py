@@ -50,7 +50,7 @@ logger = logging.getLogger(__name__)
 
 FUTURE_HORIZON_DAYS = 56
 CANCEL = "cancel"
-_UNPAID_ACTIONS = (("payment", "Принять оплату"), ("writeoff", "Простить долг"))
+_UNPAID_ACTIONS = (("payment", "Принять оплату"), ("writeoff", "Простить"))      # the neutral name of the action; with the sum («Простить 190 000 сум») when the row has one
 BALANCE_ACTIONS = {"debt": _UNPAID_ACTIONS, "due": _UNPAID_ACTIONS, "advance": (("refund", "Вернуть аванс"),)}      # Money-2 T12
 
 
@@ -100,7 +100,7 @@ class GroupLifecycle:
             name = _student_name(entry.student)
             left_on = ps.business_date(entry.membership.left_at).isoformat() if entry.membership.left_at else None
             row: Dict[str, Any] = {"student_id": str(entry.student.id), "membership_id": str(entry.membership.id), "name": name, "left_on": left_on, "kind": kind,
-                                       "actions": [{"code": code, "label": label} for code, label in BALANCE_ACTIONS[kind]] if money else []}
+                                       "actions": [{"code": code, "label": f"{label} {tx.money(amount)}" if code == "writeoff" else label} for code, label in BALANCE_ACTIONS[kind]] if money else []}
             if money:
                 row["amount"] = amount
                 row["text"] = (f"{name}: долг {tx.money(amount)} — принять оплату или простить его можно в выписке группы" if kind == "debt"

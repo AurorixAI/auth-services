@@ -552,11 +552,11 @@ def recalc_added(db, org_id: Any, group_id: Any, was: Dict[str, int]) -> List[Di
 
 
 def recalc_text(added: List[Dict[str, Any]], *, done: bool) -> str:
-    """The sentence about the students for the dialog of «Урока не было»: ``Ученикам — перерасчёт: долг уменьшится сразу на 120 000 сум (3 ученика)`` / ``Ученикам перерасчёта не будет``."""
+    """The sentence about the students for the dialog of «Урока не было»: ``Ученикам — перерасчёт: неоплаченная сумма уменьшится сразу на 120 000 сум (3 ученика)`` / ``Ученикам перерасчёта не будет``."""
     if not added:
         return "Ученикам перерасчёта не будет" if not done else "Ученикам перерасчёта нет"
     count = len(added)
-    return f"Ученикам — перерасчёт: долг {'уменьшился' if done else 'уменьшится'} сразу на {num(sum(a['amount'] for a in added))}{NBSP}сум ({count} {plural(count, 'ученик', 'ученика', 'учеников')})"
+    return f"Ученикам — перерасчёт: неоплаченная сумма {'уменьшилась' if done else 'уменьшится'} сразу на {num(sum(a['amount'] for a in added))}{NBSP}сум ({count} {plural(count, 'ученик', 'ученика', 'учеников')})"
 
 
 def cancel_consequence_text(added: List[Dict[str, Any]], *, manager: bool) -> str:

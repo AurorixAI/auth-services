@@ -21,6 +21,7 @@ from src.models.auth import Group, StudentPayment, StudentRefund, StudentWriteof
 from . import billing_ledger as bl
 from . import ledger_service as ls
 from . import payment_status as ps
+from . import payments_statement_texts as st_tx
 from . import payments_texts as tx
 from .export_safety import csv_safe_row
 from . import payments_views as pv
@@ -153,7 +154,7 @@ class PaymentsReports:
                         replaced_by_receipt_no=becomes.get(p.id)), **common))
             elif e.kind == bl.WRITEOFF:
                 w = writeoffs[e.ref_id]
-                rows.append(StatementRow(type="writeoff", title=tx.forgiven_title(w.reason), details=StatementDetails(
+                rows.append(StatementRow(type="writeoff", title=tx.forgiven_title(w.reason, int(w.amount)), details=StatementDetails(
                     writeoff_id=str(w.id), reason=w.reason, created_by_name=_person(users.get(w.created_by)), recorded_on=ps.business_date(w.created_at)), **common))
             elif e.kind == bl.RECALC:      # PAY-F: derived from the cancelled lesson, nothing is stored
                 line = recalcs[e.ref_id]
@@ -239,7 +240,7 @@ class PaymentsReports:
                                          replaced_by_receipt_no=becomes.get(p.id)))))
         for w in wo:
             out.append((w.effective_on, w.voided_at, StatementRow(
-                seq=0, date=w.effective_on, type="writeoff", title=tx.forgiven_title(w.reason), credit=int(w.amount),
+                seq=0, date=w.effective_on, type="writeoff", title=tx.forgiven_title(w.reason, int(w.amount)), credit=int(w.amount),
                 voided_at=_iso(w.voided_at), void_reason=w.void_reason, voided_by_name=_person(users.get(w.voided_by)),
                 details=StatementDetails(writeoff_id=str(w.id), reason=w.reason,
                                          created_by_name=_person(users.get(w.created_by)), recorded_on=ps.business_date(w.created_at)))))
@@ -289,10 +290,10 @@ class PaymentsReports:
             ["Выписка", f"{st.membership.student_name} · {st.membership.group_name}", f"на {st.as_of.strftime('%d.%m.%Y')}"],
             ["Стоимость обучения", st.summary.charged, "Оплачено", st.summary.paid + st.summary.transferred_in],
             ["Прощено", st.summary.written_off, "Возвращено / деньги в другие группы", st.summary.refunded + st.summary.transferred_out],
-            ["Остаток", tx.balance_text(st.summary.advance - st.summary.unpaid)],
+            ["Остаток", st_tx.balance_summary(st.summary)],
         ]
         body = [[r.seq, r.date.strftime("%d.%m.%Y"), r.title, r.debit or "", r.credit or "", r.outflow or "",
-                 r.balance_after if r.balance_after is not None else "", detail(r)] for r in [*st.rows, *st.voided]]
+                 r.open_text or "", detail(r)] for r in [*st.rows, *st.voided]]
         who = st.membership.display_id or str(membership_id)[:8]
         base = f"statement-{who}-{st.as_of.isoformat()}"
         buf = io.StringIO()
@@ -418,7 +419,9 @@ class PaymentsReports:
             debt_total=sum(e.due.debt_amount for e in shown), due_total=sum(e.due.due_amount for e in shown),
             debtors=len({e.student.id for e in shown if e.due.debt_amount > 0}), due_students=len({e.student.id for e in shown if e.due.due_amount > 0}),
             advance_total=sum(e.ledger.advance for e in shown), memberships_with_debt=sum(1 for e in shown if e.due.debt_amount > 0),
-            memberships_with_advance=sum(1 for e in shown if e.ledger.advance > 0))
+            memberships_with_advance=sum(1 for e in shown if e.ledger.advance > 0),
+            debt_text=tx.debt_text(sum(e.due.debt_amount for e in shown)) if any(e.due.debt_amount > 0 for e in shown) else None,
+            due_text=tx.due_text(sum(e.due.due_amount for e in shown)) if any(e.due.due_amount > 0 for e in shown) else None)
         checks = [
             ReconciliationCheck(code="received_eq_allocated_plus_refunded", left=totals["received"],
                                 right=allocated + refunded_from + transferred_from,

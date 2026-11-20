@@ -7,7 +7,7 @@ printed statement and the receipt can never disagree.  The golden fixtures (``te
 """
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Sequence
 
 PAST_DEBT = "past_debt"
@@ -53,8 +53,8 @@ def opening_over_payments_text(total: int, covered_until: date) -> str:
 
 
 def receipt_state_text(day: date, debt: int, advance: int, paid_until: Optional[date]) -> str:
-    """Money-1 V5: ``На 21.10.2026: долг 100 000 сум, оплачено до 14.11`` (the account of the student on the day the receipt is issued)."""
-    parts = [f"долг {money(debt)}" if debt else (f"аванс {money(advance)}" if advance else "долга нет")]
+    """Money-1 V5: ``На 21.10.2026: не оплачено 100 000 сум, оплачено до 14.11`` (the account of the student on the day the receipt is issued)."""
+    parts = [f"не оплачено {money(debt)}" if debt else (f"аванс {money(advance)}" if advance else "всё оплачено")]
     if paid_until:
         parts.append(f"оплачено до {ddmm(paid_until)}")
     return f"На {day.strftime('%d.%m.%Y')}: " + ", ".join(parts)
@@ -100,7 +100,7 @@ def other_gains_text(gains: Sequence[Dict[str, Any]], *, done: bool) -> str:
     for g in gains:
         name = g["group_name"]
         if g["debt_fell"] > 0:
-            out.append(f"В группе «{name}» долг {'уменьшился' if done else 'уменьшится'} на {money(g['debt_fell'])}" + (f" — до {money(g['debt'])}" if g["debt"] else f": {'долга не осталось' if done else 'долга не останется'}"))
+            out.append(f"В группе «{name}» неоплаченная сумма {'уменьшилась' if done else 'уменьшится'} на {money(g['debt_fell'])}" + (f" — до {money(g['debt'])}" if g["debt"] else f": {'долга не осталось' if done else 'долга не останется'}"))
         if g["advance_grew"] > 0:
             out.append(f"В группе «{name}» аванс {'вырос' if done else 'вырастет'} на {money(g['advance_grew'])} — до {money(g['advance'])}")
     return "; ".join(out)
@@ -116,8 +116,8 @@ def _advance_drop_text(drop: Dict[str, Any], done: bool) -> str:
 def _new_debt_text(debt: Dict[str, Any], done: bool) -> str:
     amount, total = int(debt["amount"]), int(debt["total"])
     if amount == total:
-        return f"В группе «{debt['group_name']}» {'появился' if done else 'появится'} долг {money(amount)}"
-    return f"В группе «{debt['group_name']}» долг {'вырос' if done else 'вырастет'} на {money(amount)} — до {money(total)}"
+        return f"В группе «{debt['group_name']}» {'появилась' if done else 'появится'} неоплаченная сумма {money(amount)}"
+    return f"В группе «{debt['group_name']}» неоплаченная сумма {'выросла' if done else 'вырастет'} на {money(amount)} — до {money(total)}"
 
 
 def cash_parts_text(received: int, refunded: int, cancelled: int, corrected: int = 0) -> str:
@@ -167,7 +167,7 @@ def mode_hint(key: str) -> str:
 
 # ---- PAY-F: the recalculation for the lessons the centre cancelled and the forecast of a package
 # Money-1 B8 (ДЫРА-08): the words of the setting - the deduction is NOT «из следующей оплаты»: it lowers the debt at once (and the «оплачено до»), and a period with every lesson cancelled gives back its whole price
-RECALC_HINT = ("Урок, отменённый центром, уменьшит долг ученика сразу — на стоимость одного занятия периода; "
+RECALC_HINT = ("Урок, отменённый центром, уменьшит неоплаченную сумму ученика сразу — на стоимость одного занятия периода; "
                "если отменены все уроки периода, перерасчёт вернёт всю цену. Прошлые отмены не пересчитываются")
 
 
@@ -248,6 +248,48 @@ def due_until_words(day: date, today: date) -> str:
     return f"до {ddmm(day)}"
 
 
+def due_until_phrase(day: date, today: date) -> str:
+    """PAY-DUE: the term for the phrase «ближайший срок ...» (no preposition): ``сегодня`` / ``завтра, 21.11`` / ``24.11``."""
+    if day == today:
+        return "сегодня"
+    if (day - today).days == 1:
+        return f"завтра, {ddmm(day)}"
+    return ddmm(day)
+
+
+_ORDINALS = {1: "Первый", 2: "Второй", 3: "Третий", 4: "Четвёртый", 5: "Пятый"}
+
+
+def pay_due_example_period(start: date, days: int) -> str:
+    """The example of the term of a period under the setting (PAY-DUE 10.3): ``Период с 01.12 — платить до 05.12 включительно``; 0 days - ``Неоплата — долг с первого дня``."""
+    if days <= 0:
+        return "Неоплата — долг с первого дня"
+    return f"Период с {ddmm(start)} — платить до {ddmm(start + timedelta(days=days - 1))} включительно"
+
+
+def pay_due_example_package(lessons: int, max_days: int) -> str:
+    """The example of the term of a package (10.7): ``Третий неоплаченный урок или 15-й день после урока — уже долг`` (the lesson number is M + 1, the day is the limit + 1)."""
+    return f"{_ORDINALS[lessons + 1]} неоплаченный урок или {max_days + 1}-й день после урока — уже долг"
+
+
+def _lower_first(text: str) -> str:
+    return text[:1].lower() + text[1:]
+
+
+def debt_also_text(debt: int, lessons: Optional[int], overdue_days: Optional[int]) -> str:
+    """The second line of a row that owes both: ``и долг 600 000 сум · просрочено 45 дней`` (a package: ``и долг 150 000 сум · 3 урока · просрочено ...``)."""
+    head = "и " + _lower_first(debt_text(debt, lessons))
+    return head + (f" · просрочено {overdue_days} {days_word(overdue_days)}" if overdue_days else "")
+
+
+def due_also_text(amount: int, lessons: Optional[int], until: Optional[date]) -> str:
+    """``и к оплате 231 000 сум до 24.11``; a package: ``и к оплате 100 000 сум · 2 урока · до 24.11``."""
+    head = "и " + _lower_first(due_text(amount, lessons))
+    if until is None:
+        return head
+    return head + (f" · до {ddmm(until)}" if lessons else f" до {ddmm(until)}")
+
+
 def _with_lessons(head: str, lessons: Optional[int]) -> str:
     return f"{head} · {lessons} {lessons_word(lessons)}" if lessons else head
 
@@ -289,6 +331,19 @@ def advance_text(amount: int) -> str:
     return f"Аванс {money(amount)}"
 
 
+def after_text(debt: int, due: int, paid_until: Optional[date], lessons_left: Optional[int] = None, advance: int = 0) -> str:
+    """PAY-DUE 15А.2.7: the state of the account AFTER a payment in the words of the server (the screen glues nothing): ``Останется: долг 100 000 сум · к оплате 50 000 сум`` while something
+    is unpaid; otherwise ``Оплачено до 15.11`` / ``Осталось 3 урока`` / ``Аванс 21 000 сум`` / ``Всё оплачено``."""
+    parts = [f"долг {money(debt)}" if debt > 0 else None, f"к оплате {money(due)}" if due > 0 else None]
+    if any(parts):
+        return "Останется: " + " · ".join(p for p in parts if p)
+    if lessons_left is not None:
+        return lessons_left_text(lessons_left)
+    if paid_until:
+        return f"Оплачено до {ddmm(paid_until)}"
+    return advance_text(advance) if advance > 0 else "Всё оплачено"
+
+
 def open_both_text(debt: str, due: str) -> str:
     """PAY-DUE 10.11: a statement row that holds both names - ``Долг 50 000 сум · к оплате 100 000 сум``."""
     return f"{debt} · {due[:1].lower()}{due[1:]}"
@@ -313,10 +368,11 @@ def balance_text(balance: int) -> str:
     return "0"
 
 
-def forgiven_title(reason: Optional[str]) -> str:
-    """Title of a write-off row of the statement: ``Долг прощён — причина …`` (the owner's vocabulary: «Простить долг»)."""
+def forgiven_title(reason: Optional[str], amount: Optional[int] = None) -> str:
+    """Title of a write-off row of the statement (PAY-DUE 3.3, the neutral words of an action): ``Прощено 40 000 сум — причина …``."""
     reason = (reason or "").strip()
-    return f"Долг прощён — причина {reason}" if reason else "Долг прощён"
+    head = f"Прощено {money(int(amount))}" if amount else "Прощено"
+    return f"{head} — причина {reason}" if reason else head
 
 
 def days_text(*, basis: str, billable_days: int, period_days: int, first_day: Optional[date] = None,
@@ -336,12 +392,12 @@ def allocation_label(*, bucket: str, closes: bool, start: date, end: date, packa
     if package_no is not None:
         what = f"пакет №{package_no} ({span})"
         if bucket == PAST_DEBT:
-            return ("Погашен долг за " if closes else "Частично погашен долг за ") + what
+            return ("Погашено за " if closes else "Частично погашено за ") + what
         if bucket == CURRENT:
             return "На текущий " + what
         return "Аванс: " + what
     if bucket == PAST_DEBT:
-        return ("Погашен долг за " if closes else "Частично погашен долг за ") + span
+        return ("Погашено за " if closes else "Частично погашено за ") + span
     if bucket == CURRENT:
         return f"На текущий период {span}"
     return f"Аванс на {span}"
@@ -581,7 +637,7 @@ def transfer_balance_text(*, carried: int, charged_now: int, advance: int, debt:
         head += f": сразу {money(charged_now)} пойдут на остаток месяца"
     parts = [head]
     if debt:
-        parts.append(f"долг останется {money(debt)}")
+        parts.append(f"неоплачено останется {money(debt)}")
     if advance:
         parts.append(f"аванс останется {money(advance)}")
     text = "; ".join(parts)

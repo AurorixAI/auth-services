@@ -1073,7 +1073,7 @@ class PricingService:
         names = ", ".join(b["student_name"] for b in blocked[:3]) + ("…" if len(blocked) > 3 else "")
         raise PriceConflict(
             f"Нельзя изменить цену задним числом: у {len(blocked)} {'ученика' if len(blocked) == 1 else 'учеников'} уже есть оплаты за период, "
-            f"который это затронет ({names}). Разницу за прошлое закройте прощением долга или возвратом.",
+            f"который это затронет ({names}). Разницу за прошлое закройте прощением или возвратом.",
             code="PRICE_BACKDATE_WITH_PAYMENTS", students=blocked[:BACKDATE_LIST], can_correct=True)    # Money-1 V3: the window offers «Исправляю опечатку»
 
     # ----------------------------------------------------------------- writing

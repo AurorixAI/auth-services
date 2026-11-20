@@ -111,39 +111,6 @@ def period_label(date_from: Optional[date], date_to: Optional[date]) -> str:
 
 # ----------------------------------------------------------------------------------------------------------- balance
 
-def balance_cell(balance: Optional[int]) -> Tuple[str, str]:
-    """``(kind, text)``: «Долг 68 000» / «Аванс 21 000» / «0» (no unit: the header says сум once); a missing balance is empty."""
-    if balance is None:
-        return "none", ""
-    if balance < 0:
-        return "debt", f"Долг {tx.num(-balance)}"
-    if balance > 0:
-        return "advance", f"Аванс {tx.num(balance)}"
-    return "none", "0"
-
-
-def carry_line(key: str, balance: int) -> Optional[str]:
-    """«С сентября перенесён аванс 508 000» / «С сентября перенесён долг 92 000»; ``None`` for a zero balance."""
-    kind, text = balance_cell(balance)
-    if kind == "none":
-        return None
-    lead = f"С {month_from_words(shift_month_key(key, -1), key)} перенесён"
-    amount = f"долг {text.replace('Долг ', '')}" if kind == "debt" else f"аванс {text.replace('Аванс ', '')}"
-    return f"{lead} {amount}"
-
-
-def opening_balance(rows: Sequence, key: str) -> int:
-    """The balance before the first day of month ``key``: after the last earlier row, 0 before the first row.  ``rows`` is the
-    WHOLE ledger (never a filtered one: a month cut by ``from`` still knows what came before it)."""
-    balance = 0
-    for row in rows:
-        if month_key(row.date) >= key:
-            break
-        if row.balance_after is not None:
-            balance = int(row.balance_after)
-    return balance
-
-
 # ---------------------------------------------------------------------------------------------------------- charges
 
 def price_source_text(source: Optional[str]) -> str:
@@ -233,11 +200,6 @@ class Band:
 
 
 @dataclass
-class Carry:
-    text: str
-
-
-@dataclass
 class Quiet:
     """A quiet line: a single month without a record."""
     text: str
@@ -257,8 +219,8 @@ def build_entries(rows: Sequence, upcoming: Iterable = ()) -> List[Entry]:
     out: List[Entry] = []
     for row in rows:
         d = row.details
-        kind, balance = balance_cell(row.balance_after)
-        base = dict(seq=row.seq, type=row.type, date=row.date, balance_kind=kind, balance=balance)
+        # PAY-DUE 10.11: the column «Остаток» says what is open on the ROW itself: the words of the server (``open_text``), nothing is counted here
+        base = dict(seq=row.seq, type=row.type, date=row.date, balance_kind=row.open_name or "none", balance=row.open_text or "")
         if row.type == "charge":
             title, sub = charge_words(d.segment) if d.segment else (row.title, "")
             out.append(Entry(title=title, sub=sub or None, charged=int(row.debit), paid=None, **base))
@@ -300,7 +262,7 @@ def build_entries(rows: Sequence, upcoming: Iterable = ()) -> List[Entry]:
                              paid=int(row.credit), allocations=lines, replaced=replaced, **base))
         elif row.type == "writeoff":
             writeoff_seen = True
-            title = f"Долг прощён{f' — причина: {d.reason}' if d.reason else ''}{f' · {d.created_by_name}' if d.created_by_name else ''}"
+            title = f"Прощено {tx.money(int(row.credit))}{f' — причина: {d.reason}' if d.reason else ''}{f' · {d.created_by_name}' if d.created_by_name else ''}"
             out.append(Entry(title=title, sub=None, charged=None, paid=int(row.credit), **base))
         elif row.type == "refund":
             title = f"Возврат аванса — {lower_method(d.method)}{f' · {d.created_by_name}' if d.created_by_name else ''}"
@@ -321,24 +283,21 @@ def build_entries(rows: Sequence, upcoming: Iterable = ()) -> List[Entry]:
 
 
 STATEMENT_TYPE_LABEL = {
-    "charge": "Стоимость", "payment": "Оплата", "writeoff": "Долг прощён", "refund": "Возврат", "transfer_in": "Деньги ученика перешли из группы",
+    "charge": "Стоимость", "payment": "Оплата", "writeoff": "Прощено", "refund": "Возврат", "transfer_in": "Деньги ученика перешли из группы",
     "transfer_out": "Деньги ученика перешли в группу", "opening_debt": "Долг на начало учёта", "opening_paid_until": "Оплачено до начала учёта",
     "pause": "Пауза", "recalc": "Перерасчёт",
 }
 
 
 def group_by_month(entries: Sequence[Entry], full_rows: Sequence, month: Optional[str]) -> List[object]:
-    """The table as the page draws it: a band per month (in order of appearance), the rows of the month and, for ONE month, the
-    carry line when the balance before it is not zero.  All months at once never repeat the carry (``month`` is ``None``)."""
+    """The table as the page draws it: a band per month (in order of appearance) and the rows of the month; for ONE month with no record - the quiet line.
+    There is no carry line any more (PAY-DUE 10.11: the column says what is open on the row itself, the total is in the summary)."""
     items: List[object] = []
     keys = [month] if month else list(dict.fromkeys(month_key(e.date) for e in entries))
     for key in keys:
         inside = [e for e in entries if month_key(e.date) == key]
         items.append(Band(key=key, title=month_title(key)))
         if month:
-            text = carry_line(key, opening_balance(full_rows, key))
-            if text:
-                items.append(Carry(text=text))
             if not inside:
                 items.append(Quiet(text="Записей нет"))
         items.extend(inside)
@@ -390,6 +349,13 @@ def upcoming_line(segment) -> str:
     return f"{period}: {paid}"
 
 
+def balance_summary(summary) -> str:
+    """The state of the account in the words of the server (PAY-DUE 10.11): «Долг 92 000 сум» / «К оплате 100 000 сум» / both / «Аванс 21 000» (a sum that is already laid on nothing); «0» when nothing is open."""
+    parts = [summary.debt_text if int(summary.debt_amount) > 0 else None, summary.due_text if int(summary.due_amount) > 0 else None,
+             f"Аванс {tx.num(int(summary.advance))}" if int(summary.advance) > 0 else None]
+    return " · ".join(p for p in parts if p) or "0"
+
+
 def total_lines(summary) -> List[Tuple[str, object]]:
     """The tiles above the statement (``statementTotals``): Стоимость обучения · Оплачено · (Деньги из других групп · Прощено · Перерасчёт ·
     Возвращено · Деньги в другие группы, only when there is something) · Остаток.  The balance is text («Долг 92 000»)."""
@@ -398,5 +364,5 @@ def total_lines(summary) -> List[Tuple[str, object]]:
                          ("Перерасчёт", summary.recalculated), ("Возвращено", summary.refunded), ("Деньги в другие группы", summary.transferred_out)):
         if int(value) > 0:
             out.append((label, int(value)))
-    out.append(("Остаток", balance_cell(int(summary.advance) - int(summary.unpaid))[1]))
+    out.append(("Остаток", balance_summary(summary)))
     return out

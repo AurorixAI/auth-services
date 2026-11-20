@@ -54,8 +54,8 @@ def test_a_pack_spends_or_gets_back_one_lesson_per_student_in_the_one_wording():
     assert text_of(gave, [], done=True) == "В пакет возвращён 1 урок (у 1 ученика)"
     # the recalculation of «Урока не было» lowers the debt at once (invariant I2: charged - paid - recalculated == debt - advance), the sentence says so
     added = [{"amount": 46_000}, {"amount": 46_000}]
-    assert recalc_text(added, done=False) == "Ученикам — перерасчёт: долг уменьшится сразу на 92 000 сум (2 ученика)"
-    assert recalc_text(added, done=True).startswith("Ученикам — перерасчёт: долг уменьшился сразу")
+    assert recalc_text(added, done=False) == "Ученикам — перерасчёт: неоплаченная сумма уменьшится сразу на 92 000 сум (2 ученика)"
+    assert recalc_text(added, done=True).startswith("Ученикам — перерасчёт: неоплаченная сумма уменьшилась сразу")
 
 
 # ---- G3M С4: a line of ANOTHER month than the action says why it moves ----------------------------------------------------------------------------

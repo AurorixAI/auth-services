@@ -24,13 +24,13 @@ BANNED = {
     "незакрыт": "уроки без отметки",
     "неразобран": "уроки без отметки",
     "вычет": "перерасчёт",
-    "Закрыла долг": "Погашен долг за ...",
+    "Закрыла долг": "Погашено за ...",
     "Закроет долг": "Погасит долг",
     "оплачен преподавателю": "включён в зарплату",
     "спишется занятие": "из пакета спишется 1 урок",
     "возвращено занятие": "в пакет возвращён 1 урок",
     "вернётся занятие": "в пакет вернётся 1 урок",
-    "в следующей оплате": "долг уменьшится сразу",
+    "в следующей оплате": "неоплаченная сумма уменьшится сразу",
     "оплатить преподавателю": "включить в зарплату",
     "ереплачено": "Выплачено вперёд / Выплачено больше на",
     "Перенесено из": "Деньги ученика перешли ...",
@@ -91,9 +91,9 @@ def test_the_sentences_of_a_payment_and_of_a_payout_use_the_words_of_the_diction
     tx = Plain(payments_texts)
 
     start, end = date(2026, 9, 15), date(2026, 10, 14)
-    assert tx.allocation_label(bucket="past_debt", closes=True, start=start, end=end) == "Погашен долг за 15.09–14.10"
-    assert tx.allocation_label(bucket="past_debt", closes=False, start=start, end=end) == "Частично погашен долг за 15.09–14.10"
-    assert tx.allocation_label(bucket="past_debt", closes=True, start=start, end=end, package_no=2) == "Погашен долг за пакет №2 (15.09–14.10)"
+    assert tx.allocation_label(bucket="past_debt", closes=True, start=start, end=end) == "Погашено за 15.09–14.10"
+    assert tx.allocation_label(bucket="past_debt", closes=False, start=start, end=end) == "Частично погашено за 15.09–14.10"
+    assert tx.allocation_label(bucket="past_debt", closes=True, start=start, end=end, package_no=2) == "Погашено за пакет №2 (15.09–14.10)"
     assert tx.opening_label(date(2026, 9, 30), True) == "Погашен долг на начало учёта на 30.09.2026"
     assert tx.summary_text(debt_paid=269_000, debt_before=269_000, due_paid=31_000, due_before=500_000, advance=0, debt_after=469_000, paid_until_after=date(2026, 10, 15)) == (
         "Погасит долг 269 000 сум · к оплате 31 000 сум из 500 000 сум → оплачено до 15.10 · останется 469 000 сум")

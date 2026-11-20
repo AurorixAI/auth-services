@@ -33,22 +33,22 @@ def golden(*, note=None, voided=True) -> StatementOut:
     aug = seg(D(2026, 8, 18), AUG[1], 225_806, days_text="14 дней из 31", basis="days")
     sep, oct_, nov = seg(*SEP, 500_000), seg(*OCT, 500_000, written_off=100_000), seg(*NOV, 500_000, paid=100_000)
     rows = [
-        StatementRow(seq=1, date=D(2026, 8, 18), type="charge", title="s", debit=225_806, balance_after=-225_806, details=StatementDetails(segment=aug)),
+        StatementRow(seq=1, date=D(2026, 8, 18), type="charge", title="s", debit=225_806, balance_after=-225_806, open_name="paid", open_amount=0, open_text="Оплачено", open_parts=[{"name": "paid", "amount": 0, "text": "Оплачено"}], details=StatementDetails(segment=aug)),
         StatementRow(seq=2, date=D(2026, 8, 20), type="payment", title="s", credit=200_000, balance_after=-25_806, details=StatementDetails(
             receipt_no=1, method="cash", created_by_name="Айбек О.", note=note,
             allocations=[alloc(D(2026, 8, 18), AUG[1], 200_000, after=25_806)])),
-        StatementRow(seq=3, date=D(2026, 9, 1), type="charge", title="s", debit=500_000, balance_after=-525_806, details=StatementDetails(segment=sep)),
+        StatementRow(seq=3, date=D(2026, 9, 1), type="charge", title="s", debit=500_000, balance_after=-525_806, open_name="paid", open_amount=0, open_text="Оплачено", open_parts=[{"name": "paid", "amount": 0, "text": "Оплачено"}], details=StatementDetails(segment=sep)),
         StatementRow(seq=4, date=D(2026, 9, 5), type="payment", title="s", credit=600_000, balance_after=74_194, details=StatementDetails(
             receipt_no=2, method="card", created_by_name="Айбек О.", allocations=[
                 alloc(D(2026, 8, 18), AUG[1], 25_806, bucket="past_debt", closes=True, after=0),
                 alloc(*SEP, 500_000, closes=True, after=0),
                 alloc(*OCT, 74_194, bucket="advance")])),
-        StatementRow(seq=5, date=D(2026, 10, 1), type="charge", title="s", debit=500_000, balance_after=-425_806, details=StatementDetails(segment=oct_)),
+        StatementRow(seq=5, date=D(2026, 10, 1), type="charge", title="s", debit=500_000, balance_after=-425_806, open_name="paid", open_amount=0, open_text="Оплачено", open_parts=[{"name": "paid", "amount": 0, "text": "Оплачено"}], details=StatementDetails(segment=oct_)),
         StatementRow(seq=6, date=D(2026, 10, 5), type="writeoff", title="s", credit=100_000, balance_after=-325_806,
                      details=StatementDetails(reason="болел", created_by_name="Директор")),
         StatementRow(seq=7, date=D(2026, 10, 10), type="payment", title="s", credit=325_806, balance_after=0, details=StatementDetails(
             receipt_no=3, method="click", allocations=[alloc(*OCT, 325_806, closes=True, after=0)])),
-        StatementRow(seq=8, date=D(2026, 10, 15), type="payment", title="s", credit=100_000, balance_after=100_000, details=StatementDetails(
+        StatementRow(seq=8, date=D(2026, 10, 15), type="payment", title="s", credit=100_000, balance_after=100_000, open_name="advance", open_amount=60_000, open_text="Аванс 60\u00a0000\u00a0сум", open_parts=[{"name": "advance", "amount": 60_000, "text": "Аванс 60\u00a0000\u00a0сум"}], details=StatementDetails(
             receipt_no=4, method="bank_transfer", created_by_name="Айбек О.", allocations=[alloc(*NOV, 100_000, bucket="advance")])),
         StatementRow(seq=9, date=D(2026, 10, 18), type="refund", title="s", outflow=40_000, balance_after=60_000,
                      details=StatementDetails(method="card", reason="переехал", created_by_name="Айбек О.")),
@@ -124,21 +124,21 @@ def test_golden_all_months():
     n = None
     assert got == [
         ["Август 2026", n, n, n, n, n, n, n],
-        [d(2026, 8, 18), "Август 2026 — неполный месяц (14 дней из 31)", 225_806, n, n, n, "Долг 225 806",
+        [d(2026, 8, 18), "Август 2026 — неполный месяц (14 дней из 31)", 225_806, n, n, n, "Оплачено",
          "цена 500 000 сум в месяц · индивидуальная цена"],
-        [d(2026, 8, 20), "Оплата № 1 · наличные · внёс Айбек О.", n, 200_000, n, n, "Долг 25 806",
+        [d(2026, 8, 20), "Оплата № 1 · наличные · внёс Айбек О.", n, 200_000, n, n, n,
          "комментарий: за двоих\nза август — 200 000 (осталось 25 806)"],
         ["Сентябрь 2026", n, n, n, n, n, n, n],
-        [d(2026, 9, 1), "Сентябрь 2026", 500_000, n, n, n, "Долг 525 806", "цена 500 000 сум в месяц · индивидуальная цена"],
-        [d(2026, 9, 5), "Оплата № 2 · карта · внёс Айбек О.", n, 600_000, n, n, "Аванс 74 194",
+        [d(2026, 9, 1), "Сентябрь 2026", 500_000, n, n, n, "Оплачено", "цена 500 000 сум в месяц · индивидуальная цена"],
+        [d(2026, 9, 5), "Оплата № 2 · карта · внёс Айбек О.", n, 600_000, n, n, n,
          "за август — 25 806 (август оплачен)\nза сентябрь — 500 000 (сентябрь оплачен)\nаванс на октябрь — 74 194"],
         ["Октябрь 2026", n, n, n, n, n, n, n],
-        [d(2026, 10, 1), "Октябрь 2026", 500_000, n, n, n, "Долг 425 806", "цена 500 000 сум в месяц · индивидуальная цена"],
-        [d(2026, 10, 5), "Долг прощён — причина: болел · Директор", n, n, 100_000, n, "Долг 325 806", n],
-        [d(2026, 10, 10), "Оплата № 3 · Click", n, 325_806, n, n, "0", "за октябрь — 325 806 (октябрь оплачен)"],
-        [d(2026, 10, 15), "Оплата № 4 · перевод · внёс Айбек О.", n, 100_000, n, n, "Аванс 100 000", "аванс на ноябрь — 100 000"],
-        [d(2026, 10, 18), "Возврат аванса — карта · Айбек О.", n, n, n, 40_000, "Аванс 60 000", "причина: переехал"],
-        ["Итого", n, 1_225_806, 1_225_806, 100_000, 40_000, "Аванс 60 000", n],
+        [d(2026, 10, 1), "Октябрь 2026", 500_000, n, n, n, "Оплачено", "цена 500 000 сум в месяц · индивидуальная цена"],
+        [d(2026, 10, 5), "Прощено 100 000 сум — причина: болел · Директор", n, n, 100_000, n, n, n],
+        [d(2026, 10, 10), "Оплата № 3 · Click", n, 325_806, n, n, n, "за октябрь — 325 806 (октябрь оплачен)"],
+        [d(2026, 10, 15), "Оплата № 4 · перевод · внёс Айбек О.", n, 100_000, n, n, "Аванс 60 000 сум", "аванс на ноябрь — 100 000"],
+        [d(2026, 10, 18), "Возврат аванса — карта · Айбек О.", n, n, n, 40_000, n, "причина: переехал"],
+        ["Итого", n, 1_225_806, 1_225_806, 100_000, 40_000, n, n],
         [n] * 8,
         ["Следующие периоды (ещё не начались)", n, n, n, n, n, n, n],
         ["01.11–30.11: оплачено 100 000 сум из 500 000 сум", n, n, n, n, n, n, n],
@@ -161,17 +161,26 @@ def test_the_blue_total_row_and_the_one_balance_rule():
         assert cell.fill.fgColor.rgb.endswith("D9E2F3") and cell.font.bold and cell.border.top.style == "medium" and cell.border.top.color.rgb.endswith("8EA9DB")
     assert [ws.cell(total, col[h]).value for h in ("Стоимость", "Оплачено", "Прощено", "Возвращено")] == [1_225_806, 1_225_806, 100_000, 40_000]
     assert ws.cell(total, col["Стоимость"]).number_format == "#,##0"
-    # ONE rule: the balance is the words of the screen - in the rows, in the total and in the title line alike
-    assert ws.cell(total, col["Остаток"]).value == "Аванс 60 000" and ws.cell(total, col["Остаток"]).data_type == "s"
+    # PAY-DUE 10.11: the column says what is open on the ROW itself (the words of the server), the total is in the summary (the title line): the blue row has no balance
+    assert ws.cell(total, col["Остаток"]).value is None
     assert ws.cell(1, 1).font.size == 14 and ws.cell(3, 1).value.endswith("Остаток: Аванс 60 000")
     balances = [ws.cell(r, col["Остаток"]).value for r in range(head + 1, total) if ws.cell(r, col["Остаток"]).value]
-    assert all(isinstance(b, str) and (b.startswith(("Долг ", "Аванс ")) or b == "0") for b in balances)
-    # a month: the total is of the month, the balance is the balance after its last record
+    assert balances == ["Оплачено", "Оплачено", "Оплачено", "Аванс 60 000 сум"]      # the file writes plain spaces
+    # the equalities that replace the running total: the open sums of the rows by name are the cards of the summary; cost - paid - forgiven + refunded = debt + due - advance
+    st = golden()
+    by_name = {}
+    for row in st.rows:
+        for part in row.open_parts:
+            by_name[part.name] = by_name.get(part.name, 0) + part.amount
+    s_ = st.summary
+    assert (by_name["advance"], by_name["paid"]) == (s_.advance, 0) and by_name.get("debt", 0) == s_.debt_amount and by_name.get("due", 0) == s_.due_amount
+    assert s_.charged - s_.paid - s_.written_off + s_.refunded == s_.debt_amount + s_.due_amount - s_.advance == -60_000
+    # a month: the total is of the month; the balance of the account is in the summary only
     ws = sheet(golden(), date_from=D(2026, 10, 1), date_to=D(2026, 10, 31))
     _, head = title_block(ws)
     col = columns(ws, head)
     total = next(r for r in range(head + 1, ws.max_row + 1) if ws.cell(r, 1).value == "Итого")
-    assert [ws.cell(total, col[h]).value for h in ("Стоимость", "Оплачено", "Прощено", "Возвращено", "Остаток")] == [500_000, 425_806, 100_000, 40_000, "Аванс 60 000"]
+    assert [ws.cell(total, col[h]).value for h in ("Стоимость", "Оплачено", "Прощено", "Возвращено", "Остаток")] == [500_000, 425_806, 100_000, 40_000, None]
 
 
 def test_the_optional_columns_exist_only_when_the_file_has_such_operations():
@@ -196,7 +205,7 @@ def test_the_optional_columns_exist_only_when_the_file_has_such_operations():
     assert (ws.cell(out, col["Деньги в другие группы"]).value, ws.cell(out, col["Оплачено"]).value) == (30_000, None)
     assert (ws.cell(inn, col["Оплачено"]).value, ws.cell(inn, col["Деньги в другие группы"]).value) == (10_000, None)
     total = next(r for r in range(head + 1, ws.max_row + 1) if ws.cell(r, 1).value == "Итого")
-    assert ws.cell(total, col["Деньги в другие группы"]).value == 30_000 and ws.cell(total, col["Оплачено"]).value == 1_225_806 + 10_000 and ws.cell(total, col["Остаток"]).value == "Аванс 40 000"
+    assert ws.cell(total, col["Деньги в другие группы"]).value == 30_000 and ws.cell(total, col["Оплачено"]).value == 1_225_806 + 10_000 and ws.cell(total, col["Остаток"]).value is None
 
 
 def test_cell_types_formats_alignment_and_merges():
@@ -214,7 +223,7 @@ def test_cell_types_formats_alignment_and_merges():
     charged, paid, balance, details = (ws.cell(r, col[h]) for h in ("Стоимость", "Оплачено", "Остаток", "Подробности"))
     assert date_cell.is_date and date_cell.number_format == "DD.MM.YYYY" and date_cell.alignment.horizontal == "center"
     assert isinstance(charged.value, int) and charged.number_format == "#,##0" and charged.alignment.horizontal == "center"
-    assert paid.value is None and balance.data_type == "s" and balance.value == "Долг 225 806" and balance.alignment.horizontal == "center"
+    assert paid.value is None and balance.data_type == "s" and balance.value == "Оплачено" and balance.alignment.horizontal == "center"
     assert op.data_type == "s" and op.alignment.wrap_text and op.alignment.vertical == "top"
     assert details.alignment.wrap_text and details.alignment.vertical == "top"
     assert all(ws.cell(r, c).font.name == "Calibri" for c in range(1, ws.max_column + 1))
@@ -260,20 +269,19 @@ def test_a_single_month_has_its_carry_line_and_the_period_in_the_title():
     col = columns(ws, head)
     assert lines[1].endswith("Период: Октябрь 2026")
     # the title totals stay for the whole membership
-    assert lines[2] == "За период: Стоимость обучения 500 000 · Оплачено 425 806 · Прощено 100 000 · Возвращено 40 000 · Остаток на конец периода: Аванс 60 000. Весь счёт: " + "Стоимость обучения 1 225 806 · Оплачено 1 225 806 · Прощено 100 000 · Возвращено 40 000 · Остаток: Аванс 60 000"     # Money-1 V10 (B10): the header of a month is the totals of the month (the same sums as the blue row); the whole account stays after it
+    assert lines[2] == "За период: Стоимость обучения 500 000 · Оплачено 425 806 · Прощено 100 000 · Возвращено 40 000. Весь счёт: " + "Стоимость обучения 1 225 806 · Оплачено 1 225 806 · Прощено 100 000 · Возвращено 40 000 · Остаток: Аванс 60 000"     # Money-1 V10 (B10): the header of a month is the totals of the month (the same sums as the blue row); the whole account stays after it
     got = grid(ws, head + 1)
-    assert got[0][0] == "Октябрь 2026" and got[1][0] == "С сентября перенесён аванс 74 194"
-    assert [x for x in ws.merged_cells.ranges if x.min_row == head + 2] and ws.cell(head + 2, 1).font.italic
-    body = [g for g in got[2:] if g[1] and not str(g[0]).startswith("Отменённые")]
-    assert [g[1] for g in body[:6]] == ["Октябрь 2026", "Долг прощён — причина: болел · Директор", "Оплата № 3 · Click",
+    assert got[0][0] == "Октябрь 2026" and not str(got[1][0]).startswith("С сентября")             # PAY-DUE 10.11: no carry line - the column says what is open on the row itself
+    body = [g for g in got[1:] if g[1] and not str(g[0]).startswith("Отменённые")]
+    assert [g[1] for g in body[:6]] == ["Октябрь 2026", "Прощено 100 000 сум — причина: болел · Директор", "Оплата № 3 · Click",
                                          "Оплата № 4 · перевод · внёс Айбек О.", "Возврат аванса — карта · Айбек О.", "Возврат аванса"]
     # the periods to come belong to the whole statement only (as on the page)
     assert not any("Следующие периоды" in str(c.value) for row in ws.iter_rows() for c in row)
     # months outside the range are gone, also from the cancelled block (the September payment)
     assert not any(isinstance(g[0], str) and g[0] in ("Август 2026", "Сентябрь 2026") for g in got)
     assert not any(g[1] == "Оплата № 99" for g in got)
-    # the balance is the ledger's, not recomputed over the cut rows: a charge row keeps its running debt
-    assert got[2][col["Остаток"] - 1] == "Долг 425 806"
+    # the words of the column are the server's (``open_text``), not recomputed over the cut rows: the October charge row says «Оплачено»
+    assert got[1][col["Остаток"] - 1] == "Оплачено"
 
 
 def test_range_label_and_a_month_without_records_or_carry():
@@ -281,13 +289,13 @@ def test_range_label_and_a_month_without_records_or_carry():
     lines, head = title_block(ws)
     assert lines[1].endswith("Период: 01.10.2026–15.10.2026")
     assert ws.cell(head + 1, 1).value == "Октябрь 2026" and not str(ws.cell(head + 2, 1).value).startswith("С сентября")   # not a month: no carry
-    # a month before the first record: no carry line; an empty month after: carry and a quiet «Записей нет»
+    # a month before the first record: no line; an empty month after: a quiet «Записей нет» (no carry line any more)
     ws = sheet(golden(), date_from=D(2026, 8, 1), date_to=D(2026, 8, 31))
     _, head = title_block(ws)
     assert [ws.cell(head + 1, 1).value, str(ws.cell(head + 2, 1).value)[:4]] == ["Август 2026", "2026"]
     ws = sheet(golden(), date_from=D(2026, 12, 1), date_to=D(2026, 12, 31))
     _, head = title_block(ws)
-    assert [ws.cell(r, 1).value for r in (head + 1, head + 2, head + 3)] == ["Декабрь 2026", "С ноября перенесён аванс 60 000", "Записей нет"]
+    assert [ws.cell(r, 1).value for r in (head + 1, head + 2, head + 3)] == ["Декабрь 2026", "Записей нет", None]
     assert not any(ws.cell(r, 1).value == "Итого" for r in range(head, ws.max_row + 1))      # nothing to total
     ws = sheet(golden(), date_from=D(2026, 7, 1), date_to=D(2026, 7, 31))
     _, head = title_block(ws)

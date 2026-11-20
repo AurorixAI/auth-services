@@ -125,7 +125,7 @@ def summary_text(count: int, debt_delta: int, advance_delta: int, days_lost: int
     word = tx.plural(count, "ученика", "учеников", "учеников")
     bits = []
     if debt_delta:
-        bits.append(f"долг вырастет на {tx.money(debt_delta)}")
+        bits.append(f"неоплаченная сумма вырастет на {tx.money(debt_delta)}")
     if advance_delta:
         bits.append(f"аванс уменьшится на {tx.money(-advance_delta)}")
     if days_lost:

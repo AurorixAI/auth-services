@@ -71,15 +71,10 @@ def build_statement_xlsx(
         for key in ("paid", *[k for k, _ in OPTIONAL]):
             if key in pos:
                 sums[pos[key]] = sum(abs(int(e.paid)) for e in entries if e.paid and money_column(e.type) == key)
-        closing = next((e.balance for e in reversed(entries) if e.balance), "")
-        if closing:
-            sums[pos["balance"]] = closing
     totals = st_tx.totals_line(statement.summary)
     if (date_from or date_to) and entries:
         labels = {pos["charged"]: "Стоимость обучения", pos["paid"]: "Оплачено", **{pos[k]: label for k, label in OPTIONAL if k in pos}}
         shown = [f"{labels[col]} {tx_num(value)}" for col, value in sums.items() if col in labels and (value or col == pos["charged"] or col == pos["paid"])]
-        if pos["balance"] in sums:
-            shown.append(f"Остаток на конец периода: {sums[pos['balance']]}")
         totals = "За период: " + " · ".join(shown) + f". Весь счёт: {totals}"
 
     # ---- title block: three lines (the frozen area stays small), an empty row, then the header
@@ -121,7 +116,7 @@ def build_statement_xlsx(
     for item in shown:
         if isinstance(item, st_tx.Band):
             band(item.title)
-        elif isinstance(item, (st_tx.Carry, st_tx.Quiet)):
+        elif isinstance(item, (st_tx.Quiet,)):
             band(item.text, font=xs.FONT_NOTE)
         else:
             amount = abs(int(item.paid)) if item.paid else None
