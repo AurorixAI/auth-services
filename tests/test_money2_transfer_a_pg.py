@@ -440,7 +440,7 @@ def test_t6_a_forgiveness_made_with_the_leaving_forbids_the_cancel_as_well_and_t
     r = owner(world).post(f"{API}/org/groups/{a.id}/students/{s0.id}/leave", json={"settle": [{"membership_id": str(membership(world, s0, a).id), "action": "writeoff", "expected_unpaid": 210_000, "reason": "договорённость"}]})
     assert r.status_code == 200, r.text
     dry = add(world, s0, group=a, mode="add", dry_run=True)
-    assert dry["leave_undo"]["undone"] is False and "простили долг" in dry["leave_undo"]["text"].lower()
+    assert dry["leave_undo"]["undone"] is False and "прощено" in dry["leave_undo"]["text"].lower()
     real = add(world, s0, group=a, mode="add")
     assert real["leave_undo"] == dry["leave_undo"]
 

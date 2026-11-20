@@ -66,14 +66,14 @@ def october(changed_by: int, drift_after: int, state: str = "closed") -> dict:
 
 def test_a_line_of_another_month_than_the_lesson_says_why_the_pay_grows():
     text = text_of([], [october(16_667, 16_667)], done=False, action_month="2026-11").replace("\u00a0", " ")
-    assert text == "Зарплата за октябрь 2026 (Эргашев К.) изменится на +16 667 сум (месяц закрыт) — перерасчёт погасит долг учеников за этот месяц"
+    assert text == "Зарплата за октябрь 2026 (Эргашев К.) изменится на +16 667 сум (месяц закрыт) — перерасчёт уменьшит неоплаченную сумму учеников за этот месяц"
     done = text_of([], [october(16_667, 120_000)], done=True, action_month="2026-11").replace("\u00a0", " ")
-    assert done.endswith("— перерасчёт погасит долг учеников за этот месяц, месяц закрыт, сохраните новую сумму") and "(к сохранённой сумме: +120 000 сум)" in done
+    assert done.endswith("— перерасчёт уменьшит неоплаченную сумму учеников за этот месяц, месяц закрыт, сохраните новую сумму") and "(к сохранённой сумме: +120 000 сум)" in done
 
 
 def test_a_line_of_another_month_than_the_lesson_says_why_the_pay_falls():
     text = text_of([], [october(-16_667, -16_667)], done=False, action_month="2026-11").replace("\u00a0", " ")
-    assert text.endswith("(месяц закрыт) — долг учеников за этот месяц вернётся") and "−16 667" in text
+    assert text.endswith("(месяц закрыт) — неоплаченная сумма учеников за этот месяц вернётся") and "−16 667" in text
 
 
 def test_the_month_of_the_lesson_or_an_unknown_month_adds_no_reason():
@@ -86,4 +86,4 @@ def test_the_block_of_a_membership_probe_carries_the_month_of_the_action():
     from src.auth.money_effects import _block
 
     block = _block(None, None, [], [october(16_667, 16_667)], done=False, action_month="2026-11")
-    assert block["text"].endswith("— перерасчёт погасит долг учеников за этот месяц")
+    assert block["text"].endswith("— перерасчёт уменьшит неоплаченную сумму учеников за этот месяц")

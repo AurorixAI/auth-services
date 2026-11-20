@@ -48,7 +48,7 @@ def test_t10_one_refusal_of_a_bulk_adding_does_not_break_off_the_rest_and_every_
 # ---------------------------------------------------------------------------------------------------- T11 the archive of a student = the rules of the leaving
 
 
-NEUTRAL = "Убрать ученика с оплатой вперёд или долгом может владелец или администратор с доступом к деньгам"
+NEUTRAL = "У ученика есть неоплаченные занятия — убрать может владелец или сотрудник с правом на деньги"
 
 
 def _admin(world):
@@ -231,7 +231,7 @@ def test_t14_the_forgiveness_and_its_cancellation_name_the_pay_of_the_teacher_th
     undo = owner(world).post(f"{API}/org/writeoffs/{wid}/void", params={"dry_run": "true"}, json={"reason": "Ошибка"})
     assert undo.status_code == 200, undo.text
     forgiveness = undo.json()["money_effects"]["forgiveness"]
-    assert forgiveness["teacher_pay"] == -125_000 and forgiveness["text"].startswith("Отмена прощения вернёт долг. Эти уроки перестанут оплачиваться преподавателю")
+    assert forgiveness["teacher_pay"] == -125_000 and forgiveness["text"].startswith("Отмена прощения: неоплаченная сумма вырастет. Эти уроки перестанут оплачиваться преподавателю")
     assert owner(world).post(f"{API}/org/writeoffs/{wid}/void", json={"reason": "Ошибка"}).json()["money_effects"]["forgiveness"]["teacher_pay"] == -125_000
 
 
@@ -316,16 +316,16 @@ def test_t17_the_restoration_of_a_cancelled_payment_is_not_limited_by_the_age_of
 
 
 def test_t18_the_debts_of_the_debtors_fall_into_age_baskets_with_the_borders_30_31_60_61_90_91_and_the_filter_and_the_summary_agree(world, fixed_today):
-    # today 20.11.2026; nobody paid; the age is the count of «Просрочено на N дней»: the days after the day paid through, the first unpaid day = the day of joining is day ONE.
-    # joined 22.10 -> 30 days (basket «to_30»); 21.10 -> 31 («31_60»); 22.09 -> 60; 21.09 -> 61 («61_90»); 23.08 -> 90; 22.08 -> 91 («over_90»).
+    # today 20.11.2026; nobody paid; the age is the count of «Просрочено на N дней»: with the term of 0 days the first charged day (the day of joining) is a debt with K = 0 (PAY-DUE 17.5), the next day K = 1: joined N days before today -> K = N.
+    # joined 21.10 -> 30 days (basket «to_30»); 20.10 -> 31 («31_60»); 21.09 -> 60; 20.09 -> 61 («61_90»); 22.08 -> 90; 21.08 -> 91 («over_90»).
     a, b, c = groups3(world, fixed_today)
-    settings_block(world, accounting_start_date="2026-06-01", billing_anchor="fixed_day", billing_day=1, pay_due_days=0)      # PAY-DUE: term 0 = a debt from the first day: K counts from the day BEFORE the first charged day, as «Просрочено на N дней» did
+    settings_block(world, accounting_start_date="2026-06-01", billing_anchor="fixed_day", billing_day=1, pay_due_days=0)      # PAY-DUE: term 0 = a debt from the first day (K = 0 that day, 17.5)
     ages = {30: "to_30", 31: "31_60", 60: "31_60", 61: "61_90", 90: "61_90", 91: "over_90"}
     students = {}
     for n in ages:
         s = fresh_student(world, f"Возраст{n}")
         add(world, s, group=a, mode="add")
-        stay(world, membership(world, s, a), DAY - timedelta(days=n - 1))
+        stay(world, membership(world, s, a), DAY - timedelta(days=n))
         students[n] = s
     page = owner(world).get(f"{API}/org/payments/status", params={"bucket": "debtors", "limit": 100}).json()
     rows = {i["overdue_days"]: (i["overdue_days"], i["debt_age_bucket"], i["debt_amount"]) for i in page["items"]}

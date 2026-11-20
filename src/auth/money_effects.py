@@ -262,7 +262,7 @@ def text_of(students: List[Dict[str, Any]], payroll: List[Dict[str, Any]], *, do
                 tail += " (снова как сохранённая)" if line["driftAfter"] == 0 else f" (к сохранённой сумме: {signed_money(line['driftAfter'])})"
             cause = ""
             if action_month and line["month"] != action_month and line["changedBy"]:
-                cause = " — перерасчёт погасит долг учеников за этот месяц" if line["changedBy"] > 0 else " — долг учеников за этот месяц вернётся"
+                cause = " — перерасчёт уменьшит неоплаченную сумму учеников за этот месяц" if line["changedBy"] > 0 else " — неоплаченная сумма учеников за этот месяц вернётся"
             if done and line["driftAfter"] != 0:                      # the next step is on the screen all the time (the line «сохраните новую сумму»); the sentence says it once, with the state of the month
                 parts.append(f"зарплата за {title}{who} {tail}{cause}{',' if cause else ' —'} " + ("месяц закрыт, " if line["state"] == "closed" else "") + "сохраните новую сумму")
             else:
@@ -621,7 +621,7 @@ def forgiveness_void_block(effects: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     if not lines:
         return None
     pay = sum(int(line["changedBy"]) for line in lines if int(line.get("changedBy") or 0) < 0)
-    text = "Отмена прощения вернёт долг. Эти уроки перестанут оплачиваться преподавателю"
+    text = "Отмена прощения: неоплаченная сумма вырастет. Эти уроки перестанут оплачиваться преподавателю"
     if pay:
         text += f": {signed_money(pay)}"
     return {"teacher_pay": pay or None, "text": text}

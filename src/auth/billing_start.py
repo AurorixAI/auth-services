@@ -165,12 +165,15 @@ def immediate_from_ledger(ledger: Any, lesson_days: Any, due: pay_due.DueResult,
             return None
         if debt + owed != amount:
             amount, parts = debt + owed, []      # the names went by their own sums: no breakdown that would not add up
-    until = min((p.due_until for s in begun for p in due.parts_of(s.id) if p.name == pay_due.DUE and p.due_until), default=None)
-    terms = [p.term for s in begun for p in due.parts_of(s.id) if p.name == pay_due.DEBT]
+    # 17.10: a return into the same participation says the term of the NEW part, not of the old one: only the periods that are left in the difference give the day and the term
+    kept = {p["period_start"] for p in parts} if before is not None and parts else None
+    said_segments = [s for s in begun if kept is None or s.period_start.isoformat() in kept]
+    until = min((p.due_until for s in said_segments for p in due.parts_of(s.id) if p.name == pay_due.DUE and p.due_until), default=None)
+    terms = [p.term for s in said_segments for p in due.parts_of(s.id) if p.name == pay_due.DEBT]
     term_was = min(terms) if terms and all(terms) else None
     shown = {n: [p for p in parts if p["name"] == n] for n in (pay_due.DEBT, pay_due.DUE)}
     said = {n: sum(p["lessons"] for p in ps_) if ps_ and all(p["lessons"] > 0 for p in ps_) else 0 for n, ps_ in shown.items()}
-    lines = tx.immediate_lines(debt, owed, until, debt_lessons=said[pay_due.DEBT], due_lessons=said[pay_due.DUE], term_was=term_was)
+    lines = tx.immediate_lines(debt, owed, until, debt_lessons=said[pay_due.DEBT], due_lessons=said[pay_due.DUE], term_was=term_was, today=ps.business_today())
     return {"amount": amount, "debt_amount": debt, "due_amount": owed, "due_until": until, "term_was": term_was, "lessons": lessons,
             "text": tx.immediate_text(lines), "lines": lines, "parts": parts}
 
@@ -230,7 +233,8 @@ def immediate_total(items: list) -> Dict[str, Any]:
     lessons = sum(i["lessons"] for i in items)
     debt, owed = sum(i["debt_amount"] for i in items), sum(i["due_amount"] for i in items)
     until = min((i["due_until"] for i in items if i["due_until"]), default=None)
-    lines = tx.immediate_lines(debt, owed, until, debt_lessons=lessons if owed == 0 else 0, due_lessons=lessons if debt == 0 else 0, total=True)
+    day = date.fromisoformat(until) if isinstance(until, str) else until
+    lines = tx.immediate_lines(debt, owed, day, debt_lessons=lessons if owed == 0 else 0, due_lessons=lessons if debt == 0 else 0, total=True, today=ps.business_today())
     return {"amount": amount, "debt_amount": debt, "due_amount": owed, "due_until": until, "lessons": lessons, "students": len(items), "text": tx.immediate_text(lines), "lines": lines}
 
 

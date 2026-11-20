@@ -140,7 +140,7 @@ def test_a_left_student_pays_the_debt_and_nothing_more(world, fixed_today):
     assert pv["suggested_amount"] == 113_000 and [w["code"] for w in pv["warnings"]] == ["left_debt_only"]
     r = owner(world).post(f"{API}/org/memberships/{m.id}/payments", json={"amount": 400_000, "paid_on": TODAY.isoformat(), "method": "cash"})
     assert r.status_code == 422 and r.json()["detail"]["code"] == "PAYMENT_EXCEEDS_DEBT" and r.json()["detail"]["unpaid"] == 113_000
-    assert r.json()["detail"]["message"] == "Ученик ушёл: принять можно не больше долга 113 000 сум"
+    assert r.json()["detail"]["message"] == "Ученик ушёл: принять можно не больше неоплаченной суммы 113 000 сум"
     created = post_payment(world, m, amount=50_000)               # P: partial is fine
     assert created["row"]["unpaid"] == 63_000 and created["row"]["advance"] == 0
     post_payment(world, m, amount=63_000)
@@ -232,7 +232,7 @@ def test_a_future_price_is_always_allowed_and_the_impact_counts_the_days_an_adva
     assert money["as_of"] == "2026-11-01"
     assert (item["paid_until_before"], item["paid_until_after"], item["has_money"]) == ("2026-11-12", "2026-11-10", True)
     assert (item["debt_before"], item["debt_after"], item["advance_before"], item["advance_after"]) == (300_000, 400_000, 0, 0)
-    assert item["text"] == "Каримова Алия (на 01.11): долг 300 000 сум → 400 000 сум; оплачено до 12.11 → 10.11"
+    assert item["text"] == "Каримова Алия (на 01.11): неоплаченная сумма 300 000 сум → 400 000 сум; оплачено до 12.11 → 10.11"
     assert (money["memberships_with_less_advance"], money["days_lost_total"], money["backdated"]) == (1, 2, False)
     assert c.put(f"{API}/org/groups/{world.group.id}/price", json={"amount": 600_000, "valid_from": "2026-11-01"}).status_code == 200
     # the individual price: the same refusal for a backdated one (the membership has money)

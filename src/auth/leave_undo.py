@@ -31,7 +31,7 @@ from .membership_periods import naive_utc
 AUDIT_LEFT = "student_left_group"
 LEFT_REASON = "left_group"
 UNDONE_REASON = "leave_undone"
-FORGIVENESS_NOT_BACK = "Долг снова за учеником: прощение отменилось при уходе — простите заново, если нужно"
+FORGIVENESS_NOT_BACK = "Неоплаченная сумма снова за учеником: прощение отменилось при уходе — простите заново, если нужно"
 
 
 def _item(code: str, text: str, **fields: Any) -> Dict[str, Any]:
@@ -55,7 +55,7 @@ def _blocker(db: Session, membership: StudentGroup, since: datetime, coming_from
         return f"Ученика убрали сегодня, но после этого ему {what} — поэтому он записывается заново: прежние индивидуальная цена и паузы не вернутся"
     forgiven = db.query(StudentWriteoff).filter(StudentWriteoff.membership_id == membership.id, StudentWriteoff.voided_at.is_(None), StudentWriteoff.created_at >= since).first()
     if forgiven is not None:
-        what = f"простили долг {tx.money(int(forgiven.amount))}" if money else "простили долг"
+        what = f"прощено {tx.money(int(forgiven.amount))}" if money else "прощена неоплаченная сумма"
         return f"Ученика убрали сегодня, но после этого ему {what} — поэтому он записывается заново: прежние индивидуальная цена и паузы не вернутся"
     link = db.query(MembershipTransfer).filter(MembershipTransfer.from_membership_id == membership.id, MembershipTransfer.voided_at.is_(None), MembershipTransfer.at >= since).first()
     if link is not None and str(link.to_membership_id) not in {str(x) for x in coming_from}:

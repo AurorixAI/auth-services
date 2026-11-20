@@ -59,7 +59,7 @@ from .payments_service import (
 logger = logging.getLogger(__name__)
 
 AUDIT_LEFT = "student_left_group"
-BALANCE_NEEDS_MONEY_RIGHT = "Убрать ученика с оплатой вперёд или долгом может владелец или администратор с доступом к деньгам"      # Money-2 T11: ONE text for the leaving and the archive; a fact, no sum
+BALANCE_NEEDS_MONEY_RIGHT = "У ученика есть неоплаченные занятия — убрать может владелец или сотрудник с правом на деньги"      # Money-2 T11: ONE text for the leaving and the archive; a fact, no sum
 LEFT_GROUP_REASON = "left_group"
 RETURN_REASON = "return_group"
 
@@ -92,7 +92,7 @@ def on_membership_closed(db: Session, membership: StudentGroup, left_at: datetim
     PauseService(db).close_at_leave(membership.id, left_day, actor_id, via=via)
 
 
-EMPTY_STAY_REASON = "Пребывание закрыто в день записи — долга нет"
+EMPTY_STAY_REASON = "Пребывание закрыто в день записи — неоплаченной суммы нет"
 
 
 def cancel_forgiveness_of_empty_stay(db: Session, membership: StudentGroup, period, actor_id: str) -> List[UUID]:
@@ -273,7 +273,7 @@ class LeaveService:
                 if not 3 <= len(reason) <= 500:
                     raise ReasonRequired("Причина: от 3 до 500 символов")
                 if ledger.debt < 1:
-                    raise PaymentInvalid("Долга нет — прощать нечего")
+                    raise PaymentInvalid("Неоплаченной суммы нет — прощать нечего")
                 row = StudentWriteoff(org_id=UUID(str(org_id)), membership_id=membership.id, student_id=membership.student_id,
                                       group_id=membership.group_id, amount=ledger.debt, reason=reason, effective_on=today,
                                       created_by=UUID(str(actor_id)), created_at=now)

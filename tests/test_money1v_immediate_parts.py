@@ -113,3 +113,18 @@ def test_n1_the_example_through_the_ledger_two_versions_of_the_rules_in_one_mont
     got = named(back, before)
     assert got is not None and got["amount"] == 38_000                               # the second November cell
     assert [p["amount"] for p in got["parts"]] == [38_000] and sum(p["amount"] for p in got["parts"]) == got["amount"]
+
+
+def test_17_6_the_term_of_the_window_in_the_words_of_one_function():
+    """PAY-DUE 17.6: the last day is today - «К оплате сегодня»; tomorrow - «до завтра, ДД.ММ»; later - «до ДД.ММ»; two parts - the same words in the second line; the clock unknown - «до ДД.ММ»."""
+    from datetime import date
+    from src.auth import payments_texts as tx
+
+    NB = " "
+    today = date(2026, 11, 20)
+    assert tx.immediate_lines(0, 300_000, today, due_lessons=14, today=today) == [f"К оплате сегодня: 300{NB}000{NB}сум (за 14 уроков)"]
+    assert tx.immediate_lines(0, 300_000, date(2026, 11, 21), today=today) == [f"К оплате до завтра, 21.11: 300{NB}000{NB}сум"]
+    assert tx.immediate_lines(0, 300_000, date(2026, 11, 24), today=today) == [f"К оплате до 24.11: 300{NB}000{NB}сум"]
+    assert tx.immediate_lines(0, 300_000, date(2026, 11, 24)) == [f"К оплате до 24.11: 300{NB}000{NB}сум"]
+    assert tx.immediate_lines(50_000, 300_000, today, term_was=date(2026, 11, 3), today=today) == [f"Долг 50{NB}000{NB}сум · срок был 03.11", f"К оплате 300{NB}000{NB}сум сегодня"]
+    assert tx.immediate_lines(0, 300_000, today, total=True, today=today) == [f"Всего к оплате сегодня: 300{NB}000{NB}сум"]

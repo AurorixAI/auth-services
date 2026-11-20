@@ -106,3 +106,16 @@ def test_a_return_on_the_day_of_leaving_gives_back_the_sum_to_pay_with_the_same_
     add(world, s, group=a, mode="add")                                                  # the same day: the leaving is cancelled
     (back,) = rows_of(world, s, "to_pay")
     assert (back["state"], back["due_until"], back["debt_amount"]) == ("to_pay", "2026-11-24", 0) and back["due_amount"] == before["due_amount"]
+
+
+def test_17_9_when_only_a_part_becomes_a_debt_the_text_says_the_two_names_apart():
+    """PAY-DUE 17.9: «вся сумма станет долгом» only when the WHOLE sum becomes a debt; a package part turns into a debt while the periods stay «к оплате» - two names, two sums."""
+    from uuid import uuid4
+    from src.auth import leave_effects as le
+
+    whole = le.Snap(membership_id=uuid4(), group_id=uuid4(), group_name="Альфа", debt=500_000, named_debt=500_000, before_debt=200_000, turns=300_000)
+    assert le.debt_text(whole, True).endswith("После ухода вся сумма 500\xa0000\xa0сум станет долгом")
+    part = le.Snap(membership_id=uuid4(), group_id=uuid4(), group_name="Альфа", debt=700_000, named_debt=500_000, named_due=200_000, before_debt=200_000, turns=300_000)
+    text = le.debt_text(part, True)
+    assert text == "Долг 200\xa0000\xa0сум и к оплате 500\xa0000\xa0сум. После ухода 300\xa0000\xa0сум станет долгом, к оплате останется 200\xa0000\xa0сум" and "вся сумма" not in text
+    assert "вся" not in le.debt_text(part, False) and "часть" in le.debt_text(part, False)

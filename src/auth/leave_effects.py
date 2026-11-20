@@ -230,6 +230,9 @@ def debt_text(snap: Snap, money: bool, kind: str = "leave") -> str:
     action says so BEFORE it is done (the last group, an archive of the student, a package participation that closes)."""
     g = snap.group_name
     if snap.turns > 0:
+        if snap.before_debt > 0 and snap.named_due > 0:      # 17.9: only a PART becomes a debt (a package closes, the periods stay): the two names are said apart
+            return (f"Долг {tx.money(snap.before_debt)} и к оплате {tx.money(snap.turns + snap.named_due)}. После ухода {tx.money(snap.turns)} станет долгом, к оплате останется {tx.money(snap.named_due)}" if money
+                    else f"В группе «{g}» есть долг и сумма к оплате. После ухода часть суммы станет долгом, часть останется к оплате")
         if snap.before_debt > 0:
             return (f"Долг {tx.money(snap.before_debt)} и к оплате {tx.money(snap.turns)}. После ухода вся сумма {tx.money(snap.named_debt)} станет долгом" if money
                     else f"В группе «{g}» есть долг и сумма к оплате. После ухода вся неоплаченная сумма станет долгом")

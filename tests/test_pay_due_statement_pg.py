@@ -14,7 +14,7 @@ def statement(w, m):
 
 
 def open_sums(st):
-    out = {"due": 0, "debt": 0, "advance": 0, "paid": 0}
+    out = {"due": 0, "debt": 0, "advance": 0, "paid": 0, "forgiven": 0}
     for row in st["rows"]:
         for part in row["open_parts"]:       # decision 6: a row with two names has two parts
             out[part["name"]] += part["amount"]
@@ -39,7 +39,7 @@ def test_a_partial_payment_the_charge_row_says_what_is_left_and_the_payment_row_
     assert (charge["open_name"], charge["open_amount"], charge["open_text"]) == ("due", 400_000, f"К оплате 400{NB}000{NB}сум")
     assert (payment["open_name"], payment["open_amount"], payment["open_text"]) == (None, None, None)       # all of it is laid on the charge
     check_equalities(s)
-    assert open_sums(s) == {"due": 400_000, "debt": 0, "advance": 0, "paid": 0}
+    assert open_sums(s) == {"due": 400_000, "debt": 0, "advance": 0, "paid": 0, "forgiven": 0}
 
 
 def test_an_advance_the_payment_row_says_advance_and_the_paid_charge_says_paid(pg_session, clock):
@@ -144,8 +144,8 @@ def test_16b1_the_term_of_a_package_debt_is_the_last_day_of_its_oldest_lesson_an
 
     lessons = [(date(2026, 10, 1), 100, "p"), (date(2026, 10, 5), 100, "p"), (date(2026, 10, 9), 100, "p")]        # M = 1: only the newest is «к оплате»
     parts = {p.name: p for p in _package_parts(lessons, {"p": False}, date(2026, 10, 12), 1, True)}
-    assert (parts[DEBT].lessons, parts[DEBT].term) == (2, date(2026, 10, 4))        # the lesson of 05.10 pushed the one of 01.10 out on 04.10
-    assert parts["due"].term is None and parts["due"].due_until == date(2026, 10, 23)
+    assert (parts[DEBT].lessons, parts[DEBT].lapsed, parts[DEBT].term) == (2, date(2026, 10, 4), None)        # the lesson of 05.10 pushed the one of 01.10 out on 04.10
+    assert parts["due"].lapsed is None and parts["due"].due_until == date(2026, 10, 23)
 
 
 def test_17_1_the_recalculation_row_carries_the_advance_it_freed_and_the_equalities_hold(pg_session, clock):
@@ -163,3 +163,18 @@ def test_17_1_the_recalculation_row_carries_the_advance_it_freed_and_the_equalit
     assert [r["open_amount"] for r in s["rows"] if r["type"] == "payment"] == [None]           # the payment itself is fully laid on the charge
     check_equalities(s)
     assert open_sums(s)["advance"] == 46_000
+
+
+def test_17_7_a_charge_forgiven_whole_is_forgiven_and_not_paid_a_charge_paid_in_money_is_paid(pg_session, clock):
+    w, g, st, ms = world(pg_session, clock)
+    r = client(w, "owner").post(f"{API}/org/memberships/{ms[0].id}/writeoffs", json={"all": True, "reason": "Льгота"})
+    assert r.status_code == 201, r.text
+    s = statement(w, ms[0])
+    (charge,) = [x for x in s["rows"] if x["type"] == "charge"]
+    assert (charge["open_name"], charge["open_amount"], charge["open_text"], charge["open_sub"]) == ("forgiven", 0, "Прощено", None)
+    assert [p["name"] for p in charge["open_parts"]] == ["forgiven"]
+    check_equalities(s)
+    assert s["summary"]["written_off"] == 600_000 and s["summary"]["unpaid"] == 0
+    pay(w, ms[1], 600_000, D(2026, 10, 12))
+    (paid,) = [x for x in statement(w, ms[1])["rows"] if x["type"] == "charge"]
+    assert paid["open_name"] == "paid" and paid["open_text"] == "Оплачено"

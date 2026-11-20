@@ -39,7 +39,7 @@ def parts_of(before: Dict[str, Any], after: Dict[str, Any]) -> List[str]:
     """The pieces of the sentence: only what differs, in the order the owner reads money (debt, advance, paid until, lessons)."""
     parts: List[str] = []
     if before["debt"] != after["debt"]:
-        parts.append(f"долг {tx.money(before['debt'])} → {tx.money(after['debt'])}")
+        parts.append(f"неоплаченная сумма {tx.money(before['debt'])} → {tx.money(after['debt'])}")
     if before["advance"] != after["advance"]:
         parts.append(f"аванс {tx.money(before['advance'])} → {tx.money(after['advance'])}")
     if before["paid_until"] != after["paid_until"] and not after.get("package"):
@@ -95,7 +95,7 @@ def next_period_part(next_period: Optional[Dict[str, Any]]) -> Optional[str]:
 
 
 def sentence(name: str, before: Dict[str, Any], after: Dict[str, Any], *, on: Optional[date] = None, next_period: Optional[Dict[str, Any]] = None) -> str:
-    """``Имя (на 01.12): долг … → …``: the day the accounts are read on is told (R3 money R-5: «долг 400 000 → 500 000» without a day reads as today's debt)."""
+    """``Имя (на 01.12): неоплаченная сумма … → …``: the day the accounts are read on is told (R3 money R-5: «неоплаченная сумма 400 000 → 500 000» without a day reads as today's sum)."""
     parts = parts_of(before, after)
     extra = next_period_part(next_period)
     if extra:

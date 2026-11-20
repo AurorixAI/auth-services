@@ -1368,9 +1368,9 @@ class PaymentService:
     @staticmethod
     def _check_left_ceiling(amount: int, debt: int) -> None:
         if debt <= 0:
-            raise NothingToPay("Ученик ушёл, долга нет: принимать нечего")
+            raise NothingToPay("Ученик ушёл, неоплаченной суммы нет: принимать нечего")
         if amount > debt:
-            raise PaymentExceedsDebt(f"Ученик ушёл: принять можно не больше долга {_sum(debt)}", unpaid=debt)
+            raise PaymentExceedsDebt(f"Ученик ушёл: принять можно не больше неоплаченной суммы {_sum(debt)}", unpaid=debt)
 
     def _correction_ceiling(self, org_id: Any, debt_without: int, old: Optional[StudentPayment]) -> int:
         """Money-1 С1/С8 (the ONE ceiling of the correction of a payment of a student who left, the preview and the write): a correction accepts no new money, so the new sum may be as big as
@@ -2063,7 +2063,7 @@ class PaymentService:
         try:
             reason = self._check_reason(reason)
             effective_on = effective_on or today
-            self._check_date(effective_on, today, "Дата прощения долга")
+            self._check_date(effective_on, today, "Дата прощения")
             self._check_backdate(effective_on, today, actor_role, changing=False)
             membership = self._membership(org_id, membership_id)
             family = self._lock_family(org_id, membership.student_id)
@@ -2075,12 +2075,12 @@ class PaymentService:
             if whole:
                 amount = before.debt
                 if amount < 1:
-                    raise WriteoffExceedsDebt("Долга нет — прощать нечего", debt=0)
+                    raise WriteoffExceedsDebt("Неоплаченной суммы нет — прощать нечего", debt=0)
             if amount is None or amount < 1 or amount > MAX_MONEY:
                 raise AmountRange(f"Сумма: от 1 до {_num(MAX_MONEY)}")
             if amount > before.debt:
                 raise WriteoffExceedsDebt(
-                    f"Простить можно не больше долга: {_sum(before.debt)}" if before.debt else "Долга нет — прощать нечего",
+                    f"Простить можно не больше неоплаченной суммы: {_sum(before.debt)}" if before.debt else "Неоплаченной суммы нет — прощать нечего",
                     debt=before.debt)
             moment = _utcnow()
             row = StudentWriteoff(
@@ -2118,14 +2118,14 @@ class PaymentService:
                 .filter(StudentWriteoff.id == writeoff_id, StudentWriteoff.org_id == org_id).first()
             )
             if probe is None:
-                raise PaymentNotFound("Прощение долга не найдено")
+                raise PaymentNotFound("Прощение не найдено")
             family = self._lock_family(org_id, probe.student_id)
             row = (
                 self.db.query(StudentWriteoff).filter(StudentWriteoff.id == writeoff_id)
                 .populate_existing().with_for_update().first()
             )
             if row.voided_at is not None:
-                raise AlreadyVoided("Прощение долга уже отменено", **self._voided_detail(row))
+                raise AlreadyVoided("Прощение уже отменено", **self._voided_detail(row))
             membership = self._membership(org_id, row.membership_id)
             today = ps.business_today()
             self._check_backdate(row.effective_on, today, actor_role, changing=True)      # R3 П4

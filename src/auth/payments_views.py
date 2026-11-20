@@ -178,10 +178,10 @@ def unpaid_fields(e, today: date) -> dict:
         "debt_text": tx.debt_text(d.debt_amount, debt_n) if d.debt_amount > 0 else None,
         "debt_sub": tx.debt_sub(d.overdue_days, paid_until) if d.debt_amount > 0 else None,
         "due_text": tx.due_text(d.due_amount, due_n) if d.due_amount > 0 else None,
-        "due_sub": tx.due_sub(d.due_until, today) if d.due_amount > 0 else None,
+        "due_sub": tx.package_term_words(d.due_until, today, due_n, (d.due_lessons or {}).get("limit")) if d.due_amount > 0 else None,
         # the second line of a row that holds BOTH sums (the tab decides which is the main one): null when the row has no second sum
         "debt_also_text": tx.debt_also_text(d.debt_amount, debt_n, d.overdue_days) if d.debt_amount > 0 and d.due_amount > 0 else None,
-        "due_also_text": tx.due_also_text(d.due_amount, due_n, d.due_until) if d.debt_amount > 0 and d.due_amount > 0 else None,
+        "due_also_text": tx.due_also_text(d.due_amount, due_n, d.due_until, tx.package_term_words(d.due_until, today, due_n, (d.due_lessons or {}).get("limit")) if due_n else None) if d.debt_amount > 0 and d.due_amount > 0 else None,
     }
     state = state_of(e)
     out["state"] = state
@@ -258,11 +258,19 @@ def open_of_row(kind: str, ref_id: str, ledger: bl.Ledger, due, segments: dict, 
         if owed > 0:
             out.append({"name": "due", "amount": owed, "text": tx.due_text(owed, sum(p.lessons or 0 for p in parts if p.name == pay_due.DUE) if all(p.kind == "package" for p in parts if p.name == pay_due.DUE) else None)})
         if not out:
-            out = [{"name": "paid", "amount": 0, "text": "Оплачено"}]
+            # 17.7: «paid» only for a charge closed by MONEY; a charge closed by a forgiveness alone is «forgiven»; closed to zero by a recalculation (or free) - nothing: the row of the recalculation says why
+            if seg.money > 0:
+                out = [{"name": "paid", "amount": 0, "text": "Оплачено"}]
+            elif seg.forgiven > 0:
+                out = [{"name": "forgiven", "amount": 0, "text": "Прощено"}]
+            else:
+                return none
         text = tx.open_both_text(out[0]["text"], out[1]["text"]) if len(out) == 2 else out[0]["text"]
         was = [p.term or p.lapsed for p in parts if p.name == pay_due.DEBT and (p.term or p.lapsed) and (p.term or p.lapsed) < today]
         until = [p.due_until for p in parts if p.name == pay_due.DUE and p.due_until]
-        words = ([f"срок был {tx.ddmm(min(was))}"] if was else []) + ([tx.due_until_words(min(until), today)] if until else [])
+        owed_parts = [p for p in parts if p.name == pay_due.DUE]
+        said = sum(p.lessons or 0 for p in owed_parts) if owed_parts and all(p.kind == "package" for p in owed_parts) else None
+        words = ([f"срок был {tx.ddmm(min(was))}"] if was else []) + ([tx.package_term_words(min(until), today, said, (due.due_lessons or {}).get("limit"))] if until else [])
         return {"open_amount": sum(p["amount"] for p in out), "open_name": out[0]["name"], "open_text": text, "open_sub": " · ".join(words) or None, "open_parts": out}
     if kind in (bl.PAYMENT, bl.TRANSFER_IN):      # the money that came (a payment, a transfer into the group) - the part not laid on a charge yet is «Аванс»; a transfer OUT, a refund, a forgiveness stay empty
         # the part of the money that is laid on NO begun charge: on the «advance» of no period yet, or on a period that has not begun (the bucket of an allocation is relative to the DAY of the payment: a period that has begun since is no advance)
@@ -286,7 +294,7 @@ def due_block(before: bl.Ledger, due, today: date) -> PreviewDue:
         debt_text=tx.debt_text(due.debt_amount, debt_n) if due.debt_amount > 0 else None,
         debt_sub=tx.debt_sub(due.overdue_days, None if before.status.period_mode == bl.LESSONS else before.status.paid_until) if due.debt_amount > 0 else None,
         due_text=tx.due_text(due.due_amount, due_n) if due.due_amount > 0 else None,
-        due_sub=tx.due_sub(due.due_until, today) if due.due_amount > 0 else None,
+        due_sub=tx.package_term_words(due.due_until, today, due_n, (due.due_lessons or {}).get("limit")) if due.due_amount > 0 else None,
         advance=before.advance, segments=shown, paid_until=before.status.paid_until,
     )
 

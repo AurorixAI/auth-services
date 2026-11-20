@@ -143,7 +143,8 @@ def classify(ledger: bl.Ledger, today: date, pay_due_days: int, pay_due_lessons:
         if in_centre and today <= term:
             parts.append(DuePart(seg.id, "period", seg.unpaid, DUE, term, term=term))
         else:
-            parts.append(DuePart(seg.id, "period", seg.unpaid, DEBT, None, bl.overdue_days(term, today, pauses) if today > term else 0, term=term if pay_due_days > 0 else None))
+            through = term if pay_due_days > 0 else _first_day(seg)      # term 0: the first charged day is a debt without «просрочено» (K = 0), from the next day K = 1 (17.5)
+            parts.append(DuePart(seg.id, "period", seg.unpaid, DEBT, None, bl.overdue_days(through, today, pauses) if today > through else 0, term=term if pay_due_days > 0 else None))
     parts.extend(_package_parts(lessons, closed_pkg, today, pay_due_lessons, in_centre))
     parts = _fit(parts, ledger.debt)
     if not parts:

@@ -78,7 +78,7 @@ def test_f1_a_forgiveness_given_to_the_empty_stay_with_no_old_debt_is_still_canc
 
 # ---- Ф2: the cancel of a leaving says that the forgiveness cancelled at the leaving is not back ------------------------------------------------------------------------------------------
 
-SAID = "Долг снова за учеником: прощение отменилось при уходе — простите заново, если нужно"
+SAID = "Неоплаченная сумма снова за учеником: прощение отменилось при уходе — простите заново, если нужно"
 
 
 def recorded_forgiven_taken_out(world, fixed_today):

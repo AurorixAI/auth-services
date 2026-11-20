@@ -444,7 +444,7 @@ def test_r3_4_a_period_that_begins_on_the_day_of_the_price_is_in_the_account_of_
     money = put_price(w, 400_000, valid_from=D(2026, 12, 5), dry_run=True)["impact"]["money"]                   # the price begins on the first day of the next period
     one = money["items"][0]
     assert (one["debt_before"], one["debt_after"]) == (300_000, 400_000) and one["next_period"] is None             # the period of 05.12 is in the debt of 05.12 already
-    assert one["text"] == f"{one['student_name']} (на 05.12): долг 300 000 сум → 400 000 сум"
+    assert one["text"] == f"{one['student_name']} (на 05.12): неоплаченная сумма 300 000 сум → 400 000 сум"
 
 
 # ---- №19: one «first day» of a stay for the account and for the table of the openings ------------------------------------------------------------------------

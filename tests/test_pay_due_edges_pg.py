@@ -43,6 +43,11 @@ def test_the_packages_with_m_zero_and_m_four(pg_session, clock):
     put_settings(w, pay_due_lessons=4)                                 # M = 4: all three are among the newest (the limit of 14 days: 02.10 + 14 = 16.10 has not come)
     a = row_of(status_page(w, "all"), ms[0])
     assert (a["debt_amount"], a["due_amount"], a["due_until"], a["state"]) == (0, 225_000, "2026-10-16", "to_pay")
+    assert a["due_sub"] == "до 16.10"                                   # 17.8: 3 of the 4 allowed lessons are used - the day the oldest turns 14 days old
+    put_settings(w, pay_due_lessons=2)                                 # M = 2: both allowed lessons are used - the NEXT held lesson makes the oldest of them a debt
+    a = row_of(status_page(w, "all"), ms[0])
+    assert (a["debt_amount"], a["due_amount"], a["due_sub"]) == (75_000, 150_000, "до следующего урока")
+    put_settings(w, pay_due_lessons=4)
     clock.set("2026-10-17 09:00")                                      # the day after 02.10 + 14: the oldest is a debt whatever M says
     a = row_of(status_page(w, "all"), ms[0])
     assert (a["debt_amount"], a["due_amount"]) == (75_000, 150_000)
@@ -126,3 +131,14 @@ def test_a_lesson_marked_after_the_fact_moves_the_names_and_a_held_lesson_cannot
     refused = client(w, "owner").post(f"{API}/org/groups/{g.id}/attendance", json={**lesson, "status": "cancelled", "records": {}, "cancellationReason": "Урока не было", "expectedVersion": r.json()["version"]})
     assert refused.status_code == 409 and refused.json()["detail"]["code"] == "LESSON_ALREADY_STARTED"            # a held lesson is not cancelled
     assert package_names(w, ms[0]) == (150_000, 150_000, "2026-10-21")                                            # the refusal changed nothing
+
+
+def test_17_5_the_term_of_zero_the_first_day_is_a_debt_without_overdue_words_and_the_next_day_says_one_day(pg_session, clock):
+    w, g, st, ms = world(pg_session, clock, today="2026-10-09", joins=(D(2026, 10, 9),))                  # joined Fri 09.10, today the same day
+    put_settings(w, pay_due_days=0)
+    a = row_of(status_page(w, "debtors"), ms[0])
+    assert (a["state"], a["debt_amount"], a["overdue_days"], a["debt_sub"]) == ("debt", 600_000, None if a["overdue_days"] is None else 0, None), a
+    assert a["debt_text"] == "Долг 600\xa0000\xa0сум"
+    clock.set("2026-10-10 09:00")
+    a = row_of(status_page(w, "debtors"), ms[0])
+    assert (a["overdue_days"], a["debt_sub"]) == (1, "просрочено 1 день")

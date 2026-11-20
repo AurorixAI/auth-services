@@ -67,7 +67,7 @@ def test_a_package_the_third_unpaid_lesson_and_the_15th_day_make_a_debt_and_a_pa
     assert (a["debt_amount"], a["due_amount"], a["due_until"], a["due_lessons"]) == (75_000, 150_000, "2026-10-19", {"used": 2, "limit": 2})
     # the oldest lesson (Fri 02.10) became a debt on 06.10, the day before the lesson of 07.10 pushed it out of the 2 newest: on 12.10 it is 6 days overdue
     assert (a["debt_text"], a["due_text"]) == (f"Долг 75{NB}000{NB}сум · 1 урок", f"К оплате 150{NB}000{NB}сум · 2 урока")
-    assert a["debt_also_text"] == f"и долг 75{NB}000{NB}сум · 1 урок · просрочено 6 дней" and a["due_also_text"] == f"и к оплате 150{NB}000{NB}сум · 2 урока · до 19.10"
+    assert a["debt_also_text"] == f"и долг 75{NB}000{NB}сум · 1 урок · просрочено 6 дней" and a["due_also_text"] == f"и к оплате 150{NB}000{NB}сум · 2 урока · до следующего урока"   # 17.8: both allowed lessons are used - the next held lesson turns the oldest into a debt (the date 19.10 stays in due_until)
     clock.set("2026-10-20 09:00")                              # 20.10: 05.10 + 14 = 19.10 has passed: 02.10 and 05.10 are debts, 07.10 (until 21.10) is the only one «к оплате»
     a = row_of(status_page(w, "all"), ms[0])
     assert (a["debt_amount"], a["due_amount"], a["due_until"]) == (150_000, 75_000, "2026-10-21")

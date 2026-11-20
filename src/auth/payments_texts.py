@@ -196,12 +196,23 @@ def _lessons_tail(lessons: int) -> str:
     return f" (за {lessons} {lessons_word(lessons)})" if lessons else ""
 
 
-def immediate_lines(debt: int, due: int, due_until: Optional[date], *, debt_lessons: int = 0, due_lessons: int = 0, term_was: Optional[date] = None, total: bool = False) -> List[str]:
+def _until_words(due_until: Optional[date], today: Optional[date]) -> str:
+    """PAY-DUE 17.6, the ONE function of the words of a term with the lists: the last day is today - «сегодня»; tomorrow - «до завтра, ДД.ММ»; otherwise «до ДД.ММ» (with the clock not known - «до ДД.ММ»)."""
+    if not due_until:
+        return ""
+    if today is not None and due_until == today:
+        return " сегодня"
+    if today is not None and (due_until - today).days == 1:
+        return f" до завтра, {ddmm(due_until)}"
+    return f" до {ddmm(due_until)}"
+
+
+def immediate_lines(debt: int, due: int, due_until: Optional[date], *, debt_lessons: int = 0, due_lessons: int = 0, term_was: Optional[date] = None, total: bool = False, today: Optional[date] = None) -> List[str]:
     """PAY-DUE 10.4: what the new stay owes on the day of adding, by the NAME the function of the term gives it (the words of the money dictionary):
     ``К оплате до 19.11: 300 000 сум (за 14 уроков)`` / ``Долг сразу: 300 000 сум · срок был 03.11``; a part of each - two lines ``Долг N сум`` and ``К оплате M сум до ДД.ММ``;
     under a bulk adding ``Всего ...``.  ``debt_lessons`` / ``due_lessons`` of 0: the lessons are not said (the part is paid in part - the server is silent on what it cannot state, LESSONS 151)."""
     was = f" · срок был {ddmm(term_was)}" if term_was else ""
-    until = f" до {ddmm(due_until)}" if due_until else ""
+    until = _until_words(due_until, today)
     if debt > 0 and due > 0:
         first = "Всего долг" if total else "Долг"
         second = "Всего к оплате" if total else "К оплате"
@@ -282,9 +293,11 @@ def debt_also_text(debt: int, lessons: Optional[int], overdue_days: Optional[int
     return head + (f" · просрочено {overdue_days} {days_word(overdue_days)}" if overdue_days else "")
 
 
-def due_also_text(amount: int, lessons: Optional[int], until: Optional[date]) -> str:
-    """``и к оплате 231 000 сум до 24.11``; a package: ``и к оплате 100 000 сум · 2 урока · до 24.11``."""
+def due_also_text(amount: int, lessons: Optional[int], until: Optional[date], words: Optional[str] = None) -> str:
+    """``и к оплате 231 000 сум до 24.11``; a package: ``и к оплате 100 000 сум · 2 урока · до 24.11`` (``words``: the term in the words of ``package_term_words``, instead of the date)."""
     head = "и " + _lower_first(due_text(amount, lessons))
+    if words:
+        return head + (f" · {words}" if lessons else f" {words}")
     if until is None:
         return head
     return head + (f" · до {ddmm(until)}" if lessons else f" до {ddmm(until)}")
@@ -317,6 +330,13 @@ def due_text(amount: int, lessons: Optional[int] = None) -> str:
 def due_sub(until: Optional[date], today: date) -> Optional[str]:
     return due_until_words(until, today) if until else None
 
+
+def package_term_words(until: Optional[date], today: date, lessons: Optional[int], limit: Optional[int]) -> Optional[str]:
+    """PAY-DUE 17.8: the term of a package sum «к оплате».  Every one of the ``limit`` lessons that may be «к оплате» is used - the NEXT held lesson turns the oldest into a debt: «до следующего урока»; fewer - the day
+    the oldest lesson is 14 days old: «до ДД.ММ».  Not a package (``lessons`` None) - the usual words of the term."""
+    if lessons and limit and lessons >= limit:
+        return "до следующего урока"
+    return due_sub(until, today)
 
 def paid_until_text(day: Optional[date]) -> Optional[str]:
     return f"Оплачено до {ddmm(day)}" if day else None

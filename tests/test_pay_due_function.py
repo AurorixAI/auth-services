@@ -32,7 +32,8 @@ def run(inp, days=5, lessons=2, in_centre=True, closed=False):
     (D(2026, 10, 25), 5, pd.DEBT, None, 6),
     (D(2026, 10, 15), 1, pd.DUE, D(2026, 10, 15), 0),        # 1 = the first day itself
     (D(2026, 10, 16), 1, pd.DEBT, None, 1),
-    (D(2026, 10, 15), 0, pd.DEBT, None, 1),                  # 0 = a debt from the first day (D = the day before)
+    (D(2026, 10, 15), 0, pd.DEBT, None, 0),                  # 0 = a debt from the first day, WITHOUT «просрочено» that day (K = 0; PAY-DUE 17.5)
+    (D(2026, 10, 16), 0, pd.DEBT, None, 1),                  # ... from the next day K = 1
     (D(2026, 10, 28), 14, pd.DUE, D(2026, 10, 28), 0),       # the maximum
     (D(2026, 10, 29), 14, pd.DEBT, None, 1),
 ])
