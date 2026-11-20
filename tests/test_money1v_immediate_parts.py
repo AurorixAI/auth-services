@@ -128,3 +128,31 @@ def test_17_6_the_term_of_the_window_in_the_words_of_one_function():
     assert tx.immediate_lines(0, 300_000, date(2026, 11, 24)) == [f"К оплате до 24.11: 300{NB}000{NB}сум"]
     assert tx.immediate_lines(50_000, 300_000, today, term_was=date(2026, 11, 3), today=today) == [f"Долг 50{NB}000{NB}сум · срок был 03.11", f"К оплате 300{NB}000{NB}сум сегодня"]
     assert tx.immediate_lines(0, 300_000, today, total=True, today=today) == [f"Всего к оплате сегодня: 300{NB}000{NB}сум"]
+
+
+# ---- PAY-DUE 17.10 / 18A.2: a return into the SAME participation, the old unpaid part is older than the new one -------------------------------------------------------------------------
+
+
+def _return(back_stays):
+    kw = dict(price_at=flat(400_000, D(2026, 1, 1)), start=D(2026, 9, 1), regimes=[FIRST_OF_MONTH], lesson_days=TUE_FRI)
+    before = named(make(today=D(2026, 11, 2), stays=[bl.Stay(D(2026, 10, 27), D(2026, 10, 28))], **kw))
+    return before, named(make(today=D(2026, 11, 2), stays=back_stays, **kw), before)
+
+
+def test_17_10_the_return_names_the_term_of_the_new_part_and_the_term_was_of_the_old_one():
+    before, got = _return([bl.Stay(D(2026, 10, 27), D(2026, 10, 28)), bl.Stay(D(2026, 10, 30))])
+    # before: October from 27.10, the stay is 27.10 only (Tue) = 1 lesson of 9 -> 44 444 (400 000 / 9), a debt: the term of 5 days from 27.10 is 31.10 («срок был 31.10»).  November has not begun for the closed stay's own part.
+    assert before["debt_amount"] > 0 and str(before["term_was"]) == "2026-10-31"
+    # after: the stay goes on from 30.10 (Fri) - October grows by the difference (a debt of the OLD period: its term is still 31.10, a return does not give it a fresh one), November is new (due until 05.11)
+    assert got is not None and got["debt_amount"] > 0 and got["due_amount"] == 400_000
+    assert got["term_was"] == date(2026, 10, 31) and got["due_until"] == date(2026, 11, 5)       # «срок был» - the old part; «до» - the new one
+    assert got["amount"] == got["debt_amount"] + got["due_amount"] and sum(p["amount"] for p in got["parts"]) == got["amount"]
+    assert got["lines"][0].endswith("срок был 31.10") and got["lines"][1].endswith("до 05.11")
+
+
+def test_17_10_a_return_that_adds_only_a_new_part_does_not_repeat_the_old_term():
+    before, got = _return([bl.Stay(D(2026, 10, 27), D(2026, 10, 28)), bl.Stay(D(2026, 11, 2))])
+    # the old October debt is the same before and after -> it drops out of the difference; only November is said, with ITS term and no «срок был»
+    assert got is not None and (got["debt_amount"], got["due_amount"]) == (0, 400_000)
+    assert got["term_was"] is None and got["due_until"] == date(2026, 11, 7)       # the new part begins on 02.11: 02, 03, 04, 05, 06 + the term of 5 days -> 07.11
+    assert not any("срок был" in line for line in got["lines"])
