@@ -59,7 +59,9 @@ from .payments_service import (
 logger = logging.getLogger(__name__)
 
 AUDIT_LEFT = "student_left_group"
-BALANCE_NEEDS_MONEY_RIGHT = "У ученика есть неоплаченные занятия — убрать может владелец или сотрудник с правом на деньги"      # Money-2 T11: ONE text for the leaving and the archive; a fact, no sum
+BALANCE_NEEDS_MONEY_RIGHT = "У ученика есть неоплаченные занятия — убрать может владелец или сотрудник с правом на деньги"
+BALANCE_NEEDS_MONEY_RIGHT_ADVANCE = "У ученика есть оплата вперёд — убрать может владелец или сотрудник с правом на деньги"      # only an advance blocks
+BALANCE_NEEDS_MONEY_RIGHT_BOTH = "У ученика есть неоплаченные занятия и оплата вперёд — убрать может владелец или сотрудник с правом на деньги"      # both do      # Money-2 T11: ONE text for the leaving and the archive; a fact, no sum
 LEFT_GROUP_REASON = "left_group"
 RETURN_REASON = "return_group"
 
@@ -180,8 +182,10 @@ class LeaveService:
         if money:
             return
         after, _ = self._after(org_id, list(membership_ids), ps.business_today())
-        if any(ledger.advance > 0 or ledger.debt > 0 for ledger, _refundable in after.values()):
-            raise PaymentForbidden(BALANCE_NEEDS_MONEY_RIGHT)
+        owes = any(ledger.debt > 0 for ledger, _refundable in after.values())
+        ahead = any(ledger.advance > 0 for ledger, _refundable in after.values())
+        if owes or ahead:
+            raise PaymentForbidden(BALANCE_NEEDS_MONEY_RIGHT_BOTH if owes and ahead else BALANCE_NEEDS_MONEY_RIGHT if owes else BALANCE_NEEDS_MONEY_RIGHT_ADVANCE)
 
     def _money(self, ledger: bl.Ledger, refundable: int, loader: ls.LedgerLoader, membership: StudentGroup, today: date, snap: Optional[leave_effects.Snap] = None) -> LeaveMoney:
         price = loader.books.price(membership.id, membership.group_id, today)

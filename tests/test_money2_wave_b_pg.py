@@ -49,6 +49,8 @@ def test_t10_one_refusal_of_a_bulk_adding_does_not_break_off_the_rest_and_every_
 
 
 NEUTRAL = "У ученика есть неоплаченные занятия — убрать может владелец или сотрудник с правом на деньги"
+AHEAD = "У ученика есть оплата вперёд — убрать может владелец или сотрудник с правом на деньги"
+BOTH = "У ученика есть неоплаченные занятия и оплата вперёд — убрать может владелец или сотрудник с правом на деньги"
 
 
 def _admin(world):
@@ -68,17 +70,30 @@ def test_t11_the_archive_and_the_leaving_refuse_an_admin_without_the_money_right
     pay(world, s2, a, amount=190_000)
     # (the leaving and the archive close the stay TODAY: the numbers that count are of the stay that ends on 20.11, not of the whole month)
     admin = _admin(world)
-    for s in (s0, s1):
+    for s, text in ((s0, NEUTRAL), (s1, AHEAD)):                                              # the debt blocks with the debt text, the advance with its own
         left = admin.post(f"{API}/org/groups/{a.id}/students/{s.id}/leave", json={})
         archived = admin.post(f"{API}/org/students/{s.id}/archive", json={})
         for r in (left, archived):
             assert r.status_code == 403, r.text
-            assert r.json()["detail"] == NEUTRAL or r.json()["detail"].get("message") == NEUTRAL
-        assert not any(ch.isdigit() for ch in NEUTRAL)                                        # a fact, not a sum
+            assert r.json()["detail"] == text or r.json()["detail"].get("message") == text
+        assert not any(ch.isdigit() for ch in text)                                        # a fact, not a sum
         world.db.expire_all()
         assert membership(world, s, a).is_active is True and world.db.get(Student, s.id).status != "archived"
     # no balance: an admin without the right archives (and the leaving, for s2 after that, is the ordinary one)
     assert admin.post(f"{API}/org/students/{s2.id}/archive", json={}).status_code == 200
+
+
+def test_t11_the_archive_names_both_when_a_student_owes_in_one_group_and_has_paid_ahead_in_another(world, fixed_today):
+    # s0 owes 190 000 in A (see above) and pays 6 000 000 into B (far above whatever B charged by 20.11) -> an advance too: the text names both
+    a, b, c = groups3(world, fixed_today)
+    s0 = world.students[0]
+    stay(world, membership(world, s0, a), date(2026, 11, 2))
+    add(world, s0, group=b, mode="add")
+    stay(world, membership(world, s0, b), date(2026, 11, 2))
+    pay(world, s0, b, amount=6_000_000)
+    r = _admin(world).post(f"{API}/org/students/{s0.id}/archive", json={})
+    assert r.status_code == 403, r.text
+    assert r.json()["detail"] == BOTH or r.json()["detail"].get("message") == BOTH
 
 
 def test_t11_the_owner_archives_a_student_with_an_advance_and_the_refund_and_the_forgiveness_stay_allowed_for_the_archived(world, fixed_today):
