@@ -1,10 +1,11 @@
 """Money-1 A3 / A4 / A5 / A6 on the lesson journal: who may correct a held lesson, what the answer says about money, the teacher's own correction, the nobody-came gate, «кто провёл» (PostgreSQL).
 
 Numbers: ``area-attendance-devil.md`` Д1 / T27 (a paid month, a correction -> 'Переплата'), ЗПД-6 (+25 000 x 6 pupils for a teacher who did not teach)."""
-from datetime import date
+from datetime import date, timedelta
 
 import pytest
 
+from src.auth import business_clock as bc
 from src.auth.ops_rules import OpsError
 from src.auth.schemas import StartAttendanceRequest
 from src.models.auth import GroupAttendance, GroupAttendanceAudit, PayrollPayout
@@ -132,7 +133,9 @@ def test_the_journal_says_what_changed_and_that_the_lesson_was_formalised_afterw
     owner.post(f"{API}/{world.group.id}/attendance/reconcile", json={"lessonDate": day.isoformat(), "lessonId": lid, "taughtBy": str(world.teacher2.id)})
     s1, s2, s3 = world.students
     save(world, day, lid, [(s1, "present"), (s2, "present"), (s3, "present")], status="completed")
+    bc.set_clock(lambda: now_4_nov + timedelta(minutes=1))                              # the clock is frozen: two edits in one instant have no order - move it between them
     save(world, day, lid, [(s1, "absent"), (s2, "present"), (s3, "present")], status="completed", correctionReason="Первая правка")
+    bc.set_clock(lambda: now_4_nov + timedelta(minutes=2))
     save(world, day, lid, [(s1, "absent"), (s2, "late"), (s3, "present")], status="completed", correctionReason="Вторая правка")
     journal = owner.get(f"{API}/{world.group.id}/attendance", params={"date_from": day.isoformat(), "date_to": day.isoformat()}).json()
     key = f"{day.isoformat()}|{lid}" if f"{day.isoformat()}|{lid}" in journal["corrections"] else next(iter(journal["corrections"]))
