@@ -69,3 +69,56 @@ def test_a_transfer_of_a_package_student_makes_the_unpaid_lessons_of_the_old_gro
     clock.set("2026-10-13 09:00")                                      # the next day the stay of the old group is closed
     old = row_of(status_page(w, "debtors"), ms[0])                     # the tabs of an unpaid sum read the closed participations too
     assert (old["debt_amount"], old["due_amount"], old["state"]) == (225_000, 0, "debt")     # К3а: the three lessons of a closed package stay are a debt, not «к оплате»
+
+
+def package_names(w, m):
+    """What the package participation says today: (debt, to pay, nearest day of «к оплате») from the list the administrator reads."""
+    a = row_of(status_page(w, "all"), m)
+    return a["debt_amount"], a["due_amount"], a["due_until"]
+
+
+def test_a_switch_from_packages_to_the_calendar_makes_the_whole_unpaid_package_a_debt_from_the_next_day(pg_session, clock):
+    """К3б.  A package of 3 lessons for 600 000 (200 000 a lesson), all three held (Fri 02.10, Mon 05.10, Wed 07.10) and unpaid; M = 2 (the default).  The owner switches the centre to the calendar on Mon 12.10.
+    The package window ends that day: on 12.10 (to 23:50) the package is counted as before - 02.10 is a debt (the newest two are «к оплате»); from 13.10 00:10 EVERY unpaid lesson of it is a debt, and the new
+    calendar period (600 000 from 13.10, the term of 5 days) is «к оплате».  The money of the package does not change across the switch (the names only)."""
+    w, g, st, ms = world(pg_session, clock, joins=(D(2026, 10, 1),), period_mode="lessons", lessons_per_payment=3)
+    hold_lessons(w, st[0], [D(2026, 10, 2), D(2026, 10, 5), D(2026, 10, 7)], group=g)
+    assert package_names(w, ms[0]) == (200_000, 400_000, "2026-10-19")                 # 02.10 is out of the newest two; the oldest of the other two is 05.10: + 14 days
+    put_settings(w, period_mode="calendar")                                            # the change of the mode: deferred, the running package ends today
+    clock.set("2026-10-12 23:50")
+    assert package_names(w, ms[0]) == (200_000, 400_000, "2026-10-19")                 # the last minutes of the window: nothing has changed
+    clock.set("2026-10-13 00:10")
+    s = [r for r in client(w, "owner").get(f"{API}/org/memberships/{ms[0].id}/statement").json()["rows"] if r["type"] == "charge"]
+    package, calendar = s
+    assert (package["open_name"], package["open_amount"], [(p["name"], p["amount"]) for p in package["open_parts"]]) == ("debt", 600_000, [("debt", 600_000)])      # all three lessons, no «к оплате» part
+    assert package["open_sub"] == "срок был 06.10"                                    # the term of the oldest lesson that left the newest two (07.10 - 1 day)
+    assert (calendar["open_name"], calendar["open_amount"], calendar["open_sub"]) == ("due", 600_000, "до 17.10")         # the new calendar period: 13.10 + 5 days
+    total = summary(w)
+    assert (total["debt_total"], total["due_total"], total["debtors"]) == (600_000, 600_000, 1)
+    a = row_of(status_page(w, "debtors"), ms[0])
+    assert (a["debt_amount"], a["due_amount"]) == (600_000, 600_000)                  # one participation, both names, the rows add up to the card
+
+
+def test_a_lesson_marked_after_the_fact_moves_the_names_and_a_held_lesson_cannot_be_cancelled_to_take_them_back(pg_session, clock):
+    """Package of 8 lessons for 600 000 (75 000 a lesson), held and unpaid: Fri 02.10, Mon 05.10, Wed 07.10; M = 2, today Mon 12.10.  Through the routes of the product: the teacher opens the journal of Fri 09.10
+    backwards and marks the lesson as held three days late - the fourth unpaid lesson pushes 05.10 out of the newest two: debt 150 000 (02.10, 05.10), «к оплате» 150 000 (07.10, 09.10) until 21.10 (07.10 + 14).
+    «Урока не было» for the held lesson is refused (409), and nothing moves; a correction of the mark to «excused» does not take the lesson off the package either (the package counts the held lesson, not the
+    presence): the product has NO road that returns the names, which is why the marking is the only step that changes them (found 20.11, in the final report)."""
+    from tests.payf_helpers import lesson_id_on
+
+    w, g, st, ms = package_world(pg_session, clock)
+    before = package_names(w, ms[0])
+    assert before == (75_000, 150_000, "2026-10-19")
+    friday = D(2026, 10, 9)
+    lesson = {"lessonDate": friday.isoformat(), "lessonId": lesson_id_on(friday)}
+    opened = client(w, "owner").post(f"{API}/org/groups/{g.id}/attendance/reconcile", json=lesson)           # the day has passed: the journal of a lesson never begun is opened backwards
+    assert opened.status_code == 200, opened.text
+    assert package_names(w, ms[0]) == before                                            # opened, not held yet: nothing moves
+    r = client(w, "owner").post(f"{API}/org/groups/{g.id}/attendance", json={**lesson, "status": "completed", "records": {str(st[0].id): "present"}, "expectedVersion": opened.json()["version"]})
+    assert r.status_code == 200, r.text
+    assert package_names(w, ms[0]) == (150_000, 150_000, "2026-10-21")
+    total = summary(w)
+    assert (total["debt_total"], total["due_total"], total["debtors"]) == (150_000, 150_000, 1)
+    refused = client(w, "owner").post(f"{API}/org/groups/{g.id}/attendance", json={**lesson, "status": "cancelled", "records": {}, "cancellationReason": "Урока не было", "expectedVersion": r.json()["version"]})
+    assert refused.status_code == 409 and refused.json()["detail"]["code"] == "LESSON_ALREADY_STARTED"            # a held lesson is not cancelled
+    assert package_names(w, ms[0]) == (150_000, 150_000, "2026-10-21")                                            # the refusal changed nothing
