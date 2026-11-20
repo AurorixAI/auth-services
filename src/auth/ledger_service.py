@@ -42,6 +42,7 @@ from src.models.auth import (
 from . import billing_ledger as bl
 from . import business_clock as bc
 from . import membership_periods
+from . import pay_due
 from . import payment_status as ps
 from . import pricing
 from .sql_text import contains
@@ -88,6 +89,8 @@ class LedgerSettings:
     expiring_days: int
     expiring_lessons: int
     recalc_versions: Tuple[bl.RecalcVersion, ...] = ()    # PAY-F: «вычитать уроки, отменённые центром» (own history: it never splits the periods)
+    pay_due_days: int = pay_due.DEFAULT_DUE_DAYS          # PAY-DUE: the term of payment of a period (days), read only by ``pay_due.classify`` - the ledger never sees it
+    pay_due_lessons: int = pay_due.DEFAULT_DUE_LESSONS    # PAY-DUE: how many of the newest unpaid lessons of a package are still «к оплате»
 
     @property
     def current(self) -> bl.Regime:
@@ -211,6 +214,8 @@ def load_settings(db: Session, org_id: str) -> LedgerSettings:
         expiring_days=_int(block.get("expiring_days"), ps.DEFAULT_EXPIRING_DAYS),
         expiring_lessons=_int(block.get("expiring_lessons"), ps.DEFAULT_EXPIRING_LESSONS),
         recalc_versions=parse_recalc(block),
+        pay_due_days=pay_due.clamp_days(block.get("pay_due_days")),
+        pay_due_lessons=pay_due.clamp_lessons(block.get("pay_due_lessons")),
     )
 
 
@@ -241,6 +246,7 @@ class MembershipLedger:
     pauses: List[MembershipPause] = field(default_factory=list)  # live (LOGIC-A)
     opening: Optional[MembershipOpeningBalance] = None  # the live opening balance (LOGIC-A)
     loader: Optional["LedgerLoader"] = field(default=None, repr=False, compare=False)  # PAY-F: for ``LedgerLoader.forecasts``
+    due: pay_due.DueResult = field(default=pay_due.NOTHING, compare=False)  # PAY-DUE: the name of the unpaid sum («к оплате» / «долг»), the ONE answer of ``pay_due.classify``
 
 
 def price_info(price: pricing.Price) -> bl.PriceInfo:
@@ -290,6 +296,7 @@ class LedgerLoader:
         self._x_active: Set[UUID] = set()
         self._guard_hits = 0
         self._indexed: Set[Tuple[UUID, str]] = set()
+        self._centre: Dict[UUID, bool] = {}        # PAY-DUE: student id -> he is in the centre (see ``in_centre``)
         self._schedule: Optional[Any] = None          # the one-off lessons and overrides of the groups in ``_scheduled`` (it grows with every portion, see ``_occurrences``)
         self._scheduled: Set[UUID] = set()
         self.other_groups: Dict[UUID, Group] = {}          # the groups of the other memberships of the students (Р-10: where they left a day), not loaded as facts
@@ -950,10 +957,11 @@ class LedgerLoader:
                 continue
             membership, student, group, teacher = self.members[mid]
             inp = self.build_input(mid)
+            ledger = bl.run_ledger(inp)
             out.append(
                 MembershipLedger(
                     membership=membership, student=student, group=group, teacher=teacher, inp=inp,
-                    ledger=bl.run_ledger(inp), price=self.books.price(mid, membership.group_id, self.today),
+                    ledger=ledger, due=self.classify(ledger, student.id, mid), price=self.books.price(mid, membership.group_id, self.today),
                     payments=sorted(self.payments.get(mid, []), key=lambda p: (p.paid_on, p.created_at or datetime.min)),
                     writeoffs=list(self.writeoffs.get(mid, [])), refunds=list(self.refunds.get(mid, [])),
                     transfers_in=list(self.t_in.get(mid, [])), transfers_out=list(self.t_out.get(mid, [])),
@@ -963,6 +971,32 @@ class LedgerLoader:
                 )
             )
         return out
+
+    def in_centre(self, student_id: Any) -> bool:
+        """PAY-DUE: the STUDENT is in the centre: not archived and has a live membership in an active group - one answer for all his rows, whatever filter the list has.  The memberships that are
+        ``closing`` (the window of a leaving / an archive reads the state AFTER the action) do not count.  Read in ONE query for the students not asked yet."""
+        sid = UUID(str(student_id))
+        if sid not in self._centre:
+            self._load_centre({sid} | {m[1].id for m in self.members.values()} - set(self._centre))
+        return self._centre[sid]
+
+    def _load_centre(self, student_ids: Set[UUID]) -> None:
+        wanted = {sid for sid in student_ids if sid not in self._centre}
+        if not wanted:
+            return
+        rows = (self.db.query(StudentGroup.student_id).join(Group, Group.id == StudentGroup.group_id).join(Student, Student.id == StudentGroup.student_id)
+                .filter(StudentGroup.student_id.in_(wanted), StudentGroup.is_active.is_(True), Group.status == "active", Student.status != "archived",
+                        Student.org_id == self.org_id))
+        if self.closing:
+            rows = rows.filter(StudentGroup.id.notin_(list(self.closing)))
+        found = {r[0] for r in rows.distinct().all()}
+        for sid in wanted:
+            self._centre[sid] = sid in found
+
+    def classify(self, ledger: bl.Ledger, student_id: Any, membership_id: Any = None) -> pay_due.DueResult:
+        """PAY-DUE: the name of the unpaid sum of ``ledger`` by the settings of the centre (the ONE function ``pay_due.classify``; the ledger is untouched)."""
+        return pay_due.classify(ledger, self.today, self.settings.pay_due_days, self.settings.pay_due_lessons, self.in_centre(student_id),
+                                closed=membership_id is not None and UUID(str(membership_id)) in self.closing)
 
     def load(self, **select_kwargs) -> List[MembershipLedger]:
         return self.run(self.select(**select_kwargs))

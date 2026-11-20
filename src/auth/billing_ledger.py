@@ -226,6 +226,8 @@ class Segment:
     recalculated: int = 0
     covered_days: int = 0
     partial_credit: int = 0
+    # PAY-DUE: the first LESSON of the group inside the billable days of a part-period of the common month (the term of payment counts from it); ``None`` = not a lessons part-period
+    first_lesson: Optional[date] = field(default=None, repr=False)
 
     @property
     def unpaid(self) -> int:
@@ -361,6 +363,8 @@ class Ledger:
     opening: Optional[Opening] = None
     recalcs: Tuple[RecalcLine, ...] = ()       # PAY-F: the derived deductions for lessons the centre cancelled
     recalculated: int = 0                      # their sum
+    real_pauses: Tuple[Tuple[date, date], ...] = field(default=(), repr=False)      # PAY-DUE: the pauses the student asked for (the gap of a bridged return is not one): they move the term of payment
+    open_now: bool = field(default=False, repr=False)                     # PAY-DUE: the stay is open today (a closed participation owes at once: package, transfer)
     _cache: Dict = field(default_factory=dict, repr=False, compare=False)
 
     @property
@@ -612,7 +616,8 @@ class _Gen:
                 inside = set(days)
                 in_part = sum(1 for d in held if d in inside)
                 return Segment(amount=ps.prorated(amount, in_part, len(whole)), basis="lessons",
-                               lessons_in_part=in_part, lessons_in_period=len(whole), **common)
+                               lessons_in_part=in_part, lessons_in_period=len(whole),
+                               first_lesson=min((d for d in held if d in inside), default=None), **common)
         return Segment(amount=ps.prorated(amount, n, nominal), basis="days", lessons_in_part=None,
                        lessons_in_period=None, **common)
 
@@ -1457,7 +1462,8 @@ def _run_ledger(inp: LedgerInput, horizon_extra: int) -> Ledger:
         status=status, lessons=lessons_view, statement=tuple(stmt), flags=tuple(sorted(flags)),
         counted=tuple(held_lessons), calendar_windows=tuple(cal_windows), lessons_windows=tuple(les_windows),
         lesson_owner=tuple(lesson_owner), package_costs={sid: tuple(c) for sid, c in seg_costs.items()},
-        pauses=tuple(pause_days), opening=opening, recalcs=tuple(recalcs), recalculated=recalculated)
+        pauses=tuple(pause_days), opening=opening, recalcs=tuple(recalcs), recalculated=recalculated,
+        real_pauses=tuple(real_pauses), open_now=open_now)
     return ledger
 
 
