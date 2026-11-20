@@ -133,7 +133,7 @@ def payments_summary(user: dict = Depends(require_payments_access), db: Session 
 
 @router.get("/org/payments/status", response_model=PaymentStatusPage)
 def payments_status(
-    bucket: Literal["debt", "debtors", "waiting", "expiring", "active", "paused", "all", "due", "none"] = "all",
+    bucket: Literal["debtors", "debt", "to_pay", "expiring", "active", "paused", "all", "none"] = "all",
     group_id: Optional[UUID] = None,
     teacher_id: Optional[UUID] = None,
     search: Optional[str] = Query(None, max_length=100),
@@ -144,10 +144,9 @@ def payments_status(
     user: dict = Depends(require_payments_access),
     db: Session = Depends(get_db),
 ):
-    """Членства со статусом оплаты (по вкладкам), с точным total. PAY-2: вкладка ``debt`` — члены с долгом > 0
-    (в том числе ушедшие и архивные), ``sort=debt`` — по убыванию долга. LOGIC-A (решение владельца 21.10): вкладки
-    ``debt`` Должники / ``expiring`` Скоро платить / ``active`` Оплачено / ``paused`` На паузе (``due`` — старое имя ``debt``; ``none`` — старая
-    вкладка, один релиз)."""
+    """Членства со статусом оплаты (по вкладкам), с точным ``total`` (строки). PAY-DUE: вкладки ``debtors`` Должники (есть ``debt_amount``; ``debt`` — старое имя) / ``to_pay`` К оплате (есть ``due_amount``,
+    в том числе у должников) / ``expiring`` Заканчивается оплата / ``active`` Без долга / ``paused`` На паузе; обе вкладки неоплаты читают и закрытые участия. ``students`` — число разных учеников фильтра,
+    ``amount_total`` — сумма части вкладки по всем строкам фильтра. ``sort=debt`` — по убыванию ``debt_amount`` (``to_pay`` — по ближайшему сроку)."""
     return PaymentService(db).status_page(
         user["org_id"], bucket=bucket, group_id=group_id, teacher_id=teacher_id,
         search=search, limit=limit, offset=offset, sort=sort, age=age,

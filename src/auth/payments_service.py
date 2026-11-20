@@ -65,6 +65,7 @@ from . import billing_ledger as bl
 from . import business_clock as bc
 from . import ledger_service as ls
 from .money_journal_actions import TRACE_ACTIONS
+from . import pay_due
 from . import payment_status as ps
 from . import payments_texts as tx
 from . import payments_views as pv
@@ -85,7 +86,7 @@ from .payments_schemas import (
     CarriedFromOut,
     DebtAgeBasket,
     CarriedOutOut,
-    DebtSplit,
+    DueNearest,
     MembershipPaymentRow,
     OpeningBrief,
     PaymentsBuckets,
@@ -98,6 +99,7 @@ from .payments_schemas import (
     PaymentQuote,
     PaymentSettings,
     PaymentSettingsChanged,
+    PayDueImpact,
     PaymentSettingsUpdate,
     PaymentsSummary,
     PaymentStatusPage,
@@ -543,11 +545,14 @@ class PaymentService:
         the owner's (not later than today + 31 days).  ``dry_run``: nothing is written, the result carries the ``impact``."""
         changes = patch.model_dump(exclude_none=True)
         today = ps.business_today()
+        due_impact = None if dry_run else self._safe_pay_due_impact(org_id, changes)
         pre = None if dry_run else self._precomputed_regime_audit(org_id, {k: v for k, v in changes.items() if k not in ("accounting_start_date", "centre_cancel_recalc")}, today)
         query = self.db.query(Organization).filter(Organization.id == org_id)
         org = query.first() if dry_run else query.with_for_update().first()
         if not org:
             raise PaymentNotFound("Организация не найдена")
+        due_before = self.get_settings(org_id)
+        due_wanted = {k: changes[k] for k in ("pay_due_days", "pay_due_lessons") if k in changes and changes[k] != getattr(due_before, k)}
         new_start: Optional[date] = changes.pop("accounting_start_date", None)
         recalc: Optional[bool] = changes.pop("centre_cancel_recalc", None)      # PAY-F: its own history (``recalc_history``), never a billing regime
         if new_start is not None:
@@ -565,7 +570,8 @@ class PaymentService:
             if self._regime_fields(wanted) != self._regime_fields(before):
                 regime_impact = self._regime_impact(org_id, wanted, today)
             return PaymentSettingsChanged(**before.model_dump(), dry_run=True, impact=impact or AccountingStartImpact(),
-                                          regime_impact=regime_impact)
+                                          regime_impact=regime_impact,
+                                          pay_due_impact=self._pay_due_impact(org_id, wanted.pay_due_days, wanted.pay_due_lessons) if due_wanted else None)
         block.update(changes)
         if new_start is not None:
             block["accounting_start_date"] = new_start.isoformat()
@@ -574,6 +580,11 @@ class PaymentService:
         after = PaymentSettings(**{k: block[k] for k in PaymentSettings.model_fields if k in block and block[k] is not None
                                    and k != "accounting_start_date"})
         audit: List[Tuple[str, Dict[str, Any]]] = []         # Money-1 B9: what goes to the journal of the money settings (written in the same transaction)
+        if due_wanted:
+            was = {"days": before.pay_due_days, "lessons": before.pay_due_lessons}
+            now = {"days": after.pay_due_days, "lessons": after.pay_due_lessons}
+            audit.append(("pay_due_changed", {"before": was, "after": now, "to_due": due_impact.to_due if due_impact else None, "to_debt": due_impact.to_debt if due_impact else None,
+                                              "text": tx.pay_due_changed_text(was, now, due_impact.to_due if due_impact else None, due_impact.to_debt if due_impact else None)}))
         if self._regime_fields(after) != self._regime_fields(before):
             ready = pre if pre is not None and pre[0] == self._regime_fields(before) and pre[1] == self._regime_fields(after) else None      # worked out before the lock (R3 №12)
             audit.append(("billing_regime_changed", ready[2] if ready is not None else self._safe_regime_audit(org_id, before, after, today)))       # the sums are read BEFORE the new settings are written
@@ -621,6 +632,30 @@ class PaymentService:
             org_id, actor_id, sorted(list(changes) + (["accounting_start_date"] if new_start is not None else []) + (["centre_cancel_recalc"] if recalc is not None else [])),
         )
         return PaymentSettingsChanged(**self.get_settings(org_id).model_dump())
+
+    def _pay_due_impact(self, org_id: str, days: int, lessons: int) -> PayDueImpact:
+        """PAY-DUE 10.6: who changes name by the term ``days`` / ``lessons``: ONE run of the ledgers and two classifications (the setting never reaches the ledger); nothing is written."""
+        loader = self._loader(org_id)
+        now: set = set()
+        then: set = set()
+        for e in loader.run(loader.select(scope="all")):
+            if e.due.debt_amount > 0:
+                now.add(e.student.id)
+            if pay_due.classify(e.ledger, loader.today, days, lessons, loader.in_centre(e.student.id)).debt_amount > 0:
+                then.add(e.student.id)
+        to_due, to_debt = len(now - then), len(then - now)
+        return PayDueImpact(to_due=to_due, to_debt=to_debt, texts=tx.pay_due_impact_texts(to_due, to_debt))
+
+    def _safe_pay_due_impact(self, org_id: str, changes: Dict[str, Any]) -> Optional[PayDueImpact]:
+        """Read BEFORE the row of the centre is locked; the journal never stops the owner from saving (a failure = a line without the numbers)."""
+        before = self.get_settings(org_id)
+        if not any(k in changes and changes[k] != getattr(before, k) for k in ("pay_due_days", "pay_due_lessons")):
+            return None
+        try:
+            return self._pay_due_impact(org_id, changes.get("pay_due_days", before.pay_due_days), changes.get("pay_due_lessons", before.pay_due_lessons))
+        except Exception:
+            logger.exception("the effect of the new term of payment could not be worked out org=%s", org_id)
+            return None
 
     def _centre_is_empty(self, org_id: Any) -> bool:
         """R3c Г3: THE one «the centre is empty for money»: no membership of a student in any group of the centre (live or closed), no payment (of any kind, cancelled too) and no opening balance."""
@@ -1020,6 +1055,7 @@ class PaymentService:
         users = self._users(x for p in last.values() if p for x in (p.created_by, p.voided_by))
         files = load_files(self.db, [p.id for p in last.values() if p])
         forecast = entries[0].loader.forecasts(entries) if entries and entries[0].loader is not None else {}     # PAY-F: «хватит до» of the packages
+        today = entries[0].inp.today if entries else ps.business_today()
         rows = []
         for e in entries:
             l, payment = e.ledger, last[e.membership.id]
@@ -1039,24 +1075,23 @@ class PaymentService:
                     is_active=bool(e.membership.is_active),
                     price=PriceOut(**pricing.price_dict(e.price)),
                     monthly_fee=e.price.amount,
-                    status=r.status,
+                    status=pv.unpaid_status(e),
                     period_mode=l.mode,
                     paid_until=r.paid_until,
-                    days_overdue=r.days_overdue,
+                    days_overdue=None if pv.HIDE_PAID_UNTIL_STATUS_ON_UNPAID and e.due.unpaid > 0 else r.days_overdue,
                     days_left=r.days_left,
                     lessons_total=r.lessons_total,
                     lessons_used=r.lessons_used,
                     lessons_left=r.lessons_left, paid_through_forecast=forecast.get(e.membership.id),
                     last_payment=self._payment_out(payment, users, None, files, l) if payment else None,
-                    debt=l.debt, past_debt=l.past_debt, current_due=l.current_due, advance=l.advance,
+                    debt=l.debt, advance=l.advance,
                     partial_credit=l.partial_credit, price_missing=bl.F_PRICE_MISSING in l.flags,
                     lessons_unpaid=l.lessons.unpaid if l.lessons else 0, refundable=l.refundable,
                     writeoff_allowed=l.debt > 0,
                     paused=self._paused_range(e), opening=self._opening_brief(e),
                     price_ends_on_leave=bool(e.membership.is_active and e.price.source == pricing.SOURCE_OVERRIDE and e.price.amount is not None),
-                    bucket=pv.entry_bucket(e), debt_reason=(why := pv.debt_reason(e))[0], reason=why[1],
-                    tab=pv.entry_tab(e), waiting_until=pv.waiting_until(e), waiting_reason=pv.waiting_reason(e),
-                    debt_age_days=(age := pv.debt_age_days(e)), debt_age_bucket=pv.debt_age_basket(age) if age is not None else None,
+                    debt_age_bucket=pv.debt_age_basket(e.due.overdue_days) if e.due.debt_amount > 0 else None,
+                    **pv.unpaid_fields(e, today),
                 )
             )
         return rows
@@ -1097,74 +1132,52 @@ class PaymentService:
         entries = loader.run(loader.select(scope="all"))
         tracked = {e.membership.id for e in entries if e.membership.is_active is True and e.group.status == "active" and e.student.status is not None and e.student.status != "archived"}
         counts = {s: 0 for s in ps.STATUSES}
-        students_due: set = set()
-        students_expired: set = set()
         tracked_total = 0
-        debt_total = advance_total = with_debt = with_advance = 0
+        debt_total = due_total = advance_total = with_debt = 0
         students_debt: set = set()
+        students_due: set = set()
         students_advance: set = set()
         students_paused: set = set()
-        buckets = {pv.BUCKET_DEBT: 0, pv.BUCKET_EXPIRING: 0, pv.BUCKET_ACTIVE: 0, pv.BUCKET_PAUSED: 0}
-        students_waiting: set = set()          # Money-1 B7 / R3 №20: the split by ONE definition (``debt_split``); the old counters above keep their meaning
-        students_debtors: set = set()
-        waiting_memberships = debtors_memberships = 0
-        debt_waiting_total = debt_debtors_total = 0
-        split_expired: set = set()
-        split_due: set = set()
-        split_expired_memberships = split_due_memberships = 0
+        buckets = {pv.BUCKET_DEBTORS: 0, pv.BUCKET_TO_PAY: 0, pv.BUCKET_EXPIRING: 0, pv.BUCKET_ACTIVE: 0, pv.BUCKET_PAUSED: 0}
         price_missing = 0
-        ages = {k: {"students": set(), "memberships": 0, "debt_total": 0} for k in pv.DEBT_AGE_BASKETS}      # Money-2 T18: the real debtors by the age of the debt
+        nearest: Optional[date] = None
+        ages = {k: {"students": set(), "memberships": 0, "debt_total": 0} for k in pv.DEBT_AGE_BASKETS}      # Money-2 T18: the debtors by the age of the debt (K)
         for e in entries:
-            l = e.ledger
-            debt_total += l.debt
+            l, d = e.ledger, e.due
+            debt_total += d.debt_amount
+            due_total += d.due_amount
             advance_total += l.advance
-            if l.debt > 0:
+            if d.debt_amount > 0:
                 with_debt += 1
                 students_debt.add(e.student.id)
+                basket = ages[pv.debt_age_basket(d.overdue_days)]
+                basket["students"].add(e.student.id)
+                basket["memberships"] += 1
+                basket["debt_total"] += d.debt_amount
+            if d.due_amount > 0:
+                students_due.add(e.student.id)
+                if d.due_until is not None and (nearest is None or d.due_until < nearest):
+                    nearest = d.due_until
             if l.advance > 0:
-                with_advance += 1
                 students_advance.add(e.student.id)
-            bucket = pv.entry_bucket(e)
-            if bucket:
-                buckets[bucket] += 1
-                if bucket == pv.BUCKET_PAUSED:
+            for tab in (pv.BUCKET_DEBTORS, pv.BUCKET_TO_PAY):
+                if pv.in_tab(e, tab):
+                    buckets[tab] += 1
+            calm = pv.calm_bucket(e)
+            if calm:
+                buckets[calm] += 1
+                if calm == pv.BUCKET_PAUSED:
                     students_paused.add(e.student.id)
-            waiting = pv.waiting_until(e) is not None
-            if l.debt > 0:
-                if waiting:
-                    students_waiting.add(e.student.id)
-                    waiting_memberships += 1
-                    debt_waiting_total += l.debt
-                else:
-                    students_debtors.add(e.student.id)
-                    debtors_memberships += 1
-                    debt_debtors_total += l.debt
-                    basket = ages[pv.debt_age_basket(pv.debt_age_days(e))]
-                    basket["students"].add(e.student.id)
-                    basket["memberships"] += 1
-                    basket["debt_total"] += l.debt
-            if e.membership.id in tracked and pv.price_missing(e) and l.status.status != ps.FREE and bucket != pv.BUCKET_DEBT:
+            if e.membership.id in tracked and pv.price_missing(e) and l.status.status != ps.FREE and d.unpaid <= 0:
                 price_missing += 1
             if e.membership.id not in tracked:
                 continue
             tracked_total += 1
             counts[l.status.status] += 1
-            if l.status.status in (ps.EXPIRED, ps.ENDS_TODAY):
-                students_due.add(e.student.id)
-                if not waiting:
-                    split_due.add(e.student.id)
-                    split_due_memberships += 1
-            if l.status.status == ps.EXPIRED:
-                students_expired.add(e.student.id)
-                if not waiting:
-                    split_expired.add(e.student.id)
-                    split_expired_memberships += 1
         settings = self.get_settings(org_id)
         result = PaymentsSummary(
             as_of=loader.today.isoformat(),
-            due=counts[ps.EXPIRED] + counts[ps.ENDS_TODAY],
             ends_today=counts[ps.ENDS_TODAY],
-            expired=counts[ps.EXPIRED],
             expiring=counts[ps.EXPIRING],
             none=counts[ps.NONE],
             active=counts[ps.ACTIVE] + counts[ps.FREE],
@@ -1172,22 +1185,14 @@ class PaymentService:
             tracked_total=tracked_total,
             period_mode=loader.settings.current.mode,
             lessons_per_payment=settings.lessons_per_payment,
-            students_due=len(students_due),
-            students_expired=len(students_expired),
-            debt_total=debt_total,
-            advance_total=advance_total,
-            memberships_with_debt=with_debt,
-            students_with_debt=len(students_debt),
+            debt_total=debt_total, debtors=len(students_debt), due_total=due_total, due_students=len(students_due),
+            due_nearest=DueNearest(date=nearest, text=tx.due_until_words(nearest, loader.today)) if nearest is not None else None,
+            advance_total=advance_total, students_with_advance=len(students_advance), memberships_with_debt=with_debt,
             accounting_start_date=loader.settings.accounting_start,
             paused=counts[ps.PAUSED],
-            buckets=PaymentsBuckets(**buckets), price_missing=price_missing, students_with_advance=len(students_advance),
-            debtors=len(students_debt), students_paused=len(students_paused), students_waiting=len(students_waiting), debt_waiting_total=debt_waiting_total,
+            buckets=PaymentsBuckets(**buckets), price_missing=price_missing, students_paused=len(students_paused),
+            pay_due_days=settings.pay_due_days, pay_due_lessons=settings.pay_due_lessons,
             debt_ages=[DebtAgeBasket(bucket=k, students=len(v["students"]), memberships=v["memberships"], debt_total=v["debt_total"]) for k, v in ages.items()],
-            debt_split=DebtSplit(
-                debtors=len(students_debtors), debtors_memberships=debtors_memberships, debtors_debt_total=debt_debtors_total,
-                waiting_students=len(students_waiting), waiting_memberships=waiting_memberships, waiting_debt_total=debt_waiting_total,
-                all_debt_total=debt_total, all_students_with_debt=len(students_debt),
-                expired=split_expired_memberships, due=split_due_memberships, students_expired=len(split_expired), students_due=len(split_due)),
         )
         if SUMMARY_TTL_SECONDS > 0:
             _SUMMARY_CACHE[str(org_id)] = (time.monotonic() + SUMMARY_TTL_SECONDS, result)
@@ -1198,13 +1203,12 @@ class PaymentService:
         def name(e: ls.MembershipLedger):
             return (person_name(e.student.last_name, e.student.first_name) or "").lower(), e.group.name.lower(), str(e.membership.id)
 
-        if by_debt or bucket in ("debt", "debtors", "waiting"):
-            return lambda e: (-e.ledger.debt, *name(e))
-        if bucket == "expiring":
+        if bucket == pv.BUCKET_TO_PAY:           # the nearest term first; the same term - by the name (stable pages)
+            return lambda e: (e.due.due_until or date.max, *name(e))
+        if by_debt or bucket == pv.BUCKET_DEBTORS:       # the biggest debt first, then the oldest (K)
+            return lambda e: (-e.due.debt_amount, -e.due.overdue_days, *name(e))
+        if bucket == pv.BUCKET_EXPIRING:
             return lambda e: (e.ledger.status.days_left if e.ledger.status.days_left is not None else 10**9, *name(e))
-        if bucket == ps.BUCKET_DUE:
-            # Most overdue first; "ends today" and a spent lessons package have 0 days.
-            return lambda e: (-(e.ledger.status.days_overdue or 0), *name(e))
         if bucket == ps.BUCKET_EXPIRING:
             def remaining(e: ls.MembershipLedger):
                 r = e.ledger.status
@@ -1226,22 +1230,22 @@ class PaymentService:
         age: Optional[str],
     ) -> PaymentStatusPage:
         loader = self._loader(org_id)
-        if bucket == "due":                                  # LEGACY name of the debtors tab
-            bucket = pv.BUCKET_DEBT
-        scope = "all" if bucket in ("debt", pv.BUCKET_DEBTORS) else "tracked"      # ``debtors`` (the new definition) includes a student who left; ``waiting`` is a tracked student by definition
+        if bucket == pv.BUCKET_DEBT_ALIAS:                   # the old name of the debtors tab
+            bucket = pv.BUCKET_DEBTORS
+        scope = "all" if bucket in pv.UNPAID_TABS else "tracked"      # the tabs of an unpaid sum include a student who left / a closed participation
         entries = loader.load(group_id=group_id, teacher_id=teacher_id, search=search, scope=scope)
-        if bucket in (pv.BUCKET_DEBTORS, pv.BUCKET_WAITING):
-            picked = [e for e in entries if pv.entry_tab(e) == bucket]
-        elif bucket in (pv.BUCKET_DEBT, pv.BUCKET_EXPIRING, pv.BUCKET_ACTIVE, pv.BUCKET_PAUSED):
-            picked = [e for e in entries if pv.entry_bucket(e) == bucket]
+        if bucket in (pv.BUCKET_DEBTORS, pv.BUCKET_TO_PAY, pv.BUCKET_EXPIRING, pv.BUCKET_ACTIVE, pv.BUCKET_PAUSED):
+            picked = [e for e in entries if pv.in_tab(e, bucket)]
         else:
             picked = [e for e in entries if ps.in_bucket(e.ledger.status.status, bucket)]
         if age is not None:                                  # Money-2 T18: the basket of the age of the debt (a row without a debt is in none)
-            picked = [e for e in picked if (d := pv.debt_age_days(e)) is not None and pv.debt_age_basket(d) == age]
+            picked = [e for e in picked if e.due.debt_amount > 0 and pv.debt_age_basket(e.due.overdue_days) == age]
         picked.sort(key=self._sort_key(bucket, sort == "debt"))
         page = picked[offset : offset + limit]
+        part = (lambda e: e.due.debt_amount) if bucket == pv.BUCKET_DEBTORS else (lambda e: e.due.due_amount) if bucket == pv.BUCKET_TO_PAY else (lambda e: 0)
         return PaymentStatusPage(
             items=self._rows(page), total=len(picked), limit=limit, offset=offset, as_of=loader.today.isoformat(),
+            students=len({e.student.id for e in picked}), amount_total=sum(part(e) for e in picked),
         )
 
     def student_memberships(self, org_id: str, student_id: UUID) -> List[MembershipPaymentRow]:
@@ -2386,8 +2390,9 @@ class PaymentService:
         inp = loader.build_input(membership_id, exclude_payment=exclude)
         before = bl.run_ledger(inp)
         price = loader.books.price(membership_id, membership.group_id, today)
+        due_before = loader.classify(before, membership.student_id, membership_id)
         preview = PaymentPreview(
-            as_of=today, mode=before.mode, price=PriceOut(**pricing.price_dict(price)), due=pv.due_block(before),
+            as_of=today, mode=before.mode, price=PriceOut(**pricing.price_dict(price)), due=pv.due_block(before, due_before, today),
             suggested_amount=self._correction_ceiling(org_id, before.debt, old_payment) if archived else self._suggested(loader, membership, before, price.amount), amount=amount, result=None,
             warnings=[], recalc=self._recalc_news(membership_id, before, exclude_payment=exclude),
         )
@@ -2404,7 +2409,7 @@ class PaymentService:
             else:
                 credit = bl.Credit("preview", bl.PAYMENT, paid_on, datetime(9999, 1, 1), amount)
                 after = bl.run_ledger(replace(inp, credits=tuple(inp.credits) + (credit,)))
-            preview.result = pv.preview_result(before, after, "preview", price.amount)
+            preview.result = pv.preview_result(before, after, "preview", price.amount, due_before, loader.classify(after, membership.student_id, membership_id), today)
             more = self._warnings(after, "preview", paid_on, today, price.amount, archived=False)
             seen = {w.code for w in warnings}
             warnings.extend(w for w in more if w.code not in seen or w.code == "price_change_ahead")

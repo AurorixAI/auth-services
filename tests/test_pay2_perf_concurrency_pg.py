@@ -70,9 +70,9 @@ def test_every_list_and_report_has_a_fixed_budget_of_queries(world, monkeypatch)
     def probes():
         return {
             "status": lambda: c.get(f"{API}/org/payments/status", params={"limit": 50}).json(),
-            "status_debt": lambda: c.get(f"{API}/org/payments/status", params={"bucket": "debt", "limit": 50}).json(),
+            "status_debt": lambda: c.get(f"{API}/org/payments/status", params={"bucket": "debtors", "limit": 50}).json(),
             "summary": lambda: c.get(f"{API}/org/payments/summary").json(),
-            "balances": lambda: c.get(f"{API}/org/payments/balances", params={"kind": "debt"}).json(),
+            "balances": lambda: c.get(f"{API}/org/payments/balances", params={"kind": "debtors"}).json(),
             "receipts": lambda: c.get(f"{API}/org/payments/receipts", params={"from": "2026-09-01", "to": "2026-10-21", "group_by": "month"}).json(),
             "items": lambda: c.get(f"{API}/org/payments/receipts/items", params={"from": "2026-09-01", "to": "2026-10-21"}).json(),
             "statement": lambda: c.get(f"{API}/org/memberships/{some.id}/statement").json(),
@@ -88,7 +88,7 @@ def test_every_list_and_report_has_a_fixed_budget_of_queries(world, monkeypatch)
         _, n = count_statements(world, fn)
         big[name] = n
     print("QUERIES small/big:", small, big)
-    assert all(n <= 20 for n in big.values()), big
+    assert all(n <= 21 for n in big.values()), big      # PAY-DUE: +1 (``in_centre``: ONE query for the students of the page / of the centre)
     for name in big:
         assert big[name] <= small[name] + 2, (name, small, big)      # does not depend on the number of memberships
     assert c.get(f"{API}/org/payments/summary").json()["tracked_total"] >= 200

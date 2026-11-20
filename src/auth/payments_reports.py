@@ -22,7 +22,6 @@ from . import billing_ledger as bl
 from . import ledger_service as ls
 from . import payment_status as ps
 from . import payments_texts as tx
-from .payments_views import debt_split_of
 from .export_safety import csv_safe_row
 from . import payments_views as pv
 from .payments_files import person_name, staff_name
@@ -115,15 +114,16 @@ class PaymentsReports:
             balance = e.balance_after
             common = dict(seq=seq, date=e.day, debit=e.debit, credit=e.credit, outflow=e.outflow, balance_after=balance,
                           balance_text=tx.balance_text(balance))
+            common.update(pv.open_of_row(e.kind, e.ref_id, ledger, entry.due, segments))
             if e.kind == "charge":
                 seg = segments[e.ref_id]
                 title = f"Стоимость {tx.period_text(seg.period_start, seg.period_end)}" if seg.kind == "period" else (
                     f"Стоимость: пакет №{seg.package_no} ({tx.period_text(seg.period_start, seg.period_end)})")
-                rows.append(StatementRow(type="charge", title=title, details=StatementDetails(segment=pv.segment_out(seg)), **common))
+                rows.append(StatementRow(type="charge", title=title, details=StatementDetails(segment=pv.segment_out(seg, entry.due)), **common))
             elif e.kind == "opening_debt":
                 seg = segments[e.ref_id]
                 rows.append(StatementRow(type="opening_debt", title=f"Долг на начало учёта на {seg.period_start.strftime('%d.%m.%Y')}",
-                                         details=StatementDetails(segment=pv.segment_out(seg)), **common))
+                                         details=StatementDetails(segment=pv.segment_out(seg, entry.due)), **common))
             elif e.kind == "opening_paid_until":
                 until = ledger.opening.paid_until if ledger.opening and ledger.opening.paid_until else None
                 own = loader._own_paid_until(membership_id)
@@ -182,7 +182,8 @@ class PaymentsReports:
         summary = StatementSummary(
             charged=ledger.charged, paid=ledger.paid, transferred_in=ledger.transferred_in, written_off=ledger.written_off,
             recalculated=ledger.recalculated, refunded=ledger.refunded, transferred_out=ledger.transferred_out, debt=ledger.debt, advance=ledger.advance,
-            paid_until=ledger.status.paid_until, status=ledger.status.status, reconciles=ledger.reconciles)
+            paid_until=ledger.status.paid_until, status=pv.unpaid_status(entry), reconciles=ledger.reconciles,
+            **pv.unpaid_fields(entry, today))
         return StatementOut(
             membership=StatementMembership(
                 membership_id=str(entry.membership.id), student_id=str(entry.student.id),
@@ -190,7 +191,7 @@ class PaymentsReports:
                 display_id=entry.student.display_id, group_id=str(entry.group.id), group_name=entry.group.name,
                 teacher_name=_person(entry.teacher), is_active=bool(entry.membership.is_active)),
             as_of=today, mode=ledger.mode, accounting_start=loader.settings.accounting_start, summary=summary, rows=rows,
-            voided=voided, upcoming=[pv.segment_out(s) for s in ledger.segments if not s.begun and (s.money or s.forgiven or s.recalculated)])
+            voided=voided, upcoming=[pv.segment_out(s, entry.due) for s in ledger.segments if not s.begun and (s.money or s.forgiven or s.recalculated)])
 
     def _correction_chain(self, org_id: str, payments) -> Tuple[Dict[Any, tuple], Dict[Any, Optional[int]]]:
         """For a set of payments: ``was[id] = (receipt_no, amount)`` of the payment it corrects and ``becomes[id]`` = the receipt
@@ -414,11 +415,10 @@ class PaymentsReports:
         shown = [e for e in entries.values()
                  if (not group_id or e.group.id == group_id) and (not teacher_id or e.group.teacher_id == teacher_id)]
         position = ReceiptsPosition(
-            debt_total=sum(e.ledger.debt for e in shown), past_debt_total=sum(e.ledger.past_debt for e in shown),
-            advance_total=sum(e.ledger.advance for e in shown), memberships_with_debt=sum(1 for e in shown if e.ledger.debt > 0),
-            students_with_debt=len({e.student.id for e in shown if e.ledger.debt > 0}),
-            memberships_with_advance=sum(1 for e in shown if e.ledger.advance > 0),
-            **debt_split_of(shown))
+            debt_total=sum(e.due.debt_amount for e in shown), due_total=sum(e.due.due_amount for e in shown),
+            debtors=len({e.student.id for e in shown if e.due.debt_amount > 0}), due_students=len({e.student.id for e in shown if e.due.due_amount > 0}),
+            advance_total=sum(e.ledger.advance for e in shown), memberships_with_debt=sum(1 for e in shown if e.due.debt_amount > 0),
+            memberships_with_advance=sum(1 for e in shown if e.ledger.advance > 0))
         checks = [
             ReconciliationCheck(code="received_eq_allocated_plus_refunded", left=totals["received"],
                                 right=allocated + refunded_from + transferred_from,
@@ -511,19 +511,24 @@ class PaymentsReports:
         return ReceiptItems(items=page, total=len(items), limit=limit, offset=offset)
 
     def balances(
-        self, org_id: str, *, kind: str = "debt", group_id: Optional[UUID] = None, teacher_id: Optional[UUID] = None,
+        self, org_id: str, *, kind: str = "debtors", group_id: Optional[UUID] = None, teacher_id: Optional[UUID] = None,
         search: Optional[str] = None, limit: int = 50, offset: int = 0,
     ) -> BalancesPage:
+        """«Долги / Авансы» of the centre (the memberships of students who left included).  ``kind``: ``debtors`` (a debt part is owed), ``to_pay`` (a part within its term is owed), ``advance``; ``debt`` is the
+        old name of ``debtors``.  The sums are those of the PART the kind lists (``debt_total`` = Σ ``debt_amount`` / ``due_total`` = Σ ``due_amount`` of the rows)."""
         loader = ls.LedgerLoader(self.db, str(org_id), ps.business_today())
         entries = loader.load(group_id=group_id, teacher_id=teacher_id, search=search, scope="all")
-        field_name = "debt" if kind in ("debt", "debtors", "waiting") else "advance"
-        picked = [e for e in entries if getattr(e.ledger, field_name) > 0]
-        if kind in ("debtors", "waiting"):          # R3 №20: the new definition: the real debtors / the ones who only wait; ``debt`` keeps its old meaning (every debt)
-            picked = [e for e in picked if pv.entry_tab(e) == kind]
-        waiting_sum = sum(e.ledger.debt for e in picked if pv.waiting_until(e) is not None) if field_name == "debt" else 0
-        debt_sum = sum(e.ledger.debt for e in picked) if field_name == "debt" else 0
-        picked.sort(key=lambda e: (-getattr(e.ledger, field_name), (person_name(e.student.last_name, e.student.first_name) or "").lower(),
-                                   str(e.membership.id)))
+        kind = pv.BUCKET_DEBTORS if kind == pv.BUCKET_DEBT_ALIAS else kind
+        if kind == "advance":
+            picked = [e for e in entries if e.ledger.advance > 0]
+            picked.sort(key=lambda e: (-e.ledger.advance, (person_name(e.student.last_name, e.student.first_name) or "").lower(), str(e.membership.id)))
+        else:
+            picked = [e for e in entries if pv.in_tab(e, kind)]
+            if kind == pv.BUCKET_TO_PAY:
+                picked.sort(key=lambda e: (e.due.due_until or date.max, (person_name(e.student.last_name, e.student.first_name) or "").lower(), str(e.membership.id)))
+            else:
+                picked.sort(key=lambda e: (-e.due.debt_amount, -e.due.overdue_days, (person_name(e.student.last_name, e.student.first_name) or "").lower(), str(e.membership.id)))
+        today = loader.today
         rows = []
         for e in picked[offset : offset + limit]:
             l = e.ledger
@@ -532,7 +537,8 @@ class PaymentsReports:
                 student_name=person_name(e.student.last_name, e.student.first_name) or "", display_id=e.student.display_id,
                 group_id=str(e.group.id), group_name=e.group.name, teacher_id=str(e.group.teacher_id) if e.group.teacher_id else None,
                 teacher_name=_person(e.teacher), is_active=bool(e.membership.is_active),
-                student_archived=e.student.status == "archived", status=l.status.status, paid_until=l.status.paid_until,
-                debt=l.debt, past_debt=l.past_debt, current_due=l.current_due, advance=l.advance, refundable=l.refundable,
-                tab=(pv.entry_tab(e) if l.debt > 0 else None), waiting_until=pv.waiting_until(e)))
-        return BalancesPage(items=rows, total=len(picked), limit=limit, offset=offset, debt_total=debt_sum, debtors_debt_total=debt_sum - waiting_sum, debt_waiting_total=waiting_sum)
+                student_archived=e.student.status == "archived", status=pv.unpaid_status(e), paid_until=l.status.paid_until,
+                debt=l.debt, advance=l.advance, refundable=l.refundable, **pv.unpaid_fields(e, today)))
+        return BalancesPage(items=rows, total=len(picked), limit=limit, offset=offset,
+                            debt_total=sum(e.due.debt_amount for e in picked) if kind == pv.BUCKET_DEBTORS else 0,
+                            due_total=sum(e.due.due_amount for e in picked) if kind == pv.BUCKET_TO_PAY else 0)

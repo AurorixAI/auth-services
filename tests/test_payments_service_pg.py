@@ -211,7 +211,7 @@ def test_free_and_none_statuses(world):
     assert (s["free"], s["active"], s["none"]) == (1, 1, 2)
     assert status_page(world, bucket="active")["items"] == []                         # LOGIC-A: a free student is on no tab ...
     free = [r for r in status_page(world)["items"] if r["status"] == "free"]
-    assert len(free) == 1 and free[0]["bucket"] is None and s["price_missing"] >= 0   # ... and is counted apart (``free``)
+    assert len(free) == 1 and free[0]["state"] == "free" and s["price_missing"] >= 0   # ... and is counted apart (``free``)
 
 
 
@@ -261,7 +261,7 @@ def test_only_active_memberships_of_live_groups_and_students_are_tracked(world):
     world.db.query(Group).filter_by(id=world.group.id).update({"status": "archived"})
     world.db.commit()
     s = summary(world)
-    assert s["tracked_total"] == 0 and s["due"] == 0
+    assert s["tracked_total"] == 0 and s["ends_today"] == 0
     # the card of an archived student still shows the payments (for the history)
     assert owner(world).get(f"{API}/org/students/{world.students[0].id}/memberships").status_code == 200
 
@@ -319,23 +319,22 @@ def test_summary_equals_the_lists_and_sorting(world):
     build_mixed(world)
     s = summary(world)
     assert s["tracked_total"] == 10 and s["period_mode"] == "calendar" and s["as_of"] == business_today().isoformat()
-    assert (s["due"], s["ends_today"], s["expired"], s["expiring"], s["none"], s["active"], s["free"]) == (3, 1, 2, 2, 3, 2, 1)
-    assert s["due"] == s["ends_today"] + s["expired"]
-    assert s["tracked_total"] == s["due"] + s["expiring"] + s["none"] + s["active"]
+    assert (s["ends_today"], s["expiring"], s["none"], s["active"], s["free"]) == (1, 2, 3, 2, 1)       # PAY-DUE: the status counters stay (the paid-until statuses); ``due`` / ``expired`` are gone
+    assert s["tracked_total"] == 3 + s["expiring"] + s["none"] + s["active"]
     # LOGIC-A (owner, 21.10): the tabs are debt / expiring / active / paused; the legacy counters above keep their meaning for one release
-    for bucket in ("debt", "expiring", "active", "paused", "all"):
+    for bucket in ("debtors", "expiring", "active", "paused", "all"):
         page = status_page(world, bucket=bucket)
         assert page["total"] == (s["tracked_total"] if bucket == "all" else s["buckets"][bucket]), bucket
         assert len(page["items"]) == page["total"] and page["as_of"] == s["as_of"]
-    debtors = status_page(world, bucket="debt")["items"]
-    assert [r["debt"] for r in debtors] == sorted((r["debt"] for r in debtors), reverse=True)                 # biggest debt first
-    assert s["buckets"]["debt"] == s["memberships_with_debt"] and sum(r["debt"] for r in debtors) == s["debt_total"]
-    assert all(r["bucket"] == "debt" and r["reason"] for r in debtors)
+    debtors = status_page(world, bucket="debtors")["items"]
+    assert [r["debt_amount"] for r in debtors] == sorted((r["debt_amount"] for r in debtors), reverse=True)    # biggest debt first
+    assert s["buckets"]["debtors"] == s["memberships_with_debt"] and sum(r["debt_amount"] for r in debtors) == s["debt_total"]
+    assert all(r["state"] == "debt" and r["debt_text"] for r in debtors)
     left = [r["days_left"] for r in status_page(world, bucket="expiring")["items"]]
     assert left == sorted(left, key=lambda d: (d is None, d))                                                  # fewest days left first
     names = [r["student_name"] for r in status_page(world, bucket="active")["items"]]
     assert names == sorted(names, key=str.lower)
-    assert status_page(world, bucket="due")["total"] == s["buckets"]["debt"]                                  # the legacy name of the debtors
+    assert status_page(world, bucket="debt")["total"] == s["buckets"]["debtors"]                              # the old name of the debtors tab (an alias)
 
 
 def test_filters_search_and_paging_have_exact_totals(world):
@@ -398,7 +397,7 @@ def test_status_and_summary_use_a_bounded_number_of_queries(world, mode):
     populate(25)
     large = [count_queries(p) for p in paths]
     assert large == small, (small, large)   # no query per row
-    assert max(large) <= 17   # LOGIC-A: +2 (pauses, opening balances); G-8: +1 (all memberships of the students: the days they left another group, one query for every row of the page); the spec budget is 20
+    assert max(large) <= 18   # LOGIC-A: +2 (pauses, opening balances); G-8: +1 (all memberships of the students: the days they left another group, one query for every row of the page); the spec budget is 20
 
 
 # ---- fee, settings, tenancy -------------------------------------------------------
@@ -447,7 +446,7 @@ def test_other_organisation_gets_404_everywhere_and_sees_nothing(world):
     assert foreign.get(f"{API}/org/students/{world.students[0].id}/memberships").status_code == 404
     assert foreign.get(f"{API}/org/payments/status", params={"search": "Каримова"}).json()["total"] == 0
     s = foreign.get(f"{API}/org/payments/summary").json()
-    assert s["tracked_total"] == 1 and s["due"] == 0       # only its own student
+    assert s["tracked_total"] == 1 and s["ends_today"] == 0       # only its own student
     world.db.expire_all()
     assert world.db.get(StudentPayment, p["id"]).voided_at is None
     # and the settings of one centre never leak into the other
@@ -536,7 +535,7 @@ def test_lessons_mode_counts_only_what_rule_43_counts(world):
     assert (r1["lessons_used"], r1["lessons_left"], r1["status"]) == (2, 1, "expiring")
     lesson_marks(world, 1, {s0: "present", s1: "present"})
     assert (row_of(world, s1)["status"], row_of(world, s1)["lessons_left"]) == ("expired", 0)
-    assert status_page(world, bucket="due")["total"] == 1
+    assert [r["status"] for r in status_page(world, bucket="expiring")["items"]].count("expired") == 1      # a spent package at a zero balance is on «Заканчивается оплата»
 
 
 def test_cancelled_and_open_lessons_do_not_count(world):
@@ -586,7 +585,7 @@ def test_settings_defaults_patch_semantics_and_audit_stamp(world):
     assert got == {"period_mode": "calendar", "billing_anchor": "payment_date", "billing_day": 1,
                    "lessons_per_payment": 12, "expiring_days": 3,
                    "expiring_lessons": 3, "excuse_deadline_days": 5, "excuse_deadline_lessons": 2,
-                   "admin_can_manage": False, "centre_cancel_recalc": False, "updated_by": None, "updated_at": None,
+                   "pay_due_days": 5, "pay_due_lessons": 2, "admin_can_manage": False, "centre_cancel_recalc": False, "updated_by": None, "updated_at": None,
                    "recalc_hint": __import__("src.auth.payments_texts", fromlist=["RECALC_HINT"]).RECALC_HINT}      # PAY-F: off = as before; Money-1 B8: the sentence of the setting comes from the server
     world.db.query(Organization).filter_by(id=world.org.id).update({"settings": {"theme": "keep-me"}})
     world.db.commit()

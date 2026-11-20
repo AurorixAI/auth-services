@@ -66,11 +66,11 @@ def test_opening_b_debt_and_the_payment_that_closes_it_first(world, fixed_today)
     m = enrolled(world, D(2026, 10, 21))
     out = put(world, m, {"debt_amount": 250_000, "debt_on": "2026-09-30"})
     row = out["row"]
-    assert (row["debt"], row["past_debt"], row["current_due"], row["status"], row["days_overdue"]) == (463_000, 250_000, 213_000, "expired", 21)
+    assert (row["debt"], row["debt_amount"], row["due_amount"], row["due_until"], row["status"], row["days_overdue"]) == (463_000, 250_000, 213_000, "2026-10-25", "expired", 21)      # the opening debt is a debt at once; the period that begins today is «К оплате» until the 5th day
     assert row["paid_until"] is None
     pv = owner(world).get(f"{API}/org/memberships/{m.id}/payments/preview", params={"amount": 300_000}).json()
     assert pv["result"]["paid_until_after"] == "2026-10-22" and pv["result"]["debt_after"] == 163_000
-    assert pv["result"]["summary_text"] == "Погасит долг на начало 250 000 сум · на текущий период 50 000 сум → оплачено до 22.10 · останется 163 000 сум"
+    assert pv["result"]["summary_text"] == "Погасит долг 250 000 сум · к оплате 50 000 сум из 213 000 сум → оплачено до 22.10 · останется 163 000 сум"
     created = post_payment(world, m, amount=300_000)
     items = created["allocation"]["items"]
     assert [(a["amount"], a["bucket"], a["closes"]) for a in items] == [(250_000, "past_debt", True), (50_000, "current", False)]

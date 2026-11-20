@@ -8,7 +8,7 @@ printed statement and the receipt can never disagree.  The golden fixtures (``te
 from __future__ import annotations
 
 from datetime import date, datetime, timezone
-from typing import Any, Dict, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence
 
 PAST_DEBT = "past_debt"
 CURRENT = "current"
@@ -37,8 +37,8 @@ def refunded_total_text(total: int, from_earlier: int) -> str:
 
 
 def stale_text(kind: str, was: int, now: int) -> str:
-    """Money-1 V1: the sum the person SAW is not the sum now - ``Долг изменился: было 100 000 сум, сейчас 70 000 сум`` (kind: debt | refundable | advance)."""
-    lead = {"debt": "Долг изменился", "refundable": "Сумма к возврату изменилась", "advance": "Аванс изменился"}[kind]
+    """Money-1 V1: the sum the person SAW is not the sum now - ``Сумма изменилась — обновите: было 100 000 сум, сейчас 70 000 сум`` (kind: debt | refundable | advance)."""
+    lead = {"debt": "Сумма изменилась — обновите", "refundable": "Сумма к возврату изменилась", "advance": "Аванс изменился"}[kind]
     return f"{lead}: было {money(was)}, сейчас {money(now)}"
 
 
@@ -200,9 +200,75 @@ def immediate_text(amount: int, lessons: int, *, total: bool = False, more: bool
     return f"{'Всего к оплате сразу' if total else 'К оплате сразу'}: {money(amount)}{word}"
 
 
-def waiting_text(until: date) -> str:
-    """Money-1 B7: the reason of a student who owes only the period that has just begun (the debtor texts are «Ещё не платил» / «Просрочено на N дней»)."""
-    return f"Ждём оплату до {ddmm(until)}"
+def pay_due_impact_texts(to_due: int, to_debt: int) -> List[str]:
+    """PAY-DUE 10.6: the line(s) before the term is saved - who changes name by it (nothing at zero)."""
+    out: List[str] = []
+    if to_due:
+        out.append(f"{to_due} {plural(to_due, 'ученик', 'ученика', 'учеников')} из должников {plural(to_due, 'станет', 'станут', 'станут')} «К оплате»")
+    if to_debt:
+        out.append(f"{to_debt} {plural(to_debt, 'ученик', 'ученика', 'учеников')} {plural(to_debt, 'станет', 'станут', 'станут')} должниками")
+    return out
+
+
+def pay_due_changed_text(before: Dict[str, int], after: Dict[str, int], to_due: Optional[int], to_debt: Optional[int]) -> str:
+    """The journal line of a change of the term: ``Срок оплаты: 5 → 10 дней; к оплате станут 3, должниками 0``."""
+    what = []
+    if before["days"] != after["days"]:
+        what.append(f"{before['days']} → {after['days']} {days_word(after['days'])}")
+    if before["lessons"] != after["lessons"]:
+        what.append(f"уроков без оплаты {before['lessons']} → {after['lessons']}")
+    counts = f". Станут «К оплате»: {to_due}; станут должниками: {to_debt}" if to_due is not None and to_debt is not None else ""
+    return "Срок оплаты изменён: " + "; ".join(what) + counts + ". Суммы не меняются"
+
+
+def due_until_words(day: date, today: date) -> str:
+    """PAY-DUE 9.2: the term in words - ``до сегодня`` / ``до завтра, 21.11`` / ``до 24.11``."""
+    if day == today:
+        return "до сегодня"
+    if (day - today).days == 1:
+        return f"до завтра, {ddmm(day)}"
+    return f"до {ddmm(day)}"
+
+
+def _with_lessons(head: str, lessons: Optional[int]) -> str:
+    return f"{head} · {lessons} {lessons_word(lessons)}" if lessons else head
+
+
+def debt_text(amount: int, lessons: Optional[int] = None) -> str:
+    """PAY-DUE 9.2: the label of a debt - ``Долг 187 000 сум`` (a package: ``Долг 150 000 сум · 3 урока``)."""
+    return _with_lessons(f"Долг {money(amount)}", lessons)
+
+
+def debt_sub(overdue_days: Optional[int], paid_until: Optional[date]) -> Optional[str]:
+    """PAY-DUE 10.9: ``просрочено 12 дней · оплачено до 14.11`` (each half only when it is there: a debt of a student who left before the term has no overdue words)."""
+    parts = []
+    if overdue_days:
+        parts.append(f"просрочено {overdue_days} {days_word(overdue_days)}")
+    if paid_until:
+        parts.append(f"оплачено до {ddmm(paid_until)}")
+    return " · ".join(parts) or None
+
+
+def due_text(amount: int, lessons: Optional[int] = None) -> str:
+    """PAY-DUE 9.2: the label of a sum within its term - ``К оплате 187 000 сум`` (a package: ``К оплате 100 000 сум · 2 урока``)."""
+    return _with_lessons(f"К оплате {money(amount)}", lessons)
+
+
+def due_sub(until: Optional[date], today: date) -> Optional[str]:
+    return due_until_words(until, today) if until else None
+
+
+def paid_until_text(day: Optional[date]) -> Optional[str]:
+    return f"Оплачено до {ddmm(day)}" if day else None
+
+
+def lessons_left_text(left: int) -> str:
+    """PAY-DUE 10.7: a package that is about to end - ``Осталось 2 урока``."""
+    return f"Осталось {left} {lessons_word(left)}"
+
+
+def advance_text(amount: int) -> str:
+    return f"Аванс {money(amount)}"
 
 
 def recalc_amount_text(amount: int) -> str:
@@ -274,33 +340,28 @@ def _first_upper(text: str) -> str:
 
 def summary_text(
     *,
-    past: int,
-    current: int,
+    debt_paid: int,
+    debt_before: int,
+    due_paid: int,
+    due_before: int,
     advance: int,
-    past_debt_before: int,
     debt_after: int,
     paid_until_after: Optional[date],
     advance_periods: Sequence[tuple[date, date]] = (),
     lessons: Optional[tuple[int, int]] = None,
-    opening: int = 0,
-    opening_before: int = 0,
 ) -> str:
-    """The one-line answer to «что закроет» (calendar: ``paid_until_after``; lessons: ``(covered_after, left_after)``).
+    """The one-line answer to «что закроет» (calendar: ``paid_until_after``; lessons: ``(covered_after, left_after)``).  The names come from ``pay_due`` (PAY-DUE 10.10), the oldest sum is settled first:
 
-    * ``Погасит долг 269 000 сум · на текущий период 31 000 сум → оплачено до 15.10 · останется 469 000 сум``
+    * ``Погасит долг 269 000 сум · к оплате 500 000 сум → оплачено до 15.10 · останется 469 000 сум``
+    * only a sum within its term: ``Закроет «К оплате» 500 000 сум → ...``; a part: ``Погасит 100 000 сум из долга 269 000 сум``, ``к оплате 100 000 сум из 500 000 сум``
     * ``… · Переплата 21 000 сум → аванс на следующий период (15.11–14.12), оплачено до 15.11``
-    * lessons: ``Погасит долг 600 000 сум → оплачено уроков 12, осталось 0 · аванс 30 000 сум``
     """
     parts = []
-    if opening:  # LOGIC-A: the debt of the opening balance is paid before any period
-        parts.append(f"Погасит долг на начало {money(opening)}" if opening >= opening_before
-                     else f"Погасит {money(opening)} из долга на начало {money(opening_before)}")
-    if past:
-        parts.append(
-            f"Погасит долг {money(past)}" if past >= past_debt_before else f"Погасит {money(past)} из долга {money(past_debt_before)}"
-        )
-    if current:
-        parts.append(f"на текущий период {money(current)}")
+    if debt_paid:
+        parts.append(f"Погасит долг {money(debt_paid)}" if debt_paid >= debt_before else f"Погасит {money(debt_paid)} из долга {money(debt_before)}")
+    if due_paid:
+        word = f"к оплате {money(due_paid)}" if due_paid >= due_before else f"к оплате {money(due_paid)} из {money(due_before)}"
+        parts.append(word if debt_paid else f"Закроет «К оплате»: {money(due_paid)}" if due_paid >= due_before else f"Закроет {money(due_paid)} из «К оплате» {money(due_before)}")
     if lessons is None and advance:
         where = "следующий период" if len(advance_periods) <= 1 else "следующие периоды"
         if advance_periods:

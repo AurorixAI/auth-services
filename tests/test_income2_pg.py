@@ -99,9 +99,8 @@ def test_october_overview_hand_calculated(world, seeded):
     assert [(m["method"], m["amount"], m["count"]) for m in o["by_method"]] == [
         ("click", 1_250_000, 1), ("cash", 950_000, 4), ("bank_transfer", 900_000, 1), ("card", 350_000, 1)]
     assert [m["label"] for m in o["by_method"]] == ["Click", "Наличные", "Перевод", "Карта"]
-    assert o["position"] == {"debt_total": 500_000, "past_debt_total": 0, "advance_total": 450_000, "memberships_with_debt": 3,
-                             "students_with_debt": 3, "memberships_with_advance": 2, "students_with_advance": 2,
-                             "debtors_debt_total": 500_000, "debt_waiting_total": 0, "students_debtors": 3, "students_waiting": 0}      # Money-1 R3 №20: the split beside the old numbers
+    assert o["position"] == {"debt_total": 500_000, "due_total": 0, "advance_total": 450_000, "memberships_with_debt": 3,
+                             "debtors": 3, "due_students": 0, "memberships_with_advance": 2, "students_with_advance": 2}      # PAY-DUE: every unpaid sum of the centre is past its term of 5 days (hand-checked: the periods began in September / early October)
     assert (o["delta_direction"], o["delta_text"]) == ("up", "130% к 1–21 сентября")
     assert o["cash"] is None and o["ok"] and all(c["diff"] == 0 for c in o["checks"])
 
@@ -112,19 +111,19 @@ def test_collection_hand_calculated_and_identities(world, seeded):
     rows = {r["group_name"]: r for r in col["groups"]}
     assert [r["group_name"] for r in col["groups"]] == ["Математика 9А", "Английский 7Б", "Физика 10В"]      # worst first
     a, b, c = rows["Математика 9А"], rows["Английский 7Б"], rows["Физика 10В"]
-    assert (a["charged"], a["paid"], a["forgiven"], a["debt"], a["students"], a["students_with_debt"], a["pct"]) == (
+    assert (a["charged"], a["paid"], a["forgiven"], a["debt"], a["students"], a["debtors"], a["pct"]) == (
         1_500_000, 1_100_000, 100_000, 300_000, 3, 1, 73)
-    assert (b["charged"], b["paid"], b["forgiven"], b["debt"], b["students_with_debt"], b["pct"]) == (600_000, 450_000, 0, 150_000, 1, 75)
+    assert (b["charged"], b["paid"], b["forgiven"], b["debt"], b["debtors"], b["pct"]) == (600_000, 450_000, 0, 150_000, 1, 75)
     assert (c["charged"], c["paid"], c["debt"], c["pct"]) == (400_000, 350_000, 50_000, 87)
     assert (a["teacher_name"], b["teacher_name"]) == ("Пётр Иванов", "Мария Ким")
     t = col["total"]
     assert col["text"] == "Оплачено 1 900 000 из 2 500 000 сум (76%)"
-    assert (t["charged"], t["paid"], t["forgiven"], t["debt"], t["students"], t["students_with_debt"], t["pct"]) == (
+    assert (t["charged"], t["paid"], t["forgiven"], t["debt"], t["students"], t["debtors"], t["pct"]) == (
         2_500_000, 1_900_000, 100_000, 500_000, 6, 3, 76)
-    for key in ("charged", "paid", "forgiven", "debt", "students", "students_with_debt"):
+    for key in ("charged", "paid", "forgiven", "debt", "due", "students", "debtors"):
         assert t[key] == sum(r[key] for r in col["groups"]), key
     for r in [t, *col["groups"]]:
-        assert r["paid"] + r["forgiven"] + r["debt"] == r["charged"]
+        assert r["paid"] + r["forgiven"] + r["debt"] + r["due"] == r["charged"]
 
 
 def test_collection_equals_the_statements_of_every_membership(world, seeded):
@@ -150,7 +149,7 @@ def test_a_closed_month_is_collected_by_later_payments_and_advances(world, seede
     assert o["period"]["in_progress"] is False and o["previous_period"]["label"] == "август"
     assert o["current"]["received"] == 1_500_000 and o["previous"]["received"] == 0 and o["delta_pct"] is None
     t = o["collection"]["total"]
-    assert (t["charged"], t["paid"], t["debt"], t["pct"], t["students_with_debt"]) == (2_500_000, 2_500_000, 0, 100, 0)
+    assert (t["charged"], t["paid"], t["debt"], t["pct"], t["debtors"]) == (2_500_000, 2_500_000, 0, 100, 0)
     assert o["summary_text"] == "За сентябрь пришло 1 500 000 сум. Собрано 100% стоимости месяца."
     assert income(world, "2026-08-01", "2026-08-31")["collection"]["groups"] == []        # the accounting starts on 01.09: nothing charged
 
@@ -305,8 +304,9 @@ def test_lessons_mode_collects_by_the_package_that_began_in_the_month(world, fix
     world.db.commit()
     seed_payment(world, m, 300_000, D(2026, 10, 1), receipt_no=1)
     sept = income(world, "2026-09-01", "2026-09-30")["collection"]
-    assert [(r["group_name"], r["charged"], r["paid"], r["debt"], r["pct"]) for r in sept["groups"]] == [("Группа", 600_000, 300_000, 300_000, 50)]
-    assert (sept["total"]["students_with_debt"], sept["total"]["students"]) == (1, 1)
+    assert [(r["group_name"], r["charged"], r["paid"], r["debt"], r["pct"]) for r in sept["groups"]] == [("Группа", 600_000, 300_000, 200_000, 50)]      # PAY-DUE: of the 300 000 unpaid (6 lessons of 50 000) the two newest lessons are within their term: 200 000 is a debt, 100 000 is «К оплате"
+    assert sept["total"]["due"] == 100_000 and sept["total"]["debt"] + sept["total"]["due"] == sept["total"]["charged"] - sept["total"]["paid"]
+    assert (sept["total"]["debtors"], sept["total"]["students"]) == (1, 1)
     octo = income(world, "2026-10-01", "2026-10-31")
     assert octo["collection"]["groups"] == [] and octo["collection"]["total"]["pct"] is None
     assert octo["collection"]["text"] == "За этот месяц стоимость не считалась"
@@ -704,11 +704,11 @@ def test_identities_hold_on_random_data(world, fixed_today, seed):
             col = o["collection"]
             if col:
                 for r in [col["total"], *col["groups"]]:
-                    assert r["paid"] + r["forgiven"] + r["debt"] == r["charged"], (seed, r)
+                    assert r["paid"] + r["forgiven"] + r["debt"] + r["due"] == r["charged"], (seed, r)
                     assert 0 <= (r["pct"] or 0) <= 100
-                for key in ("charged", "paid", "forgiven", "debt"):
+                for key in ("charged", "paid", "forgiven", "debt", "due"):
                     assert col["total"][key] == sum(r[key] for r in col["groups"])
-                assert col["total"]["students_with_debt"] <= sum(r["students_with_debt"] for r in col["groups"])
+                assert col["total"]["debtors"] <= sum(r["debtors"] for r in col["groups"])
                 pcts = [r["paid"] / r["charged"] for r in col["groups"]]
                 assert pcts == sorted(pcts)
 

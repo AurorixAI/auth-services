@@ -98,13 +98,11 @@ class CollectionRow(PayModel):
     charged: int = 0
     paid: int = 0  # how much of it is covered by money (any payment, advances of earlier months included)
     forgiven: int = 0
-    debt: int = 0  # charged - paid - forgiven
-    debtors_debt: int = 0  # Money-1 R3 (Р3): of ``debt``, what the DEBTORS owe (``debt - debt_waiting``) - the number the new front reads instead of ``debt``
+    debt: int = 0  # PAY-DUE 10.2: of what is unpaid (charged - paid - forgiven), the parts of the month whose term has passed (a «Долг»)
+    due: int = 0   # the rest of the month's unpaid sum: «К оплате» (``debt + due`` = charged - paid - forgiven)
     students: int = 0  # students charged in the month
-    students_with_debt: int = 0  # in the total: DISTINCT students (a student who owes in two groups counts once)
-    # Money-1 R3 №20: of this ``debt`` / ``students_with_debt``, how much belongs to students who only «ждут оплату» (the period began within 3 days): ``debt - debt_waiting`` is the debt of the debtors
-    debt_waiting: int = 0
-    students_waiting: int = 0
+    debtors: int = 0  # DISTINCT students with a debt part in the month (a student who owes in two groups counts once in the total)
+    due_students: int = 0  # DISTINCT students with a sum «К оплате» in the month
     pct: Optional[int] = None  # floor(paid * 100 / charged): 100 only when the whole cost is paid; null when nothing is charged
 
 

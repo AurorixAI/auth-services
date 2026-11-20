@@ -26,10 +26,9 @@ from . import billing_ledger as bl
 from . import ledger_service as ls
 from .sql_text import contains
 from . import leave_undo
+from . import pay_due
 from . import payment_status as ps
 from . import payments_texts as tx
-from .payments_views import debt_split_of
-from .payments_views import waiting_until as pv_waiting_until
 from . import payments_journal_xlsx as jx
 from . import payments_views as pv
 from .business_clock import BUSINESS_TIMEZONE
@@ -377,13 +376,12 @@ class IncomeReports:
 
         shown = self._shown(entries, group_id, teacher_id)
         position = IncomePosition(
-            debt_total=sum(e.ledger.debt for e in shown), past_debt_total=sum(e.ledger.past_debt for e in shown),
+            debt_total=sum(e.due.debt_amount for e in shown), due_total=sum(e.due.due_amount for e in shown),
+            debtors=len({e.student.id for e in shown if e.due.debt_amount > 0}), due_students=len({e.student.id for e in shown if e.due.due_amount > 0}),
             advance_total=sum(e.ledger.advance for e in shown),
-            memberships_with_debt=sum(1 for e in shown if e.ledger.debt > 0),
-            students_with_debt=len({e.student.id for e in shown if e.ledger.debt > 0}),
+            memberships_with_debt=sum(1 for e in shown if e.due.debt_amount > 0),
             memberships_with_advance=sum(1 for e in shown if e.ledger.advance > 0),
-            students_with_advance=len({e.student.id for e in shown if e.ledger.advance > 0}),
-            **debt_split_of(shown))
+            students_with_advance=len({e.student.id for e in shown if e.ledger.advance > 0}))
 
         series, series_by = self._series(cur, daily)
         journal_sum = self._journal_totals(org_id, cur.first, cur.last, method, group_id, teacher_id, None, None)[1]
@@ -581,10 +579,10 @@ class IncomeReports:
     def _collection(shown: Sequence[ls.MembershipLedger], first: date, last: date) -> MonthCollection:
         """«Собрано за месяц»: the periods (packages) that BEGAN in the month, from the ledger of every membership."""
         groups: Dict[Any, Dict[str, Any]] = {}
-        all_students, debtors, waiting_all = set(), set(), set()
+        all_students, debtors, due_students = set(), set(), set()
         total = defaultdict(int)
         for e in shown:
-            charged = paid = forgiven = debt = 0
+            charged = paid = forgiven = debt = unpaid_all = 0
             for seg in e.ledger.segments:
                 if seg.kind not in ("period", "package") or not seg.begun or not (first <= seg.period_start <= last):
                     continue
@@ -592,7 +590,8 @@ class IncomeReports:
                 unpaid = seg.unpaid
                 charged += seg.amount
                 forgiven += forg
-                debt += unpaid
+                unpaid_all += unpaid
+                debt += min(unpaid, sum(p.unpaid for p in e.due.parts_of(seg.id) if p.name == pay_due.DEBT))       # PAY-DUE: the debt of the month is the sum of its parts that are a debt (by the term), not a subtraction
                 paid += seg.amount - seg.recalculated - forg - unpaid       # the money only: a deduction is not «paid»
             if charged == 0:
                 continue
@@ -600,23 +599,22 @@ class IncomeReports:
             # deduction settled), and it is not «paid»
             charged = max(0, charged - sum(line.amount for line in e.ledger.recalcs if first <= line.day <= last))
             row = groups.setdefault(e.group.id, {
-                "group": e.group, "teacher": e.teacher, "charged": 0, "paid": 0, "forgiven": 0, "debt": 0, "students": set(),
-                "debtors": set(), "waiting_debt": 0, "waiting": set()})
+                "group": e.group, "teacher": e.teacher, "charged": 0, "paid": 0, "forgiven": 0, "debt": 0, "due": 0, "students": set(),
+                "debtors": set(), "due_students": set()})
             row["charged"] += charged
             row["paid"] += paid
             row["forgiven"] += forgiven
             row["debt"] += debt
+            row["due"] += unpaid_all - debt             # PAY-DUE 10.2: «К оплате» of the month = its unpaid sum - its debt
             row["students"].add(e.student.id)
             all_students.add(e.student.id)
             if debt > 0:
                 row["debtors"].add(e.student.id)
                 debtors.add(e.student.id)
-                if pv_waiting_until(e) is not None:             # R3 №20: of this debt, what belongs to a student who only waits
-                    row["waiting_debt"] += debt
-                    row["waiting"].add(e.student.id)
-                    waiting_all.add(e.student.id)
-                    total["waiting_debt"] += debt
-            for k, v in (("charged", charged), ("paid", paid), ("forgiven", forgiven), ("debt", debt)):
+            if unpaid_all - debt > 0:
+                row["due_students"].add(e.student.id)
+                due_students.add(e.student.id)
+            for k, v in (("charged", charged), ("paid", paid), ("forgiven", forgiven), ("debt", debt), ("due", unpaid_all - debt)):
                 total[k] += v
 
         def pct(paid_: int, charged_: int) -> Optional[int]:
@@ -628,15 +626,15 @@ class IncomeReports:
             teacher = g["teacher"]
             rows.append(CollectionRow(
                 group_id=str(group.id), group_name=group.name, teacher_id=str(group.teacher_id) if group.teacher_id else None,
-                teacher_name=_staff(teacher), charged=g["charged"], paid=g["paid"], forgiven=g["forgiven"], debt=g["debt"], debtors_debt=g["debt"] - g["waiting_debt"],
-                students=len(g["students"]), students_with_debt=len(g["debtors"]), debt_waiting=g["waiting_debt"], students_waiting=len(g["waiting"]), pct=pct(g["paid"], g["charged"])))
+                teacher_name=_staff(teacher), charged=g["charged"], paid=g["paid"], forgiven=g["forgiven"], debt=g["debt"], due=g["due"],
+                students=len(g["students"]), debtors=len(g["debtors"]), due_students=len(g["due_students"]), pct=pct(g["paid"], g["charged"])))
         rows.sort(key=lambda r: (r.paid / r.charged, -r.debt, r.group_name or ""))
         name = tx.MONTHS_NOMINATIVE[first.month - 1]
         return MonthCollection(
             month=first.strftime("%Y-%m"), month_label=f"{name} {first.year}", **{"from": first}, to=month_end(first),
             text=tx.collection_text(total["paid"], total["charged"], pct(total["paid"], total["charged"])),
-            total=CollectionRow(charged=total["charged"], paid=total["paid"], forgiven=total["forgiven"], debt=total["debt"], debtors_debt=total["debt"] - total["waiting_debt"],
-                                students=len(all_students), students_with_debt=len(debtors), debt_waiting=total["waiting_debt"], students_waiting=len(waiting_all),
+            total=CollectionRow(charged=total["charged"], paid=total["paid"], forgiven=total["forgiven"], debt=total["debt"], due=total["due"],
+                                students=len(all_students), debtors=len(debtors), due_students=len(due_students),
                                 pct=pct(total["paid"], total["charged"])),
             groups=rows)
 

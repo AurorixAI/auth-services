@@ -10,6 +10,7 @@ from datetime import date, timedelta
 from typing import List, Optional, Tuple
 
 from . import billing_ledger as bl
+from . import pay_due
 from . import payment_status as ps
 from . import payments_texts as tx
 from .payments_schemas import (
@@ -24,6 +25,7 @@ from .payments_schemas import (
     RecalcOut,
     Segment,
     SegmentLessons,
+    SegmentPart,
 )
 
 
@@ -32,8 +34,9 @@ def price_out(info: bl.PriceInfo) -> PriceOut:
                     group_amount=info.group_amount, reason=info.reason)
 
 
-def segment_out(seg: bl.Segment) -> Segment:
+def segment_out(seg: bl.Segment, due=None) -> Segment:
     return Segment(
+        parts=[SegmentPart(**p) for p in parts_of_segment(due, seg.id)] if due is not None else [],
         id=seg.id, kind=seg.kind, period_from=seg.period_start, period_to=seg.period_end, billable_days=len(seg.days),
         days_text=seg.days_text, price=price_out(seg.price), charge=seg.amount, basis=seg.basis,
         lessons=SegmentLessons(in_part=seg.lessons_in_part, in_period=seg.lessons_in_period)
@@ -81,41 +84,16 @@ def shim_period(ledger: bl.Ledger, payment_id: str):
     return first, ledger.status.paid_until
 
 
-BUCKET_DEBT, BUCKET_EXPIRING, BUCKET_ACTIVE, BUCKET_PAUSED = "debt", "expiring", "active", "paused"
-BUCKET_WAITING = "waiting"       # Money-1 B7: the debt of a period that has just begun - «ждём оплату», not a debtor
-BUCKET_DEBTORS = "debtors"       # the tab of the REAL debtors (debt > 0 and not waiting); ``debt`` keeps its old meaning in this release: every debt, the waiting ones included (R3 code №21)
-GRACE_DAYS = 3                   # owner, 04.11: three days from the first day of a new period (the first day included) before the student is a debtor
+BUCKET_DEBTORS, BUCKET_TO_PAY, BUCKET_EXPIRING, BUCKET_ACTIVE, BUCKET_PAUSED = "debtors", "to_pay", "expiring", "active", "paused"
+BUCKET_DEBT_ALIAS = "debt"      # the old name of the debtors tab: an alias of ``debtors`` on input only (a link of the old front)
+UNPAID_TABS = (BUCKET_DEBTORS, BUCKET_TO_PAY)        # the tabs of an unpaid sum: they are NOT exclusive (a student with both a debt and a sum within its term is in both) and read the closed participations too
+STATE_DEBT, STATE_TO_PAY, STATE_EXPIRING, STATE_PAUSED, STATE_PAID, STATE_FREE, STATE_NONE = "debt", "to_pay", "expiring", "paused", "paid", "free", "none"
 _MONTHS = ("январь", "февраль", "март", "апрель", "май", "июнь", "июль", "август", "сентябрь", "октябрь", "ноябрь", "декабрь")
 
 
 def is_tracked(e) -> bool:
     """The membership is on the status lists: active, in an active group, the student not archived."""
     return bool(e.membership.is_active and e.group.status == "active" and e.student.status != "archived")
-
-
-def waiting_until(e):
-    """Money-1 B7 (owner, 04.11): the last day on which the student is only «ждём оплату», or ``None`` when he is a debtor (or owes nothing).
-
-    A student of a calendar mode owes only the period that began less than ``GRACE_DAYS`` days ago (the first day of the period is day one: 05.11 -> 07.11) and nothing older -
-    no overdue period, no opening debt, no package.  The debt is the same number everywhere (I-1); only the NAME changes: «Ждём оплату» instead of «Должник», and the red
-    banner does not count him.  A student who left owes whatever he owes: he is a debtor at once."""
-    l = e.ledger
-    if l.debt <= 0 or l.mode != bl.CALENDAR or not is_tracked(e) or l.past_debt > 0:
-        return None
-    open_segments = [s for s in l.segments if s.begun and s.unpaid > 0]
-    if not open_segments:
-        return None
-    today = e.inp.today
-    last = None
-    for s in open_segments:
-        if s.kind != "period" or s.ended:
-            return None
-        first = s.days[0] if s.days else s.period_start
-        end = first + timedelta(days=GRACE_DAYS - 1)
-        if today > end:
-            return None
-        last = end if last is None else min(last, end)
-    return last
 
 
 def price_missing(e) -> bool:
@@ -126,18 +104,12 @@ def price_missing(e) -> bool:
     return e.inp.first_priced_day(e.inp.today) is None
 
 
-def entry_bucket(e) -> Optional[str]:
-    """The tab of a membership (owner's rule of 21.10): ``debt`` (Должники) - debt > 0, any reason, a student who left included;
-    ``paused`` (На паузе) - today is inside a pause and no debt; ``expiring`` (Скоро платить) - no debt and the next period is due within
-    ``expiring_days``; ``active`` (Оплачено) - no debt and not due soon (an advance included).  A free student and a student without a price
-    are on no tab (they are counted apart: ``free``, ``price_missing``).
-
-    The OLD meaning, unchanged in this release (R3 code №21, LESSONS 66: the server goes out first and the old front must not break in the minutes before the new one): a student who only
-    «ждёт оплату» is still on ``debt``.  The NEW definition - one for the whole server - is ``entry_tab``."""
+def calm_bucket(e) -> Optional[str]:
+    """The tab of a membership that owes NOTHING (PAY-DUE 10.2): ``paused`` (today is inside a pause), ``expiring`` («Заканчивается оплата»: the next period is due within ``expiring_days`` /
+    the lessons are about to end), ``active`` («Без долга»: nothing unpaid and the payment does not end soon, an advance included).  A free student and a student without a price are on no tab
+    (counted apart: ``free``, ``price_missing``); a membership that is not tracked is on none.  A membership with an unpaid sum is on ``debtors`` and / or ``to_pay`` (``in_tab``), never here."""
     l = e.ledger
-    if l.debt > 0:
-        return BUCKET_DEBT
-    if not is_tracked(e) or l.status.status == ps.FREE or e.price.amount is None:
+    if e.due.unpaid > 0 or not is_tracked(e) or l.status.status == ps.FREE or e.price.amount is None:
         return None
     if l.status.status == ps.PAUSED:
         return BUCKET_PAUSED
@@ -146,35 +118,45 @@ def entry_bucket(e) -> Optional[str]:
     return BUCKET_ACTIVE         # active, and «none» (nothing has fallen due yet)
 
 
-def entry_tab(e) -> Optional[str]:
-    """Money-1 B7 / R3 №20: the ONE definition of a debtor of the server (the new screens): ``waiting`` (Ждём оплату) - the debt of a period that began within the last three days and nothing older;
-    ``debtors`` - every other debt; the rest as ``entry_bucket``.  A student is in exactly one tab; the debt is the same number whatever the name (I-1)."""
-    if e.ledger.debt > 0:
-        return BUCKET_WAITING if waiting_until(e) is not None else BUCKET_DEBTORS
-    return entry_bucket(e)
+def in_tab(e, tab: str) -> bool:
+    """PAY-DUE 9.1: the tabs of the unpaid sum are the two names of the ONE function - ``debtors``: a debt is owed; ``to_pay``: a sum within its term is owed (a debtor with such a sum too is in both);
+    the other tabs: ``calm_bucket``."""
+    if tab == BUCKET_DEBTORS:
+        return e.due.debt_amount > 0
+    if tab == BUCKET_TO_PAY:
+        return e.due.due_amount > 0
+    return calm_bucket(e) == tab
 
 
-def debt_split_of(entries) -> dict:
-    """The sums of a position by ONE definition (R3 №20): the debt of the real debtors, the debt of the ones who only wait, and how many DISTINCT students each (a student is counted in both lines
-    when he owes in two groups and waits in one).  ``debtors_debt_total + debt_waiting_total`` is the old ``debt_total`` of the same entries."""
-    debtors_debt = waiting_debt = 0
-    debtors, waiting = set(), set()
-    for e in entries:
-        if e.ledger.debt <= 0:
-            continue
-        if waiting_until(e) is not None:
-            waiting_debt += e.ledger.debt
-            waiting.add(e.student.id)
-        else:
-            debtors_debt += e.ledger.debt
-            debtors.add(e.student.id)
-    return {"debtors_debt_total": debtors_debt, "debt_waiting_total": waiting_debt, "students_debtors": len(debtors), "students_waiting": len(waiting)}
+def state_of(e) -> str:
+    """The WORST state of a membership, for the single label (PAY-DUE 10.2): debt -> to pay -> payment ends soon -> pause -> paid / advance -> free -> no price.  The screen does not choose it."""
+    d, l = e.due, e.ledger
+    if d.debt_amount > 0:
+        return STATE_DEBT
+    if d.due_amount > 0:
+        return STATE_TO_PAY
+    st = l.status.status
+    if st in (ps.EXPIRING, ps.ENDS_TODAY, ps.EXPIRED):
+        return STATE_EXPIRING
+    if st == ps.PAUSED:
+        return STATE_PAUSED
+    if st == ps.FREE:
+        return STATE_FREE
+    if st == ps.NONE and l.advance <= 0:
+        return STATE_NONE
+    return STATE_PAID
 
 
-def waiting_reason(e) -> Optional[str]:
-    """«Ждём оплату до 07.11» of a student who only waits, else ``None``."""
-    until = waiting_until(e)
-    return tx.waiting_text(until) if until is not None else None
+HIDE_PAID_UNTIL_STATUS_ON_UNPAID = False      # ТЗ 3.2: a row that owes something would not say ``expired`` / ``ends_today`` / ``expiring`` (it is ``active`` there); OFF until the lead decides (every old test reads the raw status)
+
+
+def unpaid_status(e) -> str:
+    """The ``status`` of a row.  With ``HIDE_PAID_UNTIL_STATUS_ON_UNPAID`` the paid-until statuses (``expired`` ...) describe the PAID days, not the unpaid sum, and stay only for «Заканчивается оплата» at a zero
+    balance: a row that owes something is then ``active`` (``paused`` / ``free`` / ``none`` kept; the name of the sum is ``state``)."""
+    status = e.ledger.status.status
+    if HIDE_PAID_UNTIL_STATUS_ON_UNPAID and e.due.unpaid > 0 and status in (ps.EXPIRED, ps.ENDS_TODAY, ps.EXPIRING):
+        return ps.ACTIVE
+    return status
 
 
 DEBT_AGE_BASKETS = ("to_30", "31_60", "61_90", "over_90")       # Money-2 T18: the baskets of the age of a debt in days: up to 30 | 31-60 | 61-90 | over 90
@@ -185,49 +167,87 @@ def debt_age_basket(days: int) -> str:
     return "to_30" if days <= 30 else "31_60" if days <= 60 else "61_90" if days <= 90 else "over_90"
 
 
-def debt_age_days(e) -> Optional[int]:
-    """Money-2 T18: how many days the debt is overdue (``None`` when nothing is owed) - the ONE count of the server, the one of the sentence «Просрочено на N дней» (m1: paused days are not
-    overdue): the days after the day the money is paid through; a student who never paid or has no paid-through day: the days since the first day of the oldest unpaid period; a debt of a
-    running period that is not paid up: the days since its first day (0 on the first day)."""
+def unpaid_fields(e, today: date) -> dict:
+    """The words and numbers of the unpaid sum of a row, ALL from ``pay_due`` and the sentences of ``payments_texts``: ``debt_amount`` / ``due_amount`` / ``due_until`` / ``overdue_days`` / ``due_lessons`` /
+    ``debt_lessons`` and the texts of both names (which of the two is the main one is the choice of the tab: a view, not a rule), ``state`` / ``state_text`` of the worst state."""
+    d, l = e.due, e.ledger
+    packages = d.due_lessons is not None
+    paid_until = l.status.paid_until if not packages else None
+    out = {
+        "debt_amount": d.debt_amount, "due_amount": d.due_amount, "due_until": d.due_until,
+        "overdue_days": d.overdue_days if d.debt_amount > 0 else None,
+        "due_lessons": d.due_lessons if d.due_amount > 0 or d.debt_amount > 0 else None, "debt_lessons": d.debt_lessons,
+        "debt_text": tx.debt_text(d.debt_amount, d.debt_lessons if packages else None) if d.debt_amount > 0 else None,
+        "debt_sub": tx.debt_sub(d.overdue_days, paid_until) if d.debt_amount > 0 else None,
+        "due_text": tx.due_text(d.due_amount, d.due_lessons["used"] if packages and d.due_lessons else None) if d.due_amount > 0 else None,
+        "due_sub": tx.due_sub(d.due_until, today) if d.due_amount > 0 else None,
+    }
+    state = state_of(e)
+    out["state"] = state
+    out["state_text"] = state_text(e, state, out, today)
+    return out
+
+
+def state_text(e, state: str, fields: dict, today: date) -> Optional[str]:
+    """The single label of the worst state."""
     l = e.ledger
-    if l.debt <= 0:
-        return None
-    today = e.inp.today
-    through = l.covered_through
-    unpaid = [s for s in l.segments if s.begun and s.unpaid > 0]
-    first = min(((s.days[0] if s.days else s.period_start) for s in unpaid), default=today)
-    if through is None:
-        return max(1, (today - first).days)
-    if through < today:
-        return bl.overdue_days(through, today, l.pauses)
-    return max(0, (today - first).days)
+    if state == STATE_DEBT:
+        return fields["debt_text"]
+    if state == STATE_TO_PAY:
+        return fields["due_text"]
+    if state == STATE_FREE:
+        return "Бесплатно"
+    if state == STATE_NONE:
+        return "Нет цены" if price_missing(e) else None
+    if state == STATE_PAUSED:
+        until = l.status.paused_until
+        return f"Пауза до {tx.ddmm(until)}" if until else "Пауза"
+    if state == STATE_EXPIRING:
+        if l.status.period_mode == bl.LESSONS and l.status.lessons_left is not None:
+            return tx.lessons_left_text(l.status.lessons_left)
+        return tx.paid_until_text(l.status.paid_until)
+    if l.advance > 0 and not l.status.paid_until:
+        return tx.advance_text(l.advance)
+    return tx.paid_until_text(l.status.paid_until) if l.status.paid_until else (tx.advance_text(l.advance) if l.advance > 0 else None)
 
 
-def debt_reason(e) -> Tuple[Optional[str], Optional[str]]:
-    """``(code, text)`` of a debtor: never paid / overdue / the running period not paid up (the old reasons; ``waiting_reason`` is the new one of a student who only waits)."""
-    l = e.ledger
-    if l.debt <= 0:
-        return None, None
-    today = e.inp.today
-    if l.paid == 0 and l.transferred_in == 0 and l.written_off == 0:
-        return "never_paid", "Ещё не платил"
-    unpaid = [s for s in l.segments if s.begun and s.unpaid > 0]
-    through = l.covered_through
-    if through is None or through < today:
-        days = debt_age_days(e)                      # m1: paused days are not overdue (one count: ``debt_age_days``)
-        return "overdue", f"Просрочено на {days} {tx.days_word(days)}"
-    seg = unpaid[0] if unpaid else None
-    if seg is None:
-        return "partial", f"Не доплачено: {tx.money(l.debt)}"
-    name = _MONTHS[seg.period_start.month - 1] if seg.period_start.day == 1 else tx.period_text(seg.period_start, seg.period_end)
-    return "partial", f"Не доплачено за {name}: {tx.money(seg.unpaid)}"
+def parts_of_segment(due, seg_id: str) -> list:
+    """``parts[]`` of a statement line of a charge: the unpaid part(s) of THAT segment by name (a package segment may hold both names: two parts, the debt first)."""
+    return [{"name": p.name, "unpaid": p.unpaid, "due_until": p.due_until, "lessons": p.lessons} for p in due.parts_of(seg_id)]
 
 
-def due_block(before: bl.Ledger) -> PreviewDue:
-    shown = [segment_out(s) for s in before.segments if s.begun and s.unpaid > 0]
+def open_of_row(kind: str, ref_id: str, ledger: bl.Ledger, due, segments: dict) -> dict:
+    """PAY-DUE 10.11: ``open_amount`` / ``open_name`` / ``open_text`` of a statement row (see ``StatementRow``).  A charge whose segment holds BOTH names (a package) is named by its debt part (the rest is in ``parts``)."""
+    none = {"open_amount": None, "open_name": None, "open_text": None}
+    if kind in ("charge", "opening_debt"):
+        seg = segments[ref_id]
+        parts = due.parts_of(seg.id)
+        debt = sum(p.unpaid for p in parts if p.name == pay_due.DEBT)
+        owed = sum(p.unpaid for p in parts if p.name == pay_due.DUE)
+        packages = due.due_lessons is not None
+        if debt > 0:
+            return {"open_amount": debt, "open_name": "debt", "open_text": tx.debt_text(debt, sum(p.lessons or 0 for p in parts if p.name == pay_due.DEBT) if packages else None)}
+        if owed > 0:
+            return {"open_amount": owed, "open_name": "due", "open_text": tx.due_text(owed, sum(p.lessons or 0 for p in parts if p.name == pay_due.DUE) if packages else None)}
+        return {"open_amount": 0, "open_name": "paid", "open_text": "Оплачено"}
+    if kind == bl.PAYMENT:
+        left = sum(a.amount for a in ledger.allocations if a.credit_id == ref_id and a.bucket == bl.ADVANCE)       # money laid on a period that has not begun, or on no period yet
+        return {"open_amount": left, "open_name": "advance", "open_text": tx.advance_text(left)} if left > 0 else none
+    return none
+
+
+def due_block(before: bl.Ledger, due, today: date) -> PreviewDue:
+    """PAY-DUE 10.2: what the student owes today (before the typed amount), named by ``pay_due``: the old ``past_debt`` / ``current_due`` are gone."""
+    shown = [segment_out(s, due) for s in before.segments if s.begun and s.unpaid > 0]
+    packages = due.due_lessons is not None
     return PreviewDue(
-        debt=before.debt, past_debt=before.past_debt, current_due=before.current_due, advance=before.advance,
-        segments=shown, paid_until=before.status.paid_until, days_overdue=before.status.days_overdue,
+        debt=before.debt, debt_amount=due.debt_amount, due_amount=due.due_amount, due_until=due.due_until,
+        overdue_days=due.overdue_days if due.debt_amount > 0 else None,
+        debt_text=tx.debt_text(due.debt_amount, due.debt_lessons if packages else None) if due.debt_amount > 0 else None,
+        debt_sub=tx.debt_sub(due.overdue_days, None if packages else before.status.paid_until) if due.debt_amount > 0 else None,
+        due_text=tx.due_text(due.due_amount, due.due_lessons["used"] if packages and due.due_lessons else None) if due.due_amount > 0 else None,
+        due_sub=tx.due_sub(due.due_until, today) if due.due_amount > 0 else None,
+        advance=before.advance, segments=shown, paid_until=before.status.paid_until,
     )
 
 
@@ -270,7 +290,22 @@ def price_ahead(after: bl.Ledger, credit_id: str, current: Optional[int]) -> Lis
     return out
 
 
-def preview_result(before: bl.Ledger, after: bl.Ledger, credit_id: str, price_today: Optional[int]) -> PreviewResult:
+def paid_by_name(due, raw_allocs) -> Tuple[int, int]:
+    """``(to debt, to «к оплате»)``: how much of a payment settles the parts that were a debt / within the term BEFORE it (the oldest first inside a segment: the debt part is the older one)."""
+    to_debt = to_due = 0
+    for a in raw_allocs:
+        left = a.amount
+        for part in due.parts_of(a.segment_id):
+            take = min(left, part.unpaid)
+            if part.name == pay_due.DEBT:
+                to_debt += take
+            else:
+                to_due += take
+            left -= take
+    return to_debt, to_due
+
+
+def preview_result(before: bl.Ledger, after: bl.Ledger, credit_id: str, price_today: Optional[int], due_before, due_after, today: date) -> PreviewResult:
     allocs = allocations_of(after, credit_id)
     raw = [a for a in after.allocations if a.credit_id == credit_id]
     lessons = None
@@ -279,20 +314,18 @@ def preview_result(before: bl.Ledger, after: bl.Ledger, credit_id: str, price_to
             covered_before=before.lessons.covered if before.lessons else 0, covered_after=after.lessons.covered,
             left_after=after.lessons.left, unpaid_after=after.lessons.unpaid)
     advance_periods = [(a.period_start, a.period_end) for a in raw if a.bucket == bl.ADVANCE and a.segment_id != bl.ADVANCE_SEGMENT]
-    opening_before = next((s.unpaid for s in before.segments if s.kind == "opening"), 0)
+    to_debt, to_due = paid_by_name(due_before, [a for a in raw if a.segment_id != bl.ADVANCE_SEGMENT])
     text = tx.summary_text(
-        opening=sum(a.amount for a in raw if a.segment_id == "seg:opening"), opening_before=opening_before,
-        past=sum(a.amount for a in raw if a.bucket == bl.PAST_DEBT and a.segment_id != "seg:opening"),
-        current=sum(a.amount for a in raw if a.bucket == bl.CURRENT),
-        advance=sum(a.amount for a in raw if a.bucket == bl.ADVANCE),
-        past_debt_before=before.past_debt - opening_before, debt_after=after.debt, paid_until_after=after.status.paid_until,
+        debt_paid=to_debt, debt_before=due_before.debt_amount, due_paid=to_due, due_before=due_before.due_amount,
+        advance=sum(a.amount for a in raw if a.bucket == bl.ADVANCE), debt_after=after.debt, paid_until_after=after.status.paid_until,
         advance_periods=advance_periods,
         lessons=(after.lessons.covered, after.lessons.left) if lessons else None,
     )
     return PreviewResult(
-        allocations=allocs, debt_after=after.debt, past_debt_after=after.past_debt, current_due_after=after.current_due,
+        allocations=allocs, debt_after=after.debt, debt_amount_after=due_after.debt_amount, due_amount_after=due_after.due_amount,
+        due_until_after=due_after.due_until, overdue_days_after=due_after.overdue_days if due_after.debt_amount > 0 else None,
         advance_after=after.advance, paid_until_before=before.status.paid_until, paid_until_after=after.status.paid_until,
-        status_after=after.status.status, days_overdue_after=after.status.days_overdue,
+        status_after=after.status.status,
         partial_credit_after=after.partial_credit, lessons=lessons, summary_text=text,
         price_ahead=price_ahead(after, credit_id, price_today),
     )

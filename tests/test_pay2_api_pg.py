@@ -28,6 +28,21 @@ def fx(name):
     return json.loads((FIX / f"{name}.json").read_text(encoding="utf-8"))
 
 
+# PAY-DUE 10.2: the golden fixtures are the ENGINE's numbers (``past_debt`` / ``current_due`` ...: the ledger still has them); the endpoint no longer carries those names and carries the named parts instead.  The
+# golden comparison is made on what both sides still say; the named parts are asserted by hand in ``test_pay_due_contract_pg`` and below.
+_GONE = {"past_debt", "current_due", "past_debt_after", "current_due_after", "days_overdue", "days_overdue_after", "summary_text"}
+_NEW = {"debt_amount", "due_amount", "due_until", "overdue_days", "debt_text", "debt_sub", "due_text", "due_sub", "parts", "state", "state_text", "debt_lessons", "due_lessons",
+        "debt_amount_after", "due_amount_after", "due_until_after", "overdue_days_after"}
+
+
+def norm(x):
+    if isinstance(x, dict):
+        return {k: norm(v) for k, v in x.items() if k not in _GONE | _NEW}
+    if isinstance(x, list):
+        return [norm(v) for v in x]
+    return x
+
+
 _CLOCKED_MODULES = ("service", "leave_service", "membership_periods", "payments_service", "student_archive", "logica_service", "payroll_service")
 
 
@@ -138,15 +153,18 @@ def post_payment(w, m, expect=201, headers=None, **body):
 
 def test_e1_preview_endpoint_equals_the_fixtures(world, fixed_today):
     m = e1_world(world)
-    assert preview(world, m) == fx("e1_preview_due")
+    assert norm(preview(world, m)) == norm(fx("e1_preview_due"))
     for amount in (250_000, 300_000, 769_000, 790_000):
-        assert preview(world, m, amount=amount) == fx(f"e1_preview_{amount}"), amount
+        assert norm(preview(world, m, amount=amount)) == norm(fx(f"e1_preview_{amount}")), amount
+    # PAY-DUE: the words of the answer (hand-checked: both periods are past their 5-day term, the oldest is settled first)
+    assert preview(world, m, amount=250_000)["result"]["summary_text"].startswith("Погасит 250\xa0000\xa0сум из долга 769\xa0000\xa0сум")
+    assert preview(world, m, amount=769_000)["result"]["summary_text"].startswith("Погасит долг 769\xa0000\xa0сум")
 
 
 def test_e9_price_ahead_endpoint_equals_the_fixture(world, fixed_today):
     m = e1_world(world)
     give_group_price(world.db, world.group, 600_000, valid_from=D(2026, 11, 1))
-    assert preview(world, m, amount=1_069_000) == fx("e9_preview_price_ahead_1069000")
+    assert norm(preview(world, m, amount=1_069_000)) == norm(fx("e9_preview_price_ahead_1069000"))
 
 
 def test_e2_and_e3_preview_endpoints(world, fixed_today):
@@ -159,8 +177,8 @@ def test_e2_and_e3_preview_endpoints(world, fixed_today):
     m = membership(world)
     stay(world, m, D(2026, 10, 16))
     for amount in (200_000, 323_000, 900_000):
-        assert preview(world, m, amount=amount) == fx(f"e2_preview_{amount}"), amount
-    assert preview(world, m) == fx("e2_preview_due")
+        assert norm(preview(world, m, amount=amount)) == norm(fx(f"e2_preview_{amount}")), amount
+    assert norm(preview(world, m)) == norm(fx("e2_preview_due"))
 
 
 def test_e3_gap(world, fixed_today):
@@ -177,7 +195,7 @@ def test_e3_gap(world, fixed_today):
     m.left_at = None
     world.db.commit()
     for amount in (100_000, 213_000):
-        assert preview(world, m, amount=amount) == fx(f"e3_preview_{amount}"), amount
+        assert norm(preview(world, m, amount=amount)) == norm(fx(f"e3_preview_{amount}")), amount
 
 
 def test_e5_lessons_preview_endpoint(world, fixed_today):
@@ -202,10 +220,11 @@ def test_e5_lessons_preview_endpoint(world, fixed_today):
     got = preview(world, m, amount=630_000)
     want = fx("e5_preview_630000_held12")
     assert got["result"]["lessons"] == want["result"]["lessons"]
-    assert got["result"]["summary_text"] == want["result"]["summary_text"]
+    assert got["result"]["summary_text"] == want["result"]["summary_text"].replace("Погасит долг 600\xa0000\xa0сум", "Погасит долг 500\xa0000\xa0сум · к оплате 100\xa0000\xa0сум")      # PAY-DUE: the two newest of the 12 unpaid lessons are within their term
     assert [(a["amount"], a["days"], a["bucket"]) for a in got["result"]["allocations"]] == [
         (a["amount"], a["days"], a["bucket"]) for a in want["result"]["allocations"]]
     assert got["due"]["debt"] == 600_000 and got["suggested_amount"] == 600_000
+    assert (got["due"]["debt_amount"], got["due"]["due_amount"], got["due"]["due_until"]) == (500_000, 100_000, "2026-11-02")      # 10 held lessons of 50 000: 19.10 + 14 days = 02.11
 
 
 # ---- create / replace / void -----------------------------------------------------------------------------------
@@ -220,7 +239,7 @@ def test_create_payment_is_money_with_a_distribution(world, fixed_today):
     assert (p["amount"], p["method"], p["kind"], p["receipt_no"], p["legacy_period"]) == (300_000, "cash", "payment", 18, False)
     assert p["valid_from"] == "2026-09-15" and p["valid_to"] == "2026-10-15"            # the shim for the old front
     assert p["allocation"] == want["payment"]["allocation"]
-    for key in ("status", "paid_until", "days_overdue", "debt", "past_debt", "current_due", "advance", "partial_credit",
+    for key in ("status", "paid_until", "days_overdue", "debt", "advance", "partial_credit",
                 "refundable", "writeoff_allowed", "price_missing", "lessons_unpaid", "period_mode"):
         assert body["row"][key] == want["row"][key], key
     # the snapshot of the moment is what the receipt prints
@@ -301,7 +320,7 @@ def test_e8_replace_and_void(world, fixed_today):
     body, want = r.json(), fx("e8_replace_300000_by_250000")
     assert body["allocation"] == want["allocation"]                       # the "before" excludes the replaced payment
     assert body["payment"]["replaces_payment_id"] == p["id"] and body["payment"]["receipt_no"] == 19
-    for key in ("status", "paid_until", "days_overdue", "debt", "past_debt", "current_due", "partial_credit"):
+    for key in ("status", "paid_until", "days_overdue", "debt", "partial_credit"):
         assert body["row"][key] == want["row"][key], key
     old = world.db.get(StudentPayment, p["id"])
     world.db.refresh(old)
@@ -404,8 +423,8 @@ def test_e1_statement_endpoint_equals_the_fixture(world, fixed_today):
     r = owner(world).get(f"{API}/org/memberships/{m.id}/statement")
     assert r.status_code == 200, r.text
     got, want = r.json(), fx("e1_statement_790000")
-    assert got["summary"] == want["summary"] and got["upcoming"] == want["upcoming"] and got["accounting_start"] == "2026-09-01"
-    strip = lambda rows: [{k: v for k, v in row.items() if k != "details"} | {"alloc": [(a["amount"], a["days"], a["bucket"], a["closes"]) for a in row["details"]["allocations"]]}
+    assert norm(got["summary"]) == norm(want["summary"]) and norm(got["upcoming"]) == norm(want["upcoming"]) and got["accounting_start"] == "2026-09-01"
+    strip = lambda rows: [{k: v for k, v in row.items() if k not in ("details", "open_amount", "open_name", "open_text")} | {"alloc": [(a["amount"], a["days"], a["bucket"], a["closes"]) for a in row["details"]["allocations"]]}
                           for row in rows]
     assert strip(got["rows"]) == strip(want["rows"])
     assert got["rows"][-1]["balance_after"] == got["summary"]["advance"] - got["summary"]["debt"]
@@ -556,16 +575,16 @@ def test_balances_and_summary_and_status_debt_tab(world, fixed_today):
     c = owner(world)
     r = c.get(f"{API}/org/payments/balances", params={"kind": "debt"})
     items = {i["membership_id"]: i for i in r.json()["items"]}
-    assert str(m2.id) in items and items[str(m2.id)]["debt"] == 70_000 and items[str(m2.id)]["past_debt"] == 0
+    assert str(m2.id) in items and items[str(m2.id)]["debt"] == 70_000 and items[str(m2.id)]["debt_amount"] + items[str(m2.id)]["due_amount"] == 70_000
     assert str(m1.id) not in items
     adv = {i["membership_id"]: i for i in c.get(f"{API}/org/payments/balances", params={"kind": "advance"}).json()["items"]}
     assert adv[str(m1.id)]["advance"] == 21_000
     s = c.get(f"{API}/org/payments/summary").json()
     assert s["accounting_start_date"] == "2026-09-01" and s["debt_total"] >= 70_000 and s["advance_total"] == 21_000
-    assert s["memberships_with_debt"] >= 1 and s["students_with_debt"] >= 1
+    assert s["memberships_with_debt"] >= 1 and s["debtors"] >= 1
     page = c.get(f"{API}/org/payments/status", params={"bucket": "debt"}).json()
     assert str(m2.id) in {i["membership_id"] for i in page["items"]} and all(i["debt"] > 0 for i in page["items"])
-    assert [i["debt"] for i in page["items"]] == sorted((i["debt"] for i in page["items"]), reverse=True)
+    assert [i["debt_amount"] for i in page["items"]] == sorted((i["debt_amount"] for i in page["items"]), reverse=True)
     sorted_all = c.get(f"{API}/org/payments/status", params={"bucket": "all", "sort": "debt"}).json()["items"]
     assert [i["debt"] for i in sorted_all] == sorted((i["debt"] for i in sorted_all), reverse=True)
 
@@ -645,7 +664,7 @@ def test_a_student_without_any_money_event_stays_none_with_the_debt_visible(worl
     world.db.query(StudentPayment).filter_by(membership_id=m.id).delete()
     world.db.commit()
     row = owner(world).get(f"{API}/org/students/{world.students[0].id}/memberships").json()[0]
-    assert (row["status"], row["paid_until"], row["debt"], row["past_debt"], row["current_due"]) == ("none", None, 1_000_000, 500_000, 500_000)
+    assert (row["status"], row["paid_until"], row["debt"], row["debt_amount"], row["due_amount"]) == ("none", None, 1_000_000, 1_000_000, 0)      # both periods are past their term (5 days)
     page = owner(world).get(f"{API}/org/payments/status", params={"bucket": "none"}).json()
     assert str(m.id) in {i["membership_id"] for i in page["items"]}
 

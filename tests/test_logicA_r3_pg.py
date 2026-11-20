@@ -157,13 +157,13 @@ def test_m1_overdue_days_do_not_count_the_paused_days(world, fixed_today):
     seed_payment(world, m, 387_000, D(2026, 10, 1))
     r = owner(world).post(f"{API}/org/memberships/{m.id}/pauses", json={"first_day": "2026-10-20", "last_day": "2026-11-15"})
     assert r.status_code == 201, r.text
-    rows = owner(world).get(f"{API}/org/payments/status", params={"bucket": "debt"}).json()["items"]
+    rows = owner(world).get(f"{API}/org/payments/status", params={"bucket": "to_pay"}).json()["items"]
     row = next(x for x in rows if x["membership_id"] == str(m.id))
     # paid through 19.10 (informational), paused 20.10-15.11: the first charged unpaid day is 16.11 = today - overdue for one day, not 28
     assert row["paid_until"] == "2026-10-19" and row["debt"] == 281_000
-    assert row["days_overdue"] == 1 and row["debt_reason"] == "overdue" and row["reason"] == "Просрочено на 1 день", row
-    # Money-1 B7: the OLD fields say it as before; the NEW ones say that the debt of a period that begins today only waits (the first charged day after the pause)
-    assert (row["tab"], row["waiting_until"], row["waiting_reason"]) == ("waiting", "2026-11-18", "Ждём оплату до 18.11")
+    assert row["days_overdue"] == 1        # the paid-until status counts the days after 19.10 without the pause: one
+    # PAY-DUE: the debt of a period whose first charged day is today (after the pause) is «К оплате»: the 5th unpaused day from 16.11 is 20.11 (the pause 20.10-15.11 moves nothing here: the term starts after it)
+    assert (row["state"], row["debt_amount"], row["due_amount"], row["due_until"], row["due_text"], row["due_sub"]) == ("to_pay", 0, 281_000, "2026-11-20", "К оплате 281\xa0000\xa0сум", "до 20.11")
 
 
 # ---- m3: a deadlock on «убрать из группы» is a 409 «повторите», not a 500 --------------------------------------------------------------------

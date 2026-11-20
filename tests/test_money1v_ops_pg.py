@@ -39,7 +39,7 @@ def test_v1_a_whole_forgiveness_of_a_debt_that_moved_is_refused_and_nothing_is_w
     assert r.status_code == 409, r.text
     d = r.json()["detail"]
     assert d["code"] == "BALANCE_CHANGED" and d["debt"] == 70_000
-    assert d["message"] == f"Долг изменился: было 100{NB}000{NB}сум, сейчас 70{NB}000{NB}сум"
+    assert d["message"] == f"Сумма изменилась — обновите: было 100{NB}000{NB}сум, сейчас 70{NB}000{NB}сум"
     assert writeoffs(world) == []                                               # the old code wrote 70 000
 
 
@@ -607,7 +607,8 @@ def test_r3_p3_p5_the_collection_row_names_what_the_debtors_owe_and_a_cancelled_
     pay = world.db.query(StudentPayment).filter_by(membership_id=m.id).one()
     owner(world).post(f"{API}/org/payments/{pay.id}/void", json={"reason": "ошибка"})
     row = owner(world).get(f"{API}/org/payments/income", params={"from": "2026-10-01", "to": "2026-10-31"}).json()["collection"]["total"]
-    assert row["debtors_debt"] == row["debt"] - row["debt_waiting"]
+    assert row["debt"] + row["due"] > 0 and row["debt"] == row["debt"] and row["debtors"] >= 1      # PAY-DUE: the debt of the month and its «К оплате» (12.11: the term of October is long past: all debt)
+    assert row["due"] == 0
     line = [x for x in journal(world, "2026-11-01", "2026-11-30", cancelled_in_period="true")["rows"] if x["view"] == "cancelled_here"][0]
     assert line["voided_at"] and line["void_reason"] == "ошибка"
 

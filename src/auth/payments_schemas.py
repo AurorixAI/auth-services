@@ -108,6 +108,15 @@ class SegmentLessons(PayModel):
     in_period: int
 
 
+class SegmentPart(PayModel):
+    """PAY-DUE 10.11: the unpaid part of ONE segment by name (``debt`` / ``due``); a package segment may hold both (the debt first): the statement and the Excel read the same field."""
+
+    name: Literal["debt", "due"]
+    unpaid: int
+    due_until: Optional[date_type] = None
+    lessons: Optional[int] = None
+
+
 class Segment(PayModel):
     """One charge: a period of the student in the group (or a lessons package)."""
 
@@ -132,6 +141,7 @@ class Segment(PayModel):
     state: SegmentState = "open"
     # relative to ``as_of`` (today): the period has ended / is running / has not begun (same rule as ``Allocation.bucket``)
     bucket: SegmentBucket = "current"
+    parts: List[SegmentPart] = Field(default_factory=list)   # PAY-DUE 10.11: the named unpaid part(s) of this segment (empty when nothing is unpaid)
 
 
 class Allocation(PayModel):
@@ -187,6 +197,11 @@ class PaymentSettings(BaseModel):
     lessons_per_payment: int = Field(12, ge=1, le=60)
     expiring_days: int = Field(3, ge=0, le=14)
     expiring_lessons: int = Field(3, ge=0, le=10)
+    # PAY-DUE: the term of payment.  ``pay_due_days`` (calendar modes): the N-th day of a period without a pause is the last day of «К оплате», later the unpaid sum is a «Долг» (0 = a debt from the first day);
+    # ``pay_due_lessons`` (packages): how many of the newest unpaid lessons are still «К оплате».  They change only the NAME of an unpaid sum, never a sum.  Only the owner reads and writes them here;
+    # the two numbers (read only) also come with ``GET /org/payments/summary`` for the roles that see the money.
+    pay_due_days: int = Field(5, ge=0, le=14)
+    pay_due_lessons: int = Field(2, ge=0, le=4)
     # An excuse must be confirmed this many days before the end of the paid
     # period, or when this many lessons are left in a lessons package.
     excuse_deadline_days: int = Field(5, ge=0, le=30)
@@ -214,6 +229,8 @@ class PaymentSettingsUpdate(BaseModel):
     lessons_per_payment: Optional[int] = Field(None, ge=1, le=60)
     expiring_days: Optional[int] = Field(None, ge=0, le=14)
     expiring_lessons: Optional[int] = Field(None, ge=0, le=10)
+    pay_due_days: Optional[int] = Field(None, ge=0, le=14)
+    pay_due_lessons: Optional[int] = Field(None, ge=0, le=4)
     excuse_deadline_days: Optional[int] = Field(None, ge=0, le=30)
     excuse_deadline_lessons: Optional[int] = Field(None, ge=0, le=12)
     admin_can_manage: Optional[bool] = None
@@ -287,7 +304,27 @@ class PaymentOut(BaseModel):
     void_reason: Optional[str] = None
 
 
-class MembershipPaymentRow(BaseModel):
+class UnpaidFields(BaseModel):
+    """PAY-DUE 10.2: how a membership's unpaid sum is NAMED - one meaning on every row (the status list, the balances, the student card): ``debt_amount`` the part whose term has passed (a «Долг»), ``due_amount`` the
+    part still within its term («К оплате», until ``due_until``); ``overdue_days`` (K) the age of the oldest debt part (null without a debt; 0 = not overdue yet: a student who left before the term); packages:
+    ``due_lessons`` {used, limit} and ``debt_lessons``.  The texts are the server's: ``debt_text`` / ``debt_sub`` and ``due_text`` / ``due_sub`` (which of the two is the main one is the choice of the tab: a view,
+    not a rule); ``state`` / ``state_text`` the WORST state of the membership (debt, to_pay, expiring, paused, paid, free, none) for the one label."""
+
+    debt_amount: int = 0
+    due_amount: int = 0
+    due_until: Optional[date_type] = None
+    overdue_days: Optional[int] = None
+    due_lessons: Optional[Dict[str, int]] = None
+    debt_lessons: int = 0
+    debt_text: Optional[str] = None
+    debt_sub: Optional[str] = None
+    due_text: Optional[str] = None
+    due_sub: Optional[str] = None
+    state: Literal["debt", "to_pay", "expiring", "paused", "paid", "free", "none"] = "none"
+    state_text: Optional[str] = None
+
+
+class MembershipPaymentRow(UnpaidFields):
     membership_id: str
     student_id: str
     student_name: str
@@ -318,9 +355,7 @@ class MembershipPaymentRow(BaseModel):
     # that have begun cost minus the money; ``advance`` = money beyond that; never both > 0.  ``partial_credit`` - money
     # inside the first unpaid day.  ``lessons_unpaid`` - held lessons not covered by the money (lessons mode).
     # ``refundable`` - how much of the advance can be returned; ``writeoff_allowed`` - debt > 0 and the caller may.
-    debt: int = 0
-    past_debt: int = 0
-    current_due: int = 0
+    debt: int = 0               # everything unpaid (= ``debt_amount + due_amount``): a sum, never a name; the name is in ``state``
     advance: int = 0
     partial_credit: int = 0
     price_missing: bool = False
@@ -332,44 +367,14 @@ class MembershipPaymentRow(BaseModel):
     paused: Optional["PausedRange"] = None
     opening: Optional["OpeningBrief"] = None
     price_ends_on_leave: bool = False
-    # LOGIC-A (owner, 21.10): the tab of the row - ``debt`` Должники (debt > 0, any reason; students who left included), ``expiring`` Скоро
-    # платить (no debt, the next period is due within ``expiring_days``), ``active`` Оплачено (no debt, not due soon; an advance included),
-    # ``paused`` На паузе (today is inside a pause, no debt); null: a free student, one without a price, a membership that is not tracked.
-    # ``debt_reason`` (code) and ``reason`` (the sentence of the debtor line) say why a debtor is one.
-    bucket: Optional[Literal["debt", "expiring", "active", "paused"]] = None       # the OLD tab: ``debt`` is every debt, the waiting ones included (unchanged in this release; see ``tab``)
-    debt_reason: Optional[Literal["overdue", "partial", "never_paid"]] = None
-    reason: Optional[str] = None  # the line of a debtor: «Просрочено на 12 дней» | «Не доплачено за октябрь: 150 000» | «Ещё не платил»
-    # Money-1 B7 / R3 №20-21: the NEW tab - ONE definition of a debtor of the server - beside the old ones.  ``debtors`` = debt > 0 and not waiting; ``waiting`` = «Ждём оплату» (the period began within 3
-    # days, nothing older owed); the other values as ``bucket``.  ``waiting_until`` / ``waiting_reason`` only for a student who waits (the line to show instead of ``reason``).
-    tab: Optional[Literal["debtors", "waiting", "expiring", "active", "paused"]] = None
-    waiting_until: Optional[date_type] = None
-    waiting_reason: Optional[str] = None
-    # Money-2 T18: the age of the debt in days (the count of «Просрочено на N дней»; null without a debt) and its basket: to_30 | 31_60 | 61_90 | over_90.
-    debt_age_days: Optional[int] = None
-    debt_age_bucket: Optional[Literal["to_30", "31_60", "61_90", "over_90"]] = None
-
-
-class DebtSplit(BaseModel):
-    """Money-1 B7 / R3 №20: the debt of the centre split by ONE definition.  ``debtors`` + ``waiting_students`` (the memberships and the sums too) = the old ``students_with_debt`` /
-    ``memberships_with_debt`` / ``debt_total``.  ``expired`` / ``due`` / ``students_expired`` / ``students_due`` are the old status counters WITHOUT the students who only wait: the red banner, the
-    card «Просрочено» and the card «К оплате» read these."""
-
-    debtors: int = 0                  # DISTINCT students with a real debt (not waiting)
-    debtors_memberships: int = 0
-    debtors_debt_total: int = 0       # Σ debt of the debtors: the «Долг учеников» of the new screens
-    waiting_students: int = 0
-    waiting_memberships: int = 0
-    waiting_debt_total: int = 0
-    all_debt_total: int = 0           # = debtors_debt_total + waiting_debt_total = the old ``debt_total``
-    all_students_with_debt: int = 0   # = the old ``students_with_debt`` (a student in two groups may be a debtor in one and wait in the other: counted once here, in both lines there)
-    expired: int = 0
-    due: int = 0
-    students_expired: int = 0
-    students_due: int = 0
+    # PAY-DUE (10.2): ONE meaning of the unpaid sum - the fields of ``UnpaidFields`` (the names and the words come from ``pay_due`` and the server's texts; the screen only shows them).
+    # ``status`` / ``days_overdue`` of a row that owes something are not the name of the sum: ``status`` is ``active`` there and ``days_overdue`` null (they stay for «Заканчивается оплата» at a zero balance).
+    # The tabs are not exclusive: a row with both a debt and a sum within its term is on ``debtors`` and on ``to_pay``; ``expiring`` / ``active`` / ``paused`` are for a row that owes nothing.
+    debt_age_bucket: Optional[Literal["to_30", "31_60", "61_90", "over_90"]] = None      # Money-2 T18: the basket of ``overdue_days`` (null without a debt)
 
 
 class DebtAgeBasket(BaseModel):
-    """Money-2 T18: one basket of the age of the debt of the REAL debtors (not the waiting ones): distinct students, memberships and the sum of the debt."""
+    """Money-2 T18: one basket of the age of the debt (``overdue_days``): distinct students, memberships and the sum of ``debt_amount``."""
 
     bucket: Literal["to_30", "31_60", "61_90", "over_90"]
     students: int = 0
@@ -378,19 +383,29 @@ class DebtAgeBasket(BaseModel):
 
 
 class PaymentsBuckets(BaseModel):
-    """Memberships per tab of the payments page (the same sets ``GET /org/payments/status?bucket=`` lists)."""
+    """Memberships per tab of the payments page (the same sets ``GET /org/payments/status?bucket=`` lists); ``debtors`` and ``to_pay`` overlap (a membership with both sums is in both)."""
 
-    debt: int = 0
+    debtors: int = 0
+    to_pay: int = 0
     expiring: int = 0
     active: int = 0
     paused: int = 0
 
 
+class DueNearest(BaseModel):
+    """PAY-DUE 10.2: the nearest term among the sums that are «К оплате»: the day and the words (``до сегодня`` / ``до завтра, 21.11`` / ``до 24.11``)."""
+
+    date: date_type
+    text: str
+
+
 class PaymentsSummary(BaseModel):
+    """PAY-DUE 10.2: ONE meaning of the unpaid sum.  ``debt_total`` / ``debtors`` are the parts whose term has passed (``debt_amount`` of the rows), ``due_total`` / ``due_students`` the parts still within
+    their term; the tabs overlap (a student with both sums is counted in both), so the number of a tab = the number of such students and the sum of its rows = its card = the part of the centre.  ``debt_total +
+    due_total`` = everything unpaid (the sum of ``ledger.debt`` of the same memberships, ``scope = all``)."""
+
     as_of: str
-    due: int
     ends_today: int
-    expired: int
     expiring: int
     none: int
     active: int  # the "paid" tab: statuses active + free
@@ -398,41 +413,32 @@ class PaymentsSummary(BaseModel):
     tracked_total: int
     period_mode: PeriodMode
     lessons_per_payment: int
-    # DISTINCT students (the counters above count memberships, so a student in two groups counts twice there):
-    # ``students_due`` - at least one membership in the ``due`` bucket (expired or ends today), ``students_expired`` -
-    # at least one expired membership.  Added next to the old fields, which keep their meaning.
-    students_due: int
-    students_expired: int
-    # PAY-2: the debt and the advance of the whole centre today (memberships of students who left / archived included).
-    debt_total: int = 0
+    debt_total: int = 0                 # Σ ``debt_amount`` of the centre (memberships of students who left / archived included)
+    debtors: int = 0                    # DISTINCT students with ``debt_amount`` > 0
+    due_total: int = 0                  # Σ ``due_amount``
+    due_students: int = 0               # DISTINCT students with ``due_amount`` > 0 (a debtor with such a sum too is counted)
+    due_nearest: Optional[DueNearest] = None
     advance_total: int = 0
+    students_with_advance: int = 0
     memberships_with_debt: int = 0
-    students_with_debt: int = 0
     accounting_start_date: Optional[date_type] = None
     paused: int = 0  # LOGIC-A: memberships whose today is inside a pause
-    # LOGIC-A (owner, 21.10): the new tabs.  ``buckets.debt`` == ``memberships_with_debt`` (the waiting ones included, see ``debt_split``); Σ debt of that tab == ``debt_total``;
-    # ``debtors`` == ``students_with_debt`` (distinct students).  ``free`` (existing) and ``price_missing`` are the students outside the
-    # tabs (a warning line); ``students_with_advance`` is the advance card (with ``advance_total``).
     buckets: "PaymentsBuckets" = Field(default_factory=lambda: PaymentsBuckets())
-    price_missing: int = 0
-    students_with_advance: int = 0
-    debtors: int = 0
-    # Money-1 B7 / R3 №6, №20, №21: «Ждём оплату» - the debt of a period that began within 3 days.  THE OLD FIELDS KEEP THEIR OLD MEANING in this release (``debt_total``, ``debtors``, ``buckets.debt``,
-    # ``students_with_debt``, ``due`` / ``expired`` / ``students_due`` / ``students_expired`` all include the students who only wait): the server goes out first and the old front must not break.  The new
-    # screens read ``debt_split`` - ONE definition of a debtor: the debtors and the waiting ones never overlap and add up to the old numbers.
-    students_waiting: int = 0
-    debt_waiting_total: int = 0
-    debt_split: "DebtSplit" = Field(default_factory=lambda: DebtSplit())
-    debt_ages: List["DebtAgeBasket"] = Field(default_factory=list)       # Money-2 T18: always the four baskets, in order
+    price_missing: int = 0              # the students outside the tabs (a warning line)
+    debt_ages: List["DebtAgeBasket"] = Field(default_factory=list)       # Money-2 T18: always the four baskets, in order (by ``overdue_days``, the sum of ``debt_amount``)
     students_paused: int = 0  # DISTINCT students with a membership on pause today (== the students of the «На паузе» tab); ``buckets.paused`` counts memberships
+    pay_due_days: int = 5           # PAY-DUE: the term of the centre, READ ONLY here (the roles with the right to the money read it; the settings of it are the owner's)
+    pay_due_lessons: int = 2
 
 
 class PaymentStatusPage(BaseModel):
     items: List[MembershipPaymentRow]
-    total: int
+    total: int                  # memberships (rows) of the filter
     limit: int
     offset: int
     as_of: str
+    students: int = 0           # PAY-DUE 10.2: DISTINCT students of the filter - the number of the tab
+    amount_total: int = 0       # the sum of the tab's part over ALL the rows of the filter (``debtors``: ``debt_amount``; ``to_pay``: ``due_amount``; the other tabs: 0)
 
 
 # ---- group price and individual price (ROADMAP #105) ------------------------------------------------
@@ -838,15 +844,20 @@ class ReceiptOut(BaseModel):
 
 
 class PreviewDue(PayModel):
-    """What the student owes today (before the typed amount)."""
+    """What the student owes today (before the typed amount), named by ``pay_due`` (10.2: the old ``past_debt`` / ``current_due`` / ``days_overdue`` are gone)."""
 
-    debt: int = 0
-    past_debt: int = 0  # unpaid part of the periods that have ended
-    current_due: int = 0  # unpaid part of the periods that have begun and still run
+    debt: int = 0               # everything unpaid (``debt_amount + due_amount``)
+    debt_amount: int = 0
+    due_amount: int = 0
+    due_until: Optional[date_type] = None
+    overdue_days: Optional[int] = None
+    debt_text: Optional[str] = None
+    debt_sub: Optional[str] = None
+    due_text: Optional[str] = None
+    due_sub: Optional[str] = None
     advance: int = 0
     segments: List[Segment] = Field(default_factory=list)  # begun segments with ``unpaid`` > 0, oldest first
     paid_until: Optional[date_type] = None
-    days_overdue: Optional[int] = None
 
 
 class PreviewLessons(PayModel):
@@ -870,14 +881,15 @@ class PriceAhead(PayModel):
 
 class PreviewResult(PayModel):
     allocations: List[Allocation] = Field(default_factory=list)
-    debt_after: int = 0
-    past_debt_after: int = 0
-    current_due_after: int = 0
+    debt_after: int = 0         # everything unpaid after the payment
+    debt_amount_after: int = 0
+    due_amount_after: int = 0
+    due_until_after: Optional[date_type] = None
+    overdue_days_after: Optional[int] = None
     advance_after: int = 0
     paid_until_before: Optional[date_type] = None
     paid_until_after: Optional[date_type] = None
     status_after: MembershipStatus = "none"
-    days_overdue_after: Optional[int] = None
     partial_credit_after: int = 0
     lessons: Optional[PreviewLessons] = None
     summary_text: str = ""
@@ -1020,7 +1032,7 @@ class StatementMembership(PayModel):
     is_active: bool = True
 
 
-class StatementSummary(PayModel):
+class StatementSummary(UnpaidFields, PayModel):
     """Always for the whole accounting period up to today, whatever ``from`` / ``to`` the rows were cut by."""
 
     charged: int = 0
@@ -1030,7 +1042,7 @@ class StatementSummary(PayModel):
     recalculated: int = 0  # PAY-F: the deductions for the lessons the centre cancelled
     refunded: int = 0
     transferred_out: int = 0
-    debt: int = 0
+    debt: int = 0               # everything unpaid (``debt_amount + due_amount``)
     advance: int = 0
     paid_until: Optional[date_type] = None
     status: MembershipStatus = "none"
@@ -1072,7 +1084,12 @@ class StatementRow(PayModel):
     credit: int = 0  # money in (payment, transfer in, write-off)
     outflow: int = 0  # money out (refund, transfer out)
     balance_after: Optional[int] = None  # negative = debt, positive = advance; null on a voided row
-    balance_text: Optional[str] = None  # «Долг 500 000» | «Аванс 21 000» | «0» (the «Остаток» column)
+    balance_text: Optional[str] = None  # «Долг 500 000» | «Аванс 21 000» | «0»: the RUNNING total - TO BE REMOVED after П2 (the screen still reads it; ``balance_after`` too); the column reads ``open_*``
+    # PAY-DUE 10.11: what is open on the row ITSELF today.  A charge: the unpaid part of THIS charge named by ``pay_due`` (``paid`` = «Оплачено», ``due`` = «К оплате N», ``debt`` = «Долг N»); a payment: ``advance``
+    # («Аванс N») while a part of it is not laid on the charges yet, else null; a transfer, a refund, a write-off: null.
+    open_amount: Optional[int] = None
+    open_name: Optional[Literal["paid", "due", "debt", "advance"]] = None
+    open_text: Optional[str] = None
     voided_at: Optional[str] = None
     void_reason: Optional[str] = None
     voided_by_name: Optional[str] = None
@@ -1154,19 +1171,15 @@ class ReceiptsSeriesPoint(PayModel):
 
 
 class ReceiptsPosition(PayModel):
-    """Where the whole centre stands TODAY (not limited to the range; includes students who left and archived ones)."""
+    """Where the whole centre stands TODAY (not limited to the range; includes students who left and archived ones), by the names of ``pay_due``."""
 
-    debt_total: int = 0                       # ALL the debt, the waiting ones included (the old meaning, unchanged in this release) = ``debtors_debt_total`` + ``debt_waiting_total``
-    past_debt_total: int = 0
+    debt_total: int = 0                       # Σ ``debt_amount``
+    due_total: int = 0                        # Σ ``due_amount``
+    debtors: int = 0                          # DISTINCT students with ``debt_amount`` > 0
+    due_students: int = 0
     advance_total: int = 0
     memberships_with_debt: int = 0
-    students_with_debt: int = 0
     memberships_with_advance: int = 0
-    # Money-1 R3 №20: the same split as ``PaymentsSummary.debt_split`` - ONE definition of a debtor on every screen
-    debtors_debt_total: int = 0               # Σ debt of the real debtors
-    debt_waiting_total: int = 0               # Σ debt of «Ждём оплату»
-    students_debtors: int = 0
-    students_waiting: int = 0
 
 
 class ReconciliationCheck(PayModel):
@@ -1226,7 +1239,7 @@ class ReceiptItems(PayModel):
     offset: int = 0
 
 
-class BalanceRow(PayModel):
+class BalanceRow(UnpaidFields, PayModel):
     """A short membership row of «Долги / Авансы» (also memberships of students who left / archived)."""
 
     membership_id: str
@@ -1241,14 +1254,9 @@ class BalanceRow(PayModel):
     student_archived: bool = False
     status: MembershipStatus = "none"
     paid_until: Optional[date_type] = None
-    debt: int = 0
-    past_debt: int = 0
-    current_due: int = 0
+    debt: int = 0               # everything unpaid (``debt_amount + due_amount``)
     advance: int = 0
     refundable: int = 0
-    # Money-1 R3 №20: the new tab of the row (``debtors`` / ``waiting`` for a debt) and the day «ждём оплату» lasts to
-    tab: Optional[Literal["debtors", "waiting"]] = None
-    waiting_until: Optional[date_type] = None
 
 
 class BalancesPage(PayModel):
@@ -1256,10 +1264,9 @@ class BalancesPage(PayModel):
     total: int = 0
     limit: int = 50
     offset: int = 0
-    # Money-1 R3 №20 (``kind=debt``): the sums of ALL the rows of the filter (not of the page): ``debt_total`` = ``debtors_debt_total`` + ``debt_waiting_total``
-    debt_total: int = 0
-    debtors_debt_total: int = 0
-    debt_waiting_total: int = 0
+    # the sums of ALL the rows of the filter (not of the page)
+    debt_total: int = 0         # Σ ``debt_amount``
+    due_total: int = 0          # Σ ``due_amount``
 
 
 # ---- receipt snapshot (``payment_receipt_snapshots.snapshot``) -----------------------------------------------
@@ -1304,6 +1311,16 @@ class PaymentSettingsChanged(PaymentSettings):
     impact: Optional[AccountingStartImpact] = None
     # LOGIC-A (F12): with ``dry_run`` and a change of the billing mode: who switches and when (null otherwise).
     regime_impact: Optional["RegimeImpact"] = None
+    # PAY-DUE: with ``dry_run`` and a new term: how many students change name by it (null when the term does not change).  Nothing is written.
+    pay_due_impact: Optional["PayDueImpact"] = None
+
+
+class PayDueImpact(PayModel):
+    """``to_due``: students who are debtors now and would not be (their unpaid sum becomes «К оплате»); ``to_debt``: the other way round.  ``texts``: the words for the line before saving (none at zero)."""
+
+    to_due: int = 0
+    to_debt: int = 0
+    texts: List[str] = Field(default_factory=list)
 
 
 # ================================================================================================================

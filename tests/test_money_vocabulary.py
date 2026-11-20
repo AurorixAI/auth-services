@@ -95,8 +95,8 @@ def test_the_sentences_of_a_payment_and_of_a_payout_use_the_words_of_the_diction
     assert tx.allocation_label(bucket="past_debt", closes=False, start=start, end=end) == "Частично погашен долг за 15.09–14.10"
     assert tx.allocation_label(bucket="past_debt", closes=True, start=start, end=end, package_no=2) == "Погашен долг за пакет №2 (15.09–14.10)"
     assert tx.opening_label(date(2026, 9, 30), True) == "Погашен долг на начало учёта на 30.09.2026"
-    assert tx.summary_text(past=269_000, current=31_000, advance=0, past_debt_before=269_000, debt_after=469_000, paid_until_after=date(2026, 10, 15)) == (
-        "Погасит долг 269 000 сум · на текущий период 31 000 сум → оплачено до 15.10 · останется 469 000 сум")
+    assert tx.summary_text(debt_paid=269_000, debt_before=269_000, due_paid=31_000, due_before=500_000, advance=0, debt_after=469_000, paid_until_after=date(2026, 10, 15)) == (
+        "Погасит долг 269 000 сум · к оплате 31 000 сум из 500 000 сум → оплачено до 15.10 · останется 469 000 сум")
     # a closed month has been paid MORE, an open one AHEAD (never «переплачено»); the next step is said in words
     assert tx.payout_text(state="overpaid", saved_total=83_334, fresh_total=None, target=83_334, paid=100_000, balance=-16_666) == "Выплачено больше на 16 666 сум — вычтем из следующей выплаты"
     open_text = tx.open_month_payout_text(state="overpaid", accrued=75_834, paid=150_000, balance=-74_166)
@@ -197,7 +197,7 @@ def test_the_sentences_built_from_big_sums_never_break_inside_a_sum_and_a_file_h
         tx.money(big), tx.num(big), tx.payout_text(state="overpaid", saved_total=1, fresh_total=None, target=1, paid=big, balance=-big),
         tx.payout_text(state="due", saved_total=1, fresh_total=None, target=big, paid=1_000, balance=big - 1_000),
         tx.open_month_payout_text(state="overpaid", accrued=big, paid=big * 2, balance=-big), tx.payout_change_text(-big),
-        tx.summary_text(past=big, current=big, advance=big, past_debt_before=big, debt_after=big, paid_until_after=date(2026, 10, 15)),
+        tx.summary_text(debt_paid=big, debt_before=big, due_paid=big, due_before=big, advance=big, debt_after=big, paid_until_after=date(2026, 10, 15)),
         tx.transfer_balance_text(carried=big, charged_now=big, advance=big, debt=big, charged_tomorrow=big, advance_tomorrow=big, group_name="Г"),
         tx.price_change_warning(date(2026, 9, 1), date(2026, 9, 30), big, big * 2), tx.collection_text(big, big * 2, 50), tx.balance_text(-big), tx.recalc_text(big, date(2026, 10, 21)),
         effects.text_of([], [{"month": "2026-10", "state": "closed", "teacherName": "Э", "changedBy": big, "driftAfter": big * 2}], done=True),

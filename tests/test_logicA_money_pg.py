@@ -383,16 +383,19 @@ def test_the_tabs_debt_due_soon_paid_and_the_summary_invariants(world, fixed_tod
     # C: never paid: debt 600 000
     c = owner(world)
     summary = c.get(f"{API}/org/payments/summary").json()
-    pages = {k: c.get(f"{API}/org/payments/status", params={"bucket": k, "limit": 100}).json() for k in ("debt", "expiring", "active", "paused")}
+    pages = {k: c.get(f"{API}/org/payments/status", params={"bucket": k, "limit": 100}).json() for k in ("debtors", "to_pay", "expiring", "active", "paused")}
     by = {k: {i["membership_id"]: i for i in v["items"]} for k, v in pages.items()}
-    assert set(by["debt"]) == {str(a.id), str(c3.id)} and set(by["active"]) == {str(b.id)} and by["expiring"] == {} and by["paused"] == {}
-    assert by["debt"][str(a.id)]["debt_reason"] == "partial" or by["debt"][str(a.id)]["debt_reason"] == "overdue"
-    assert by["debt"][str(c3.id)]["debt_reason"] == "never_paid" and by["debt"][str(c3.id)]["reason"] == "Ещё не платил"
-    assert by["debt"][str(a.id)]["bucket"] == "debt" and by["active"][str(b.id)]["bucket"] == "active"
+    owing = set(by["debtors"]) | set(by["to_pay"])          # PAY-DUE: the unpaid sum of A and C is a debt or «К оплате» (the tabs overlap); both are owed, neither is on the calm tabs
+    assert owing == {str(a.id), str(c3.id)} and set(by["active"]) == {str(b.id)} and by["expiring"] == {} and by["paused"] == {}
+    for row in [*by["debtors"].values(), *by["to_pay"].values()]:
+        assert row["state"] in ("debt", "to_pay") and row["debt_amount"] + row["due_amount"] == row["debt"] and (row["debt_text"] or row["due_text"])
+    assert by["active"][str(b.id)]["state"] == "paid"
     # the invariants of the summary
-    assert summary["buckets"] == {"debt": 2, "expiring": 0, "active": 1, "paused": 0} and summary["debtors"] == summary["students_with_debt"] == 2
-    assert summary["memberships_with_debt"] == pages["debt"]["total"] == summary["buckets"]["debt"] and summary["students_with_debt"] == 2
-    assert sum(i["debt"] for i in pages["debt"]["items"]) == summary["debt_total"]
+    assert summary["buckets"] == {"debtors": pages["debtors"]["total"], "to_pay": pages["to_pay"]["total"], "expiring": 0, "active": 1, "paused": 0}
+    assert summary["debtors"] == pages["debtors"]["students"] and summary["due_students"] == pages["to_pay"]["students"]
+    assert summary["memberships_with_debt"] == pages["debtors"]["total"]
+    assert summary["debt_total"] + summary["due_total"] == sum(i["debt"] for i in c.get(f"{API}/org/payments/status", params={"limit": 100}).json()["items"]) == 750_000       # A 150 000 + C 600 000
+    assert sum(i["debt_amount"] for i in pages["debtors"]["items"]) == summary["debt_total"] and sum(i["due_amount"] for i in pages["to_pay"]["items"]) == summary["due_total"]
     assert summary["students_with_advance"] == 1 and summary["advance_total"] == sum(i["advance"] for i in c.get(f"{API}/org/payments/status", params={"limit": 100}).json()["items"])
     assert {"free", "price_missing"} <= set(summary)
 

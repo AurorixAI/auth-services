@@ -98,47 +98,48 @@ def test_b8_13_of_14_is_still_by_the_price_of_a_lesson():
     assert led.recalculated == 273_000 and led.debt == 27_000
 
 
-# ---- Б7 / ДЫРА-05: three days of «ждём оплату» ----------------------------------------------------------------------------------------------------
+# ---- Б7 / ДЫРА-05 -> PAY-DUE: the term of payment (these cases were «ждём оплату» for three days; now the term of the centre, here 3 days, and ``pay_due.classify``) -------------------------------
+
+from src.auth import pay_due as pd
 
 
-def entry(inp):
-    """What ``payments_views`` reads of an entry: the ledger, the input and the three rows of ``is_tracked``."""
-    return SimpleNamespace(ledger=bl.run_ledger(inp), inp=inp, membership=SimpleNamespace(is_active=True), group=SimpleNamespace(status="active"),
-                           student=SimpleNamespace(status="active"), price=SimpleNamespace(amount=300_000))
+def named(inp, days=3, lessons=2, in_centre=True):
+    ledger = bl.run_ledger(inp)
+    return ledger, pd.classify(ledger, inp.today, days, lessons, in_centre)
 
 
-@pytest.mark.parametrize("today, tab, waiting, old_reason", [
-    (D(2026, 11, 5), "waiting", "Ждём оплату до 07.11", "Просрочено на 1 день"),       # A3: the first day of the new period 05.11 - the debt 300 000 is there, the student is not a debtor
-    (D(2026, 11, 6), "waiting", "Ждём оплату до 07.11", "Просрочено на 2 дня"),
-    (D(2026, 11, 7), "waiting", "Ждём оплату до 07.11", "Просрочено на 3 дня"),       # the third day
-    (D(2026, 11, 8), "debtors", None, "Просрочено на 4 дня"),                          # the fourth day: a debtor
+@pytest.mark.parametrize("today, name, until, overdue", [
+    (D(2026, 11, 5), pd.DUE, D(2026, 11, 7), 0),       # A3: the first day of the new month: the debt of a period that has just begun is «К оплате»
+    (D(2026, 11, 6), pd.DUE, D(2026, 11, 7), 0),
+    (D(2026, 11, 7), pd.DUE, D(2026, 11, 7), 0),       # the third day, inclusive
+    (D(2026, 11, 8), pd.DEBT, None, 1),                # the fourth day: a debt, overdue one day
 ])
-def test_b7_the_debt_of_a_new_period_is_waiting_for_three_days_then_a_debtor(today, tab, waiting, old_reason):
-    e = entry(own_month([bl.Stay(D(2026, 10, 5))], today))                                                  # 300 000 paid for 05.10 - 04.11, nothing for 05.11
-    assert e.ledger.debt == 300_000 and e.ledger.reconciles                                                  # I-1: the number does not depend on the name
-    assert pv.entry_tab(e) == tab and pv.waiting_reason(e) == waiting
-    assert pv.entry_bucket(e) == "debt" and pv.debt_reason(e)[1] == old_reason                               # R3 №21: the OLD fields keep their meaning in this release
+def test_b7_the_unpaid_sum_of_a_new_period_is_within_its_term_then_a_debt(today, name, until, overdue):
+    ledger, r = named(own_month([bl.Stay(D(2026, 10, 5))], today))                                           # 300 000 paid for October, November unpaid
+    assert ledger.debt == 300_000 and ledger.reconciles                                                      # I-1: the sum is the same whatever the name
+    assert (r.name, r.due_until, r.overdue_days) == (name, until, overdue) and r.unpaid == 300_000
 
 
-def test_b7_a_new_student_waits_three_days_too_and_a_part_payment_does_not_end_it():
-    new = entry(own_month([bl.Stay(D(2026, 11, 5))], D(2026, 11, 6), paid=0))
-    assert new.ledger.debt == 300_000 and pv.entry_tab(new) == "waiting" and pv.waiting_until(new) == D(2026, 11, 7)
-    part = entry(own_month([bl.Stay(D(2026, 11, 5))], D(2026, 11, 6), paid=0, credits=(credit("p", D(2026, 11, 6), 100_000),)))
-    assert part.ledger.debt == 200_000 and pv.entry_tab(part) == "waiting"
-    late = entry(own_month([bl.Stay(D(2026, 11, 5))], D(2026, 11, 9), paid=0))
-    assert pv.entry_tab(late) == "debtors" and pv.debt_reason(late) == ("never_paid", "Ещё не платил")
+def test_b7_a_new_student_has_the_term_too_and_a_part_payment_does_not_end_it():
+    ledger, new = named(own_month([bl.Stay(D(2026, 11, 5))], D(2026, 11, 6), paid=0))
+    assert ledger.debt == 300_000 and new.name == pd.DUE and new.due_until == D(2026, 11, 7)
+    ledger, part = named(own_month([bl.Stay(D(2026, 11, 5))], D(2026, 11, 6), paid=0, credits=(credit("p", D(2026, 11, 6), 100_000),)))
+    assert ledger.debt == 200_000 and (part.name, part.due_amount) == (pd.DUE, 200_000)
+    _, late = named(own_month([bl.Stay(D(2026, 11, 5))], D(2026, 11, 9), paid=0))
+    assert (late.name, late.overdue_days) == (pd.DEBT, 2)
 
 
-def test_b7_an_old_debt_or_a_student_who_left_is_a_debtor_at_once():
-    old = entry(own_month([bl.Stay(D(2026, 10, 5))], D(2026, 11, 5), paid=0))                                # October is not paid and November has begun: 600 000, the past debt is there
-    assert old.ledger.past_debt == 300_000 and pv.entry_tab(old) == "debtors"
-    gone = entry(own_month([bl.Stay(D(2026, 11, 5), D(2026, 11, 6))], D(2026, 11, 6), paid=0))
-    gone.membership.is_active = False
-    assert gone.ledger.debt > 0 and pv.entry_tab(gone) == "debtors"
+def test_b7_an_old_tail_or_a_student_who_left_is_a_debt_at_once():
+    ledger, old = named(own_month([bl.Stay(D(2026, 10, 5))], D(2026, 11, 5), paid=0))                       # October is past its term, November just began
+    assert ledger.past_debt == 300_000 and (old.debt_amount, old.due_amount) == (300_000, 300_000)
+    ledger, gone = named(own_month([bl.Stay(D(2026, 11, 5), D(2026, 11, 6))], D(2026, 11, 6), paid=0), in_centre=False)
+    assert ledger.debt > 0 and (gone.name, gone.due_amount) == (pd.DEBT, 0)
 
 
-def test_b7_a_package_has_no_periods_and_never_waits():
+def test_b7_a_package_is_by_lesson_not_by_period():
     inp = make(today=D(2026, 11, 5), stays=[bl.Stay(D(2026, 10, 5))], price_at=flat(600_000, D(2026, 1, 1)), start=D(2026, 9, 1),
                regimes=[bl.Regime(mode=bl.LESSONS, package_size=12)], counted=[bl.CountedLesson(D(2026, 11, 2), "l1")])
-    e = entry(inp)
-    assert e.ledger.debt > 0 and pv.entry_tab(e) == "debtors" and pv.entry_bucket(e) == "debt"
+    ledger, r = named(inp)
+    assert ledger.debt > 0 and r.due_lessons == {"used": 1, "limit": 2} and r.name == pd.DUE            # one unpaid lesson, within its 14 days
+    _, closed = named(inp, lessons=0)
+    assert closed.name == pd.DEBT

@@ -555,11 +555,11 @@ def test_mn05_summary_selects_the_memberships_once_with_the_same_numbers(pg_sess
     tracked = loader.select(scope="tracked")                 # the unchanged path: the oracle
     kinds = [e.ledger.status.status for e in loader.run(tracked)]
     assert body["tracked_total"] == len(tracked) == 3
-    assert body["expired"] == kinds.count(ps.EXPIRED) and body["ends_today"] == kinds.count(ps.ENDS_TODAY) and body["none"] == kinds.count(ps.NONE)
+    assert body["ends_today"] == kinds.count(ps.ENDS_TODAY) and body["none"] == kinds.count(ps.NONE)
     assert body["active"] == kinds.count(ps.ACTIVE) + kinds.count(ps.FREE)
     everything = loader.run(loader.select(scope="all"))
     assert len(everything) == 6
-    assert body["debt_total"] == sum(e.ledger.debt for e in everything) and body["advance_total"] == sum(e.ledger.advance for e in everything)
+    assert body["debt_total"] + body["due_total"] == sum(e.ledger.debt for e in everything) and body["advance_total"] == sum(e.ledger.advance for e in everything)
 
 
 def test_mn16_receipts_items_run_only_the_memberships_of_the_page(pg_session, clock):
