@@ -219,10 +219,11 @@ def parts_of_segment(due, seg_id: str) -> list:
     return [{"name": p.name, "unpaid": p.unpaid, "due_until": p.due_until, "lessons": p.lessons} for p in due.parts_of(seg_id)]
 
 
-def open_of_row(kind: str, ref_id: str, ledger: bl.Ledger, due, segments: dict) -> dict:
+def open_of_row(kind: str, ref_id: str, ledger: bl.Ledger, due, segments: dict, today: date) -> dict:
     """PAY-DUE 10.11: ``open_amount`` / ``open_name`` / ``open_text`` / ``open_parts`` of a statement row (see ``StatementRow``).  A charge whose unpaid part holds BOTH names (a package) has two ``open_parts``
-    (the debt first), ``open_name`` is the worst of them and ``open_text`` says both."""
-    none = {"open_amount": None, "open_name": None, "open_text": None, "open_parts": []}
+    (the debt first), ``open_name`` is the worst of them and ``open_text`` says both.  ``open_sub`` is the term of the row in words: «срок был 05.11» for the debt part (only when the term has really passed: a student
+    who left before the term has a debt whose term is still ahead - nothing is said), «до 24.11» / «до сегодня» for the part «к оплате», both joined by « · » (the debt first); ``None`` for a paid charge and for the opening balance."""
+    none = {"open_amount": None, "open_name": None, "open_text": None, "open_sub": None, "open_parts": []}
     if kind in ("charge", "opening_debt"):
         seg = segments[ref_id]
         parts = due.parts_of(seg.id)
@@ -237,13 +238,16 @@ def open_of_row(kind: str, ref_id: str, ledger: bl.Ledger, due, segments: dict) 
         if not out:
             out = [{"name": "paid", "amount": 0, "text": "Оплачено"}]
         text = tx.open_both_text(out[0]["text"], out[1]["text"]) if len(out) == 2 else out[0]["text"]
-        return {"open_amount": sum(p["amount"] for p in out), "open_name": out[0]["name"], "open_text": text, "open_parts": out}
+        was = [p.term for p in parts if p.name == pay_due.DEBT and p.term and p.term < today]
+        until = [p.due_until for p in parts if p.name == pay_due.DUE and p.due_until]
+        words = ([f"срок был {tx.ddmm(min(was))}"] if was else []) + ([tx.due_until_words(min(until), today)] if until else [])
+        return {"open_amount": sum(p["amount"] for p in out), "open_name": out[0]["name"], "open_text": text, "open_sub": " · ".join(words) or None, "open_parts": out}
     if kind in (bl.PAYMENT, bl.TRANSFER_IN):      # the money that came (a payment, a transfer into the group) - the part not laid on a charge yet is «Аванс»; a transfer OUT, a refund, a forgiveness stay empty
         # the part of the money that is laid on NO begun charge: on the «advance» of no period yet, or on a period that has not begun (the bucket of an allocation is relative to the DAY of the payment: a period that has begun since is no advance)
         left = sum(a.amount for a in ledger.allocations if a.credit_id == ref_id and (a.segment_id == bl.ADVANCE_SEGMENT or (a.segment_id in segments and not segments[a.segment_id].begun)))
         if left > 0:
             text = tx.advance_text(left)
-            return {"open_amount": left, "open_name": "advance", "open_text": text, "open_parts": [{"name": "advance", "amount": left, "text": text}]}
+            return {"open_amount": left, "open_name": "advance", "open_text": text, "open_sub": None, "open_parts": [{"name": "advance", "amount": left, "text": text}]}
     return none
 
 

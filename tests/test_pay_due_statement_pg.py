@@ -112,3 +112,37 @@ def test_the_money_that_came_by_a_transfer_into_the_group_is_an_advance_on_its_o
     old = statement(w, membership(w, st[0], g))
     out = [x for x in old["rows"] if x["type"] == "transfer_out"]
     assert out and all(x["open_name"] is None and x["open_amount"] is None for x in out)
+
+
+def test_16b1_the_term_of_the_row_open_sub_in_the_statement_and_in_the_same_cell_of_both_files(pg_session, clock):
+    """PAY-DUE 16Б.1.  Term 5 days, «Свой месяц», today Mon 12.10: A (joined 01.10) and B (06.10) are past the term, C (09.10) pays until 13.10 - tomorrow."""
+    import csv
+    import io
+    from openpyxl import load_workbook
+
+    w, g, st, ms = world(pg_session, clock)
+    def charge(m):
+        return [r for r in statement(w, m)["rows"] if r["type"] == "charge"][0]
+    a, b, c = charge(ms[0]), charge(ms[1]), charge(ms[2])
+    assert (a["open_name"], a["open_sub"]) == ("debt", "срок был 05.10")            # first day 01.10 + 5 days (the 1st counts): 05.10
+    assert (b["open_name"], b["open_sub"]) == ("debt", "срок был 10.10")
+    assert (c["open_name"], c["open_sub"]) == ("due", "до завтра, 13.10")
+    pay(w, ms[1], 700_000, D(2026, 10, 12))                                          # B pays: the row is «Оплачено», the payment row says the advance - neither has a term
+    s = statement(w, ms[1])
+    assert [r["open_sub"] for r in s["rows"]] == [None] * len(s["rows"])
+    cell = f"Долг 600{NB}000{NB}сум · срок был 05.10"                                # the same words in the cell «Остаток» of the files
+    csv_rows = list(csv.reader(io.StringIO(client(w, "owner").get(f"{API}/org/memberships/{ms[0].id}/statement/export", params={"format": "csv"}).content.decode("utf-8-sig")), delimiter=";"))
+    assert cell.replace(NB, " ") in [row[6] for row in csv_rows if len(row) > 6]       # the csv writer turns the non-breaking spaces into plain ones (as before)
+    book = load_workbook(io.BytesIO(client(w, "owner").get(f"{API}/org/memberships/{ms[2].id}/statement/export", params={"format": "xlsx"}).content))
+    cells = [str(x.value).replace(NB, " ") for sheet in book for row in sheet.iter_rows() for x in row if x.value]       # the file writer turns the non-breaking spaces into plain ones (as the csv)
+    assert "К оплате 600 000 сум · до завтра, 13.10" in cells
+
+
+def test_16b1_the_term_of_a_package_debt_is_the_last_day_of_its_oldest_lesson_and_none_when_the_student_left_before_the_term():
+    from datetime import date
+    from src.auth.pay_due import _package_parts, DEBT
+
+    lessons = [(date(2026, 10, 1), 100, "p"), (date(2026, 10, 5), 100, "p"), (date(2026, 10, 9), 100, "p")]        # M = 1: only the newest is «к оплате»
+    parts = {p.name: p for p in _package_parts(lessons, {"p": False}, date(2026, 10, 12), 1, True)}
+    assert (parts[DEBT].lessons, parts[DEBT].term) == (2, date(2026, 10, 4))        # the lesson of 05.10 pushed the one of 01.10 out on 04.10
+    assert parts["due"].term is None and parts["due"].due_until == date(2026, 10, 23)

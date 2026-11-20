@@ -220,7 +220,7 @@ def build_entries(rows: Sequence, upcoming: Iterable = ()) -> List[Entry]:
     for row in rows:
         d = row.details
         # PAY-DUE 10.11: the column «Остаток» says what is open on the ROW itself: the words of the server (``open_text``), nothing is counted here
-        base = dict(seq=row.seq, type=row.type, date=row.date, balance_kind=row.open_name or "none", balance=row.open_text or "")
+        base = dict(seq=row.seq, type=row.type, date=row.date, balance_kind=row.open_name or "none", balance=open_cell(row.open_text, row.open_sub))
         if row.type == "charge":
             title, sub = charge_words(d.segment) if d.segment else (row.title, "")
             out.append(Entry(title=title, sub=sub or None, charged=int(row.debit), paid=None, **base))
@@ -347,6 +347,11 @@ def upcoming_line(segment) -> str:
     paid = (f"оплачено {tx.money(int(segment.paid))} из {tx.money(int(segment.charge))}" if int(segment.paid) > 0
             else f"к оплате {tx.money(int(segment.charge))}")
     return f"{period}: {paid}"
+
+
+def open_cell(text: Optional[str], sub: Optional[str]) -> str:
+    """The cell «Остаток» of a statement row in the file: the words of the row and, in the same cell, its term («Долг 50 000 сум · срок был 05.11»)."""
+    return " · ".join(x for x in (text, sub) if x)
 
 
 def balance_summary(summary) -> str:

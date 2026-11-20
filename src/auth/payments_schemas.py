@@ -1114,6 +1114,7 @@ class StatementRow(PayModel):
     open_amount: Optional[int] = None
     open_name: Optional[Literal["paid", "due", "debt", "advance"]] = None
     open_text: Optional[str] = None
+    open_sub: Optional[str] = None  # the term of the row in words: «срок был 05.11» (debt) / «до 24.11» / «до сегодня» (к оплате), both joined by « · »; null for a paid charge, the opening balance and rows with no unpaid part
     # the same split by name: ONE element, or TWO when the unpaid part of one charge holds both names (a package: some lessons a debt, the newest ones «к оплате»; the debt first).  ``open_name`` is the worst of them
     # (the tone), ``open_amount`` their sum, ``open_text`` the words of both («Долг 50 000 сум · к оплате 100 000 сум»).  The equalities of 10.11 are summed over ``open_parts``.
     open_parts: List[OpenPart] = Field(default_factory=list)

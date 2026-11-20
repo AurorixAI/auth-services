@@ -115,7 +115,7 @@ class PaymentsReports:
             balance = e.balance_after
             common = dict(seq=seq, date=e.day, debit=e.debit, credit=e.credit, outflow=e.outflow, balance_after=balance,
                           balance_text=tx.balance_text(balance))
-            common.update(pv.open_of_row(e.kind, e.ref_id, ledger, entry.due, segments))
+            common.update(pv.open_of_row(e.kind, e.ref_id, ledger, entry.due, segments, today))
             if e.kind == "charge":
                 seg = segments[e.ref_id]
                 title = f"Стоимость {tx.period_text(seg.period_start, seg.period_end)}" if seg.kind == "period" else (
@@ -293,7 +293,7 @@ class PaymentsReports:
             ["Остаток", st_tx.balance_summary(st.summary)],
         ]
         body = [[r.seq, r.date.strftime("%d.%m.%Y"), r.title, r.debit or "", r.credit or "", r.outflow or "",
-                 r.open_text or "", detail(r)] for r in [*st.rows, *st.voided]]
+                 st_tx.open_cell(r.open_text, r.open_sub), detail(r)] for r in [*st.rows, *st.voided]]
         who = st.membership.display_id or str(membership_id)[:8]
         base = f"statement-{who}-{st.as_of.isoformat()}"
         buf = io.StringIO()

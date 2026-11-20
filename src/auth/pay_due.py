@@ -39,7 +39,7 @@ class DuePart:
     due_until: Optional[date] = None    # the last day of «к оплате» (the oldest lesson + 14 for a package); ``None`` for a debt
     overdue_days: int = 0               # K: the days the debt is overdue (0 for «к оплате»)
     lessons: Optional[int] = None       # package: how many lessons the part holds
-    term: Optional[date] = None         # period: the day ``D`` the term ended / ends (``None`` when the term is 0 days: a debt from the first day; the opening balance and packages have none)
+    term: Optional[date] = None         # period: the day ``D`` the term ended / ends (``None`` when the term is 0 days: a debt from the first day; the opening balance has none; a package debt: the last day of the term of its oldest lesson)
 
 
 @dataclass(frozen=True)
@@ -163,7 +163,7 @@ def _package_parts(lessons: List[Tuple[date, int, str]], closed: Dict[str, bool]
         newer = n - 1 - j
         is_due = in_centre and not closed.get(seg_id, False) and newer < limit and today <= window_end
         name = DUE if is_due else DEBT
-        slot = grouped.setdefault((seg_id, name), {"unpaid": 0, "n": 0, "oldest": day, "age": 0})
+        slot = grouped.setdefault((seg_id, name), {"unpaid": 0, "n": 0, "oldest": day, "age": 0, "term": None})
         slot["unpaid"] += cost
         slot["n"] += 1
         if name == DEBT:
@@ -171,11 +171,12 @@ def _package_parts(lessons: List[Tuple[date, int, str]], closed: Dict[str, bool]
             pushed_by = lessons[j + limit][0] - timedelta(days=1) if j + limit < n else None
             term = window_end if pushed_by is None else min(window_end, pushed_by)
             slot["age"] = max(slot["age"], max(0, (today - term).days))
+            slot["term"] = term if slot["term"] is None else min(slot["term"], term)          # the last day of the term of the OLDEST lesson of the part: «срок был ...» of the statement row
     out: List[DuePart] = []
     for (seg_id, name), slot in grouped.items():
         out.append(DuePart(seg_id, "package", slot["unpaid"], name,
                            slot["oldest"] + timedelta(days=PACKAGE_DUE_MAX_DAYS) if name == DUE else None,
-                           slot["age"] if name == DEBT else 0, slot["n"]))
+                           slot["age"] if name == DEBT else 0, slot["n"], slot["term"] if name == DEBT else None))
     return out
 
 
