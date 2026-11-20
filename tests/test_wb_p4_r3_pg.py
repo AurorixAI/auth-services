@@ -83,9 +83,11 @@ def test_r3_5_a_refusal_of_exam_service_is_told_too(w, fake):
 # ---- R3 6: one lesson that exam-service cannot handle does not block the others ----------------------------------------------------------------------------------
 
 
-def test_r3_6_an_answer_with_a_code_about_one_lesson_is_cleared_and_the_run_goes_on(w, fake):
+def test_r3_6_an_answer_with_a_code_about_one_lesson_is_cleared_and_the_run_goes_on(w, fake, clock):
     fake.plan[("release", None)] = "down"
-    assert cancel(w).status_code == 200 and cancel(w, day=NEXT, reason="Другой").status_code == 200
+    assert cancel(w).status_code == 200
+    clock.set("2026-10-21 14:01")          # the queue is read by the time of the mark («created_at»): two cancellations are never at one frozen instant (in the product they are not)
+    assert cancel(w, day=NEXT, reason="Другой").status_code == 200
     assert row_of(w).exam_release_pending is True and row_of(w, NEXT).exam_release_pending is True
     fake.plan.clear()
     fake.plan[("release", DAY)] = ExamAnswerError(422, "exam-service: 422")          # its verdict about THAT lesson
