@@ -271,6 +271,11 @@ def advance_text(amount: int) -> str:
     return f"Аванс {money(amount)}"
 
 
+def open_both_text(debt: str, due: str) -> str:
+    """PAY-DUE 10.11: a statement row that holds both names - ``Долг 50 000 сум · к оплате 100 000 сум``."""
+    return f"{debt} · {due[:1].lower()}{due[1:]}"
+
+
 def recalc_amount_text(amount: int) -> str:
     """The quiet line under the title of the statement row (the title already names the lesson): ``−46 000 сум``."""
     return f"\u2212{money(amount)}"

@@ -25,7 +25,7 @@ def setup(w, *, accounting_start, price=600_000):
 
 def debt_of(w, student):
     rows = client(w, "owner").get(f"{API}/org/students/{student.id}/memberships").json()
-    return rows[0]["debt"], rows[0]
+    return rows[0]["unpaid"], rows[0]
 
 
 def weekdays(first_valid_from=None):

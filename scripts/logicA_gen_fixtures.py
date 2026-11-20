@@ -50,7 +50,9 @@ from src.auth.payments_schemas import (  # noqa: E402
     LessonTypeRow,
     LessonTypeSheet,
     LogicAError,
+    DueNearest,
     MembershipPaymentRow,
+    OpenPart,
     OpeningBrief,
     OpeningOut,
     OpeningSaved,
@@ -254,20 +256,69 @@ def group_price(amount, since=D(2026, 1, 1)):
     return PriceOut(amount=amount, source="group", valid_from=since, group_amount=amount, reason=None)
 
 
+def hand_names(res: dict, today: date, term_days: int = 5) -> dict:
+    """PAY-DUE, by hand: the opening debt is a debt at once (aged ``today - debt_on``); a period is «К оплате» until its ``term_days``-th day (the first billable day is the first), later a debt aged ``today - term``."""
+    debt = due = age = 0
+    until = None
+    for s in res["segs"]:
+        first = s.days[0] if s.days else s.start
+        unpaid = s.amount - s.money
+        if first > today or unpaid <= 0:
+            continue
+        if s.kind == "opening":
+            debt += unpaid
+            age = max(age, (today - s.start).days)
+            continue
+        term = first + timedelta(days=term_days - 1)
+        if today <= term:
+            due += unpaid
+            until = term if until is None else min(until, term)
+        else:
+            debt += unpaid
+            age = max(age, (today - term).days)
+    assert debt + due == res["debt"], (debt, due, res["debt"])
+    return dict(debt=debt, due=due, until=until, age=age)
+
+
+def unpaid_fields(res: dict, today: date, through: Optional[date], status: str) -> dict:
+    """The fields of ``UnpaidFields`` of a membership row the way the server writes them (``payments_views.unpaid_fields``)."""
+    n = hand_names(res, today)
+    out = dict(
+        debt_amount=n["debt"], due_amount=n["due"], due_until=n["until"] if n["due"] else None, overdue_days=n["age"] if n["debt"] else None,
+        debt_text=tx.debt_text(n["debt"]) if n["debt"] else None, debt_sub=tx.debt_sub(n["age"], through) if n["debt"] else None,
+        due_text=tx.due_text(n["due"]) if n["due"] else None, due_sub=tx.due_sub(n["until"], today) if n["due"] else None)
+    if n["debt"]:
+        out.update(state="debt", state_text=out["debt_text"])
+    elif n["due"]:
+        out.update(state="to_pay", state_text=out["due_text"])
+    elif status == "paused":
+        out.update(state="paused", state_text="Пауза")
+    elif status in ("expired", "ends_today", "expiring"):
+        out.update(state="expiring", state_text=tx.paid_until_text(through))
+    elif status == "none":
+        out.update(state="none", state_text=None)
+    else:
+        out.update(state="paid", state_text=tx.paid_until_text(through) if through else (tx.advance_text(res["advance"]) if res["advance"] else None))
+    return out
+
+
 def row(n: int, name: str, group: str, price: PriceOut, status: str, *, res: dict, today: date, paused=None, opening=None,
-        left_override=False, active=True, overdue=None) -> MembershipPaymentRow:
+        left_override=False, active=True) -> MembershipPaymentRow:
     through = res["through"]
     delta = (through - today).days if through else None
+    shown = "active" if res["debt"] > 0 and status in ("expired", "ends_today", "expiring") else status      # PAY-DUE 3.2: a row that owes something is ``active``
     return MembershipPaymentRow(
         membership_id=uid(100 + n), student_id=uid(200 + n), student_name=name, display_id=f"S-{1000 + n}", class_level=7,
         group_id=uid(300 + n), group_name=group, teacher_id=uid(400), teacher_name="Каримова", is_primary=True, is_active=active,
-        price=price, monthly_fee=price.amount, status=status, period_mode="calendar",
+        price=price, monthly_fee=price.amount, status=shown, period_mode="calendar",
         paid_until=through if status != "none" else None,
-        days_overdue=(overdue if overdue is not None else (-delta if status == "expired" and delta is not None else None)),
+        days_overdue=(-delta if status == "expired" and delta is not None and res["debt"] == 0 else None),
         days_left=(delta if status in ("active", "expiring", "ends_today") else None),
-        debt=res["debt"], past_debt=res["past"], current_due=res["debt"] - res["past"], advance=res["advance"],
+        unpaid=res["debt"], advance=res["advance"],
         partial_credit=0, price_missing=False, lessons_unpaid=0, refundable=res["refundable"], writeoff_allowed=res["debt"] > 0,
         paused=PausedRange(**{"from": paused[0], "to": paused[1]}) if paused else None, opening=opening, price_ends_on_leave=left_override,
+        debt_age_bucket=("to_30" if hand_names(res, today)["age"] <= 30 else "31_60") if hand_names(res, today)["debt"] else None,
+        **unpaid_fields(res, today, through if status != "none" else None, status),
     )
 
 
@@ -311,7 +362,7 @@ def opening_chain(store):
     assert (b["debt"], b["past"], b["charged"]) == (463_000, 250_000, 463_000)
     write("A02_opening_debt_250000.json", OpeningSaved(
         opening=opening_out(2, debt_amount=250_000, debt_on=D(2026, 9, 30)), impact=impact(none, b), dry_run=False,
-        row=row(1, "Каримов Алишер", "A-1", group_price(600_000), "expired", res=b, today=TODAY, overdue=21,
+        row=row(1, "Каримов Алишер", "A-1", group_price(600_000), "expired", res=b, today=TODAY,
                 opening=OpeningBrief(id=uid(2), debt_amount=250_000, debt_on=D(2026, 9, 30)))), store)
     pay = Hand(**base, debt=250_000, debt_on=D(2026, 9, 30), payments=[(TODAY, 300_000)]).run()
     assert pay["debt"] == 163_000 and pay["through"] == D(2026, 10, 22)
@@ -550,29 +601,33 @@ def sheets(store):
 def tabs_and_statement(store):
     """The payment tabs (a debtor with the reason, the summary) and the statement rows of an opening balance and a pause."""
     res = Hand(today=TODAY, accounting_start=AS, stays=[(TODAY, None)], price=price_flat(600_000), debt=250_000, debt_on=D(2026, 9, 30)).run()
-    debtor = row(1, "Каримов Алишер", "A-1", group_price(600_000), "expired", res=res, today=TODAY, overdue=21,
+    debtor = row(1, "Каримов Алишер", "A-1", group_price(600_000), "expired", res=res, today=TODAY,
                  opening=OpeningBrief(id=uid(2), debt_amount=250_000, debt_on=D(2026, 9, 30)))
-    debtor = debtor.model_copy(update={"bucket": "debt", "debt_reason": "never_paid", "reason": "Ещё не платил"})
+    assert (debtor.debt_amount, debtor.due_amount, debtor.overdue_days, debtor.due_until) == (250_000, 213_000, 21, D(2026, 10, 25))      # the opening debt (21 days) and the period of today («К оплате» until the 5th day, 25.10)
     write("A29_status_row_debtor.json", debtor, store)
     write("A30_payments_summary_tabs.json", PaymentsSummary(
-        as_of="2026-10-21", due=2, ends_today=0, expired=2, expiring=1, none=0, active=5, free=1, tracked_total=9, period_mode="calendar",
-        lessons_per_payment=12, students_due=2, students_expired=2, debt_total=1_063_000, advance_total=200_000, memberships_with_debt=3,
-        students_with_debt=3, accounting_start_date=AS, paused=1, buckets=PaymentsBuckets(debt=3, expiring=1, active=4, paused=1),
-        price_missing=1, students_with_advance=1, debtors=3, students_paused=1), store)
+        # PAY-DUE: 1 063 000 is unpaid in all (the old ``debt_total``): 850 000 of it is a debt of 3 students, 213 000 is «К оплате» (the period that began today, the debtor of A29 among them: he is in both tabs)
+        as_of="2026-10-21", ends_today=0, expiring=1, none=0, active=5, free=1, tracked_total=9, period_mode="calendar",
+        lessons_per_payment=12, debt_total=850_000, debtors=3, due_total=213_000, due_students=1, due_nearest=DueNearest(date=D(2026, 10, 25), text="до 25.10"),
+        advance_total=200_000, students_with_advance=1, memberships_with_debt=3, accounting_start_date=AS, paused=1,
+        buckets=PaymentsBuckets(debtors=3, to_pay=1, expiring=1, active=4, paused=1), price_missing=1, students_paused=1), store)
     seg_open = Segment(id="seg:opening", kind="opening", period_from=D(2026, 9, 30), period_to=D(2026, 9, 30), billable_days=0, days_text=None,
                        price=PriceOut(amount=None, source="none"), charge=250_000, basis="opening", paid=0, written_off=0, unpaid=250_000,
                        remaining=250_000, covered_days=0, covered_through=None, partial_credit=0, state="open", bucket="past_debt")
     seg_oct = Segment(id="seg:0:2026-10-01", kind="period", period_from=D(2026, 10, 1), period_to=D(2026, 10, 31), billable_days=11,
                       days_text="11 дней из 31", price=group_price(600_000), charge=213_000, basis="days", paid=0, written_off=0, unpaid=213_000,
                       remaining=213_000, covered_days=0, covered_through=None, partial_credit=0, state="open", bucket="current")
-    summary = StatementSummary(charged=463_000, paid=0, debt=463_000, advance=0, paid_until=None, status="expired", reconciles=True)
+    st_fields = unpaid_fields(res, TODAY, None, "expired")
+    summary = StatementSummary(charged=463_000, paid=0, unpaid=463_000, advance=0, paid_until=None, status="active", reconciles=True, **st_fields)
     member = StatementMembership(membership_id=uid(101), student_id=uid(201), student_name="Каримов Алишер", display_id="S-1001",
                                  group_id=uid(301), group_name="A-1", teacher_name="Каримова", is_active=True)
     rows = [
         StatementRow(seq=1, date=D(2026, 9, 30), type="opening_debt", title="Долг на начало учёта на 30.09.2026", debit=250_000,
-                     balance_after=-250_000, balance_text="Долг 250 000", details=StatementDetails(segment=seg_open)),
+                     balance_after=-250_000, balance_text="Долг 250 000", details=StatementDetails(segment=seg_open),
+                     open_amount=250_000, open_name="debt", open_text=tx.debt_text(250_000), open_parts=[OpenPart(name="debt", amount=250_000, text=tx.debt_text(250_000))]),
         StatementRow(seq=2, date=D(2026, 10, 21), type="charge", title="Стоимость 01.10–31.10", debit=213_000, balance_after=-463_000,
-                     balance_text="Долг 463 000", details=StatementDetails(segment=seg_oct)),
+                     balance_text="Долг 463 000", details=StatementDetails(segment=seg_oct),
+                     open_amount=213_000, open_name="due", open_text=tx.due_text(213_000), open_parts=[OpenPart(name="due", amount=213_000, text=tx.due_text(213_000))]),
     ]
     write("A31_statement_opening_debt.json", StatementOut(membership=member, as_of=TODAY, mode="calendar", accounting_start=AS, summary=summary,
                                                           rows=rows), store)
@@ -583,7 +638,8 @@ def tabs_and_statement(store):
     ]
     write("A32_statement_info_rows.json", StatementOut(
         membership=member, as_of=TODAY, mode="calendar", accounting_start=AS,
-        summary=StatementSummary(charged=0, paid=0, debt=0, advance=0, paid_until=D(2026, 11, 15), status="active", reconciles=True), rows=info), store)
+        summary=StatementSummary(charged=0, paid=0, unpaid=0, advance=0, paid_until=D(2026, 11, 15), status="active", reconciles=True,
+                                 state="paid", state_text=tx.paid_until_text(D(2026, 11, 15))), rows=info), store)
     base = Hand(today=D(2026, 10, 21), accounting_start=AS, stays=[(D(2026, 10, 1), None)], price=price_flat(500_000),
                 payments=[(D(2026, 10, 20), 700_000)]).run()
     row_ = row(2, "Ахмедов Б.", "A-1", group_price(500_000), "active", res=base, today=D(2026, 10, 21))

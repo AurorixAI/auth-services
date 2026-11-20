@@ -1077,7 +1077,7 @@ def _books(w, m):
         "money": (led.debt, led.past_debt, led.current_due, led.advance, led.charged, led.paid, led.refundable, led.reconciles),
         "segments": [(s.kind, s.period_start, s.period_end, s.amount, s.covered_days, s.unpaid) for s in led.segments],
         "covered_through": led.covered_through, "lessons": None if led.lessons is None else (led.lessons.covered, led.lessons.used, led.lessons.left, led.lessons.unpaid),
-        "statement": (rows, {k: st["summary"][k] for k in ("charged", "paid", "debt", "advance", "reconciles")}),
+        "statement": (rows, {k: st["summary"][k] for k in ("charged", "paid", "unpaid", "advance", "reconciles")}),
     }
 
 

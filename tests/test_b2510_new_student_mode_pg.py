@@ -35,10 +35,10 @@ def test_switch_then_enrol_the_same_day_gives_a_package_and_a_running_month_stay
     join_at(world, new, 8)                                                                  # ...AFTER the switch
     world.db.expire_all()
     a, b, n = (row_of(world, s) for s in world.students)
-    assert (a["period_mode"], a["paid_until"], a["debt"]) == ("calendar", "2026-11-14", 0)           # the running period is not cut
-    assert b["period_mode"] == "calendar" and b["debt"] == 600_000 and b["paid_until"] is None   # his running month (20.10-19.11) is due whole, the mode is the old one
+    assert (a["period_mode"], a["paid_until"], a["unpaid"]) == ("calendar", "2026-11-14", 0)           # the running period is not cut
+    assert b["period_mode"] == "calendar" and b["unpaid"] == 600_000 and b["paid_until"] is None   # his running month (20.10-19.11) is due whole, the mode is the old one
     assert n["period_mode"] == "lessons"                                                              # his first period is a package
-    assert n["debt"] == 0                                              # a package: the debt appears with the lessons held, not a month charged up front
+    assert n["unpaid"] == 0                                              # a package: the debt appears with the lessons held, not a month charged up front
     # a student who comes later still follows the new mode
     stay(world, new, D(2026, 10, 22))
     world.db.expire_all()

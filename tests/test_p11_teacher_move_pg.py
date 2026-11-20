@@ -74,7 +74,7 @@ def test_t14_a_move_neither_charges_nor_pays_twice(w, clock, sync):
     def package():
         r = client(w, "owner").get(f"{API}/org/payments/status", params={"limit": 100})
         assert r.status_code == 200, r.text
-        return {i["student_id"]: (i["lessons_used"], i["lessons_left"], i["debt"]) for i in r.json()["items"] if i["student_id"] in {str(x.id) for x in (w.s1, w.s2, w.s3)}}
+        return {i["student_id"]: (i["lessons_used"], i["lessons_left"], i["unpaid"]) for i in r.json()["items"] if i["student_id"] in {str(x.id) for x in (w.s1, w.s2, w.s3)}}
 
     def payroll():
         sheet = sheet_of(w, w.A)

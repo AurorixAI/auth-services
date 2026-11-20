@@ -94,14 +94,19 @@
             "title": "Debt",
             "type": "integer"
           },
-          "debt_waiting": {
+          "debtors": {
             "default": 0,
-            "title": "Debt Waiting",
+            "title": "Debtors",
             "type": "integer"
           },
-          "debtors_debt": {
+          "due": {
             "default": 0,
-            "title": "Debtors Debt",
+            "title": "Due",
+            "type": "integer"
+          },
+          "due_students": {
+            "default": 0,
+            "title": "Due Students",
             "type": "integer"
           },
           "forgiven": {
@@ -152,16 +157,6 @@
             "title": "Students",
             "type": "integer"
           },
-          "students_waiting": {
-            "default": 0,
-            "title": "Students Waiting",
-            "type": "integer"
-          },
-          "students_with_debt": {
-            "default": 0,
-            "title": "Students With Debt",
-            "type": "integer"
-          },
           "teacher_id": {
             "anyOf": [
               {
@@ -194,11 +189,10 @@
           "paid",
           "forgiven",
           "debt",
-          "debtors_debt",
+          "due",
           "students",
-          "students_with_debt",
-          "debt_waiting",
-          "students_waiting",
+          "debtors",
+          "due_students",
           "pct"
         ],
         "title": "CollectionRow",
@@ -655,14 +649,19 @@
             "title": "Debt Total",
             "type": "integer"
           },
-          "debt_waiting_total": {
+          "debtors": {
             "default": 0,
-            "title": "Debt Waiting Total",
+            "title": "Debtors",
             "type": "integer"
           },
-          "debtors_debt_total": {
+          "due_students": {
             "default": 0,
-            "title": "Debtors Debt Total",
+            "title": "Due Students",
+            "type": "integer"
+          },
+          "due_total": {
+            "default": 0,
+            "title": "Due Total",
             "type": "integer"
           },
           "memberships_with_advance": {
@@ -675,43 +674,20 @@
             "title": "Memberships With Debt",
             "type": "integer"
           },
-          "past_debt_total": {
-            "default": 0,
-            "title": "Past Debt Total",
-            "type": "integer"
-          },
-          "students_debtors": {
-            "default": 0,
-            "title": "Students Debtors",
-            "type": "integer"
-          },
-          "students_waiting": {
-            "default": 0,
-            "title": "Students Waiting",
-            "type": "integer"
-          },
           "students_with_advance": {
             "default": 0,
             "title": "Students With Advance",
-            "type": "integer"
-          },
-          "students_with_debt": {
-            "default": 0,
-            "title": "Students With Debt",
             "type": "integer"
           }
         },
         "required": [
           "debt_total",
-          "past_debt_total",
+          "due_total",
+          "debtors",
+          "due_students",
           "advance_total",
           "memberships_with_debt",
-          "students_with_debt",
           "memberships_with_advance",
-          "debtors_debt_total",
-          "debt_waiting_total",
-          "students_debtors",
-          "students_waiting",
           "students_with_advance"
         ],
         "title": "IncomePosition",

@@ -83,15 +83,15 @@ def test_a_cancellation_has_a_kind_centre_by_default_and_holiday_on_request(pg_s
 def test_7_the_deduction_is_46000_in_the_row_the_statement_and_the_payment_dialog(pg_session, clock):
     w = build_org(pg_session)
     g, s, m = month_world(w, clock)
-    assert row_of(w, s)["debt"] == 600_000
+    assert row_of(w, s)["unpaid"] == 600_000
     cancel(w, g, "lesson-wed", "2026-10-21")                               # the usual dialog: the default kind is the centre's fault
     row = row_of(w, s)
-    assert row["debt"] == 554_000 and row["advance"] == 0
+    assert row["unpaid"] == 554_000 and row["advance"] == 0
     st = statement(w, m)
     (line,) = [r for r in st["rows"] if r["type"] == "recalc"]
     assert line["title"] == "Перерасчёт: урок 21.10 отменён центром" and line["credit"] == 46_000 and line["date"] == "2026-10-21"
     assert line["details"]["recalc"]["text"] == LINE and line["balance_after"] == -554_000
-    assert st["summary"]["recalculated"] == 46_000 and st["summary"]["reconciles"] is True and st["summary"]["debt"] == 554_000
+    assert st["summary"]["recalculated"] == 46_000 and st["summary"]["reconciles"] is True and st["summary"]["unpaid"] == 554_000
     preview = client(w, "owner").get(f"{API}/org/memberships/{m.id}/payments/preview").json()
     assert preview["suggested_amount"] == 554_000                              # the next payment is smaller
     assert [r["text"] for r in preview["recalc"]] == [LINE]
@@ -113,7 +113,7 @@ def test_7_paid_in_full_the_deduction_is_an_advance_and_the_receipt_of_the_next_
     g, s, m = month_world(w, clock, paid=600_000)
     cancel(w, g, "lesson-wed", "2026-10-21")
     row = row_of(w, s)
-    assert row["debt"] == 0 and row["advance"] == 46_000
+    assert row["unpaid"] == 0 and row["advance"] == 46_000
     clock.set("2026-11-06 12:00")                                              # the second period has begun: 600 000 minus the advance
     owner = client(w, "owner")
     due = owner.get(f"{API}/org/memberships/{m.id}/payments/preview").json()
@@ -122,7 +122,7 @@ def test_7_paid_in_full_the_deduction_is_an_advance_and_the_receipt_of_the_next_
     assert first.status_code == 201, first.text
     receipt = owner.get(f"{API}/org/payments/{first.json()['payment']['id']}/receipt").json()
     assert [r["text"] for r in receipt["recalc"]] == [LINE] and receipt["debt_after"] == 0
-    assert row_of(w, s)["debt"] == 0 and statement(w, m)["summary"]["reconciles"] is True
+    assert row_of(w, s)["unpaid"] == 0 and statement(w, m)["summary"]["reconciles"] is True
     clock.set("2026-12-04 12:00")
     second = owner.post(f"{API}/org/memberships/{m.id}/payments", json={"amount": 600_000, "paid_on": "2026-12-04", "method": "cash"}).json()
     again = owner.get(f"{API}/org/payments/{second['payment']['id']}/receipt").json()
@@ -136,7 +136,7 @@ def test_8_a_holiday_is_never_recalculated(pg_session, clock):
     w = build_org(pg_session)
     g, s, m = month_world(w, clock)
     cancel(w, g, "lesson-wed", "2026-10-21", kind="holiday", reason="Хайит")
-    assert row_of(w, s)["debt"] == 600_000 and statement(w, m)["summary"]["recalculated"] == 0
+    assert row_of(w, s)["unpaid"] == 600_000 and statement(w, m)["summary"]["recalculated"] == 0
     assert not [r for r in statement(w, m)["rows"] if r["type"] == "recalc"]
 
 
@@ -145,7 +145,7 @@ def test_9_with_the_setting_off_nothing_is_recalculated(pg_session, clock):
     g, s, m = month_world(w, clock, switch_on=None)
     cancel(w, g, "lesson-wed", "2026-10-21")
     assert kind_of(w, g, "2026-10-21", "lesson-wed") == "centre"              # the fact is recorded; the setting decides
-    assert row_of(w, s)["debt"] == 600_000
+    assert row_of(w, s)["unpaid"] == 600_000
 
 
 def test_10_a_moved_lesson_is_neutral(pg_session, clock):
@@ -155,7 +155,7 @@ def test_10_a_moved_lesson_is_neutral(pg_session, clock):
         "lessonId": "lesson-wed", "lessonDate": "2026-10-28", "newDate": "2026-10-29", "startTime": "10:00", "endTime": "11:00", "reason": "Перенос по просьбе центра"})
     assert r.status_code == 200, r.text
     assert kind_of(w, g, "2026-10-28", "lesson-wed") is None                  # the original is cancelled with no kind: a move
-    assert row_of(w, s)["debt"] == 600_000 and statement(w, m)["summary"]["recalculated"] == 0
+    assert row_of(w, s)["unpaid"] == 600_000 and statement(w, m)["summary"]["recalculated"] == 0
 
 
 def test_10_an_old_cancellation_without_a_kind_is_never_recalculated(pg_session, clock):
@@ -164,7 +164,7 @@ def test_10_an_old_cancellation_without_a_kind_is_never_recalculated(pg_session,
     cancel(w, g, "lesson-wed", "2026-10-21")
     w.db.execute(text("UPDATE group_attendance SET cancellation_kind = NULL WHERE group_id=:g"), {"g": g.id})        # what a cancellation before the release looks like
     w.db.commit()
-    assert row_of(w, s)["debt"] == 600_000
+    assert row_of(w, s)["unpaid"] == 600_000
 
 
 # ---- 11. a student who was not charged that day ---------------------------------------------------------------------------------------------------------
@@ -176,7 +176,7 @@ def test_11_paused_that_day_or_not_yet_in_the_group_gets_no_line(pg_session, clo
     pause(w, m, D(2026, 10, 19), D(2026, 10, 23))
     cancel(w, g, "lesson-wed", "2026-10-21")
     cancel(w, g, "lesson-mon", "2026-10-05")                                  # the day before he came
-    assert row_of(w, s)["debt"] == 600_000 and statement(w, m)["summary"]["recalculated"] == 0
+    assert row_of(w, s)["unpaid"] == 600_000 and statement(w, m)["summary"]["recalculated"] == 0
 
 
 # ---- 12. the cancellation is taken back -------------------------------------------------------------------------------------------------------------------
@@ -186,10 +186,10 @@ def test_12_when_the_lesson_is_given_back_the_line_disappears(pg_session, clock)
     w = build_org(pg_session)
     g, s, m = month_world(w, clock)
     cancel(w, g, "lesson-wed", "2026-10-21")
-    assert row_of(w, s)["debt"] == 554_000
+    assert row_of(w, s)["unpaid"] == 554_000
     w.db.query(GroupAttendance).filter_by(group_id=g.id, lesson_date="2026-10-21").delete()
     w.db.commit()
-    assert row_of(w, s)["debt"] == 600_000 and not [r for r in statement(w, m)["rows"] if r["type"] == "recalc"]
+    assert row_of(w, s)["unpaid"] == 600_000 and not [r for r in statement(w, m)["rows"] if r["type"] == "recalc"]
 
 
 # ---- 13. switched on on 25.10: the cancellation of 19.10 stays as it was -----------------------------------------------------------------------------------
@@ -199,11 +199,11 @@ def test_13_the_setting_does_not_rewrite_the_past(pg_session, clock):
     w = build_org(pg_session)
     g, s, m = month_world(w, clock, switch_on=None)
     cancel(w, g, "lesson-mon", "2026-10-19")                                  # before the setting was switched on
-    assert row_of(w, s)["debt"] == 600_000
+    assert row_of(w, s)["unpaid"] == 600_000
     assert client(w, "owner").put(f"{API}/org/settings/payments", json={"centre_cancel_recalc": True}).status_code == 200      # 25.10
-    assert row_of(w, s)["debt"] == 600_000                                    # switching on does not rewrite the past
+    assert row_of(w, s)["unpaid"] == 600_000                                    # switching on does not rewrite the past
     cancel(w, g, "lesson-mon", "2026-10-26")
-    assert row_of(w, s)["debt"] == 554_000                                    # a lesson from 25.10 on is recalculated
+    assert row_of(w, s)["unpaid"] == 554_000                                    # a lesson from 25.10 on is recalculated
     assert [r["date"] for r in statement(w, m)["rows"] if r["type"] == "recalc"] == ["2026-10-26"]
 
 
@@ -218,12 +218,12 @@ def test_14_the_partial_first_month_is_price_x_not_cancelled_over_the_template(p
     (g,), (s,), (m,) = centre(w, price=650_000, joined=datetime(2026, 10, 14, 6, 0), billing_anchor="fixed_day", billing_day=1)
     assert client(w, "owner").put(f"{API}/org/settings/payments", json={"centre_cancel_recalc": True}).status_code == 200
     clock.set("2026-10-25 12:00")
-    assert row_of(w, s)["debt"] == 650_000 * 8 // 13 == 400_000
+    assert row_of(w, s)["unpaid"] == 650_000 * 8 // 13 == 400_000
     cancel(w, g, "lesson-wed", "2026-10-21")
     cancel(w, g, "lesson-fri", "2026-10-23")
     cancel(w, g, "lesson-mon", "2026-10-12")                                  # before he came: not his
     row = row_of(w, s)
-    assert row["debt"] == 650_000 * 6 // 13 == 300_000
+    assert row["unpaid"] == 650_000 * 6 // 13 == 300_000
     st = statement(w, m)
     assert [r["credit"] for r in st["rows"] if r["type"] == "recalc"] == [50_000, 50_000] and st["summary"]["reconciles"] is True
     (charge,) = [r for r in st["rows"] if r["type"] == "charge"]
@@ -239,7 +239,7 @@ def test_15_a_package_is_not_affected_by_the_setting(pg_session, clock):
     before = row_of(w, s)
     cancel(w, g, "lesson-wed", "2026-10-21")                                  # not held: not charged, not counted - as it always was
     after = row_of(w, s)
-    for key in ("debt", "advance", "lessons_total", "lessons_used", "lessons_left", "status"):
+    for key in ("unpaid", "advance", "lessons_total", "lessons_used", "lessons_left", "status"):
         assert before[key] == after[key], key
     assert statement(w, m)["summary"]["recalculated"] == 0
 

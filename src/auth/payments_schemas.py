@@ -355,7 +355,7 @@ class MembershipPaymentRow(UnpaidFields):
     # that have begun cost minus the money; ``advance`` = money beyond that; never both > 0.  ``partial_credit`` - money
     # inside the first unpaid day.  ``lessons_unpaid`` - held lessons not covered by the money (lessons mode).
     # ``refundable`` - how much of the advance can be returned; ``writeoff_allowed`` - debt > 0 and the caller may.
-    debt: int = 0               # everything unpaid (= ``debt_amount + due_amount``): a sum, never a name; the name is in ``state``
+    unpaid: int = 0             # everything unpaid (= ``debt_amount + due_amount``): a sum, never a name (the word «debt» means only the state after the term); the name is in ``state``
     advance: int = 0
     partial_credit: int = 0
     price_missing: bool = False
@@ -846,7 +846,7 @@ class ReceiptOut(BaseModel):
 class PreviewDue(PayModel):
     """What the student owes today (before the typed amount), named by ``pay_due`` (10.2: the old ``past_debt`` / ``current_due`` / ``days_overdue`` are gone)."""
 
-    debt: int = 0               # everything unpaid (``debt_amount + due_amount``)
+    unpaid: int = 0             # everything unpaid (``debt_amount + due_amount``)
     debt_amount: int = 0
     due_amount: int = 0
     due_until: Optional[date_type] = None
@@ -881,7 +881,7 @@ class PriceAhead(PayModel):
 
 class PreviewResult(PayModel):
     allocations: List[Allocation] = Field(default_factory=list)
-    debt_after: int = 0         # everything unpaid after the payment
+    unpaid_after: int = 0       # everything unpaid after the payment (a sum; the names are ``debt_amount_after`` / ``due_amount_after``)
     debt_amount_after: int = 0
     due_amount_after: int = 0
     due_until_after: Optional[date_type] = None
@@ -1042,7 +1042,7 @@ class StatementSummary(UnpaidFields, PayModel):
     recalculated: int = 0  # PAY-F: the deductions for the lessons the centre cancelled
     refunded: int = 0
     transferred_out: int = 0
-    debt: int = 0               # everything unpaid (``debt_amount + due_amount``)
+    unpaid: int = 0               # everything unpaid (``debt_amount + due_amount``)
     advance: int = 0
     paid_until: Optional[date_type] = None
     status: MembershipStatus = "none"
@@ -1075,6 +1075,14 @@ class StatementDetails(PayModel):
     replaced_by_receipt_no: Optional[int] = None
 
 
+class OpenPart(PayModel):
+    """PAY-DUE 10.11 (lead 20.11, decision 6): one named part of what is open on a statement row (``paid`` / ``due`` / ``debt`` / ``advance``) with its words."""
+
+    name: Literal["paid", "due", "debt", "advance"]
+    amount: int
+    text: str
+
+
 class StatementRow(PayModel):
     seq: int
     date: date_type
@@ -1090,6 +1098,9 @@ class StatementRow(PayModel):
     open_amount: Optional[int] = None
     open_name: Optional[Literal["paid", "due", "debt", "advance"]] = None
     open_text: Optional[str] = None
+    # the same split by name: ONE element, or TWO when the unpaid part of one charge holds both names (a package: some lessons a debt, the newest ones «к оплате»; the debt first).  ``open_name`` is the worst of them
+    # (the tone), ``open_amount`` their sum, ``open_text`` the words of both («Долг 50 000 сум · к оплате 100 000 сум»).  The equalities of 10.11 are summed over ``open_parts``.
+    open_parts: List[OpenPart] = Field(default_factory=list)
     voided_at: Optional[str] = None
     void_reason: Optional[str] = None
     voided_by_name: Optional[str] = None
@@ -1254,7 +1265,7 @@ class BalanceRow(UnpaidFields, PayModel):
     student_archived: bool = False
     status: MembershipStatus = "none"
     paid_until: Optional[date_type] = None
-    debt: int = 0               # everything unpaid (``debt_amount + due_amount``)
+    unpaid: int = 0               # everything unpaid (``debt_amount + due_amount``)
     advance: int = 0
     refundable: int = 0
 

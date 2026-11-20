@@ -163,11 +163,11 @@ def test_a_lesson_that_cannot_be_cancelled_is_a_warning_and_apply_finishes_it(wo
 def test_money_a_holiday_cancellation_of_a_new_lesson_is_not_recalculated(pg_session, clock):
     w = build_org(pg_session)
     g, s, m = month_world(w, clock)                                                 # «свой месяц» + the setting «пересчитывать отмены центра» is ON; today 25.10
-    before = (rows(w, s)[0]["debt"], statement(w, m)["summary"]["recalculated"])
+    before = (rows(w, s)[0]["unpaid"], statement(w, m)["summary"]["recalculated"])
     out = day_off(w)
     new = new_weekly(w, g, validFrom="2026-10-26")
     assert [x["code"] for x in new["warnings"]] == ["DAY_OFF_CANCELLED"]
     (row,) = att(w, new["id"])
     assert row.cancellation_kind == "holiday"
-    assert (rows(w, s)[0]["debt"], statement(w, m)["summary"]["recalculated"]) == before == (600_000, 0)
+    assert (rows(w, s)[0]["unpaid"], statement(w, m)["summary"]["recalculated"]) == before == (600_000, 0)
     assert not [r for r in statement(w, m)["rows"] if r["type"] == "recalc"]

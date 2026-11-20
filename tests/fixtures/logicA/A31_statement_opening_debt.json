@@ -13,6 +13,18 @@
   "mode": "calendar",
   "accounting_start": "2026-10-01",
   "summary": {
+    "debt_amount": 250000,
+    "due_amount": 213000,
+    "due_until": "2026-10-25",
+    "overdue_days": 21,
+    "due_lessons": null,
+    "debt_lessons": 0,
+    "debt_text": "Долг 250 000 сум",
+    "debt_sub": "просрочено 21 день",
+    "due_text": "К оплате 213 000 сум",
+    "due_sub": "до 25.10",
+    "state": "debt",
+    "state_text": "Долг 250 000 сум",
     "charged": 463000,
     "paid": 0,
     "transferred_in": 0,
@@ -20,10 +32,10 @@
     "recalculated": 0,
     "refunded": 0,
     "transferred_out": 0,
-    "debt": 463000,
+    "unpaid": 463000,
     "advance": 0,
     "paid_until": null,
-    "status": "expired",
+    "status": "active",
     "reconciles": true
   },
   "rows": [
@@ -37,6 +49,16 @@
       "outflow": 0,
       "balance_after": -250000,
       "balance_text": "Долг 250 000",
+      "open_amount": 250000,
+      "open_name": "debt",
+      "open_text": "Долг 250 000 сум",
+      "open_parts": [
+        {
+          "name": "debt",
+          "amount": 250000,
+          "text": "Долг 250 000 сум"
+        }
+      ],
       "voided_at": null,
       "void_reason": null,
       "voided_by_name": null,
@@ -69,7 +91,8 @@
           "covered_through": null,
           "partial_credit": 0,
           "state": "open",
-          "bucket": "past_debt"
+          "bucket": "past_debt",
+          "parts": []
         },
         "payment_id": null,
         "receipt_no": null,
@@ -101,6 +124,16 @@
       "outflow": 0,
       "balance_after": -463000,
       "balance_text": "Долг 463 000",
+      "open_amount": 213000,
+      "open_name": "due",
+      "open_text": "К оплате 213 000 сум",
+      "open_parts": [
+        {
+          "name": "due",
+          "amount": 213000,
+          "text": "К оплате 213 000 сум"
+        }
+      ],
       "voided_at": null,
       "void_reason": null,
       "voided_by_name": null,
@@ -133,7 +166,8 @@
           "covered_through": null,
           "partial_credit": 0,
           "state": "open",
-          "bucket": "current"
+          "bucket": "current",
+          "parts": []
         },
         "payment_id": null,
         "receipt_no": null,

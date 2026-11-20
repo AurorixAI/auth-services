@@ -1,8 +1,6 @@
 {
   "as_of": "2026-10-21",
-  "due": 2,
   "ends_today": 0,
-  "expired": 2,
   "expiring": 1,
   "none": 0,
   "active": 5,
@@ -10,39 +8,29 @@
   "tracked_total": 9,
   "period_mode": "calendar",
   "lessons_per_payment": 12,
-  "students_due": 2,
-  "students_expired": 2,
-  "debt_total": 1063000,
+  "debt_total": 850000,
+  "debtors": 3,
+  "due_total": 213000,
+  "due_students": 1,
+  "due_nearest": {
+    "date": "2026-10-25",
+    "text": "до 25.10"
+  },
   "advance_total": 200000,
+  "students_with_advance": 1,
   "memberships_with_debt": 3,
-  "students_with_debt": 3,
   "accounting_start_date": "2026-10-01",
   "paused": 1,
   "buckets": {
-    "debt": 3,
+    "debtors": 3,
+    "to_pay": 1,
     "expiring": 1,
     "active": 4,
     "paused": 1
   },
   "price_missing": 1,
-  "students_with_advance": 1,
-  "debtors": 3,
-  "students_waiting": 0,
-  "debt_waiting_total": 0,
-  "debt_split": {
-    "debtors": 0,
-    "debtors_memberships": 0,
-    "debtors_debt_total": 0,
-    "waiting_students": 0,
-    "waiting_memberships": 0,
-    "waiting_debt_total": 0,
-    "all_debt_total": 0,
-    "all_students_with_debt": 0,
-    "expired": 0,
-    "due": 0,
-    "students_expired": 0,
-    "students_due": 0
-  },
   "debt_ages": [],
-  "students_paused": 1
+  "students_paused": 1,
+  "pay_due_days": 5,
+  "pay_due_lessons": 2
 }

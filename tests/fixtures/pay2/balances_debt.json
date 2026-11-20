@@ -1,6 +1,18 @@
 {
   "items": [
     {
+      "debt_amount": 70000,
+      "due_amount": 0,
+      "due_until": null,
+      "overdue_days": 2,
+      "due_lessons": null,
+      "debt_lessons": 0,
+      "debt_text": "Долг 70 000 сум",
+      "debt_sub": "просрочено 2 дня · оплачено до 01.11",
+      "due_text": null,
+      "due_sub": null,
+      "state": "debt",
+      "state_text": "Долг 70 000 сум",
       "membership_id": "00000000-0000-4000-8000-000000000005",
       "student_id": "00000000-0000-4000-8000-000000000105",
       "student_name": "Каримова Алия",
@@ -13,19 +25,14 @@
       "student_archived": false,
       "status": "active",
       "paid_until": "2026-11-01",
-      "debt": 70000,
-      "past_debt": 0,
-      "current_due": 70000,
+      "unpaid": 70000,
       "advance": 0,
-      "refundable": 0,
-      "tab": null,
-      "waiting_until": null
+      "refundable": 0
     }
   ],
   "total": 1,
   "limit": 50,
   "offset": 0,
-  "debt_total": 0,
-  "debtors_debt_total": 0,
-  "debt_waiting_total": 0
+  "debt_total": 70000,
+  "due_total": 0
 }

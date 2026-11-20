@@ -301,7 +301,7 @@ def enrol_with_pay_from(world, before, change, populated):
         add(world, s1, group=world.group, mode="add")                                                  # somebody is already in a group before the switch
     assert c.put(f"{API}/org/settings/payments", json=change).status_code == 200
     add(world, s0, group=world.group, mode="add", pay_from=(ps.business_today() - timedelta(days=10)).isoformat())
-    debt = c.get(f"{API}/org/students/{s0.id}/memberships").json()[0]["debt"]
+    debt = c.get(f"{API}/org/students/{s0.id}/memberships").json()[0]["unpaid"]
     return debt, history_of(world)
 
 

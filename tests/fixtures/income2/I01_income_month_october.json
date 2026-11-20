@@ -284,11 +284,10 @@
       "paid": 1900000,
       "forgiven": 100000,
       "debt": 500000,
-      "debtors_debt": 500000,
+      "due": 0,
       "students": 6,
-      "students_with_debt": 3,
-      "debt_waiting": 0,
-      "students_waiting": 0,
+      "debtors": 3,
+      "due_students": 0,
       "pct": 76
     },
     "groups": [
@@ -301,11 +300,10 @@
         "paid": 1100000,
         "forgiven": 100000,
         "debt": 300000,
-        "debtors_debt": 300000,
+        "due": 0,
         "students": 3,
-        "students_with_debt": 1,
-        "debt_waiting": 0,
-        "students_waiting": 0,
+        "debtors": 1,
+        "due_students": 0,
         "pct": 73
       },
       {
@@ -317,11 +315,10 @@
         "paid": 450000,
         "forgiven": 0,
         "debt": 150000,
-        "debtors_debt": 150000,
+        "due": 0,
         "students": 2,
-        "students_with_debt": 1,
-        "debt_waiting": 0,
-        "students_waiting": 0,
+        "debtors": 1,
+        "due_students": 0,
         "pct": 75
       },
       {
@@ -333,26 +330,22 @@
         "paid": 350000,
         "forgiven": 0,
         "debt": 50000,
-        "debtors_debt": 50000,
+        "due": 0,
         "students": 1,
-        "students_with_debt": 1,
-        "debt_waiting": 0,
-        "students_waiting": 0,
+        "debtors": 1,
+        "due_students": 0,
         "pct": 87
       }
     ]
   },
   "position": {
     "debt_total": 500000,
-    "past_debt_total": 0,
+    "due_total": 0,
+    "debtors": 3,
+    "due_students": 0,
     "advance_total": 450000,
     "memberships_with_debt": 3,
-    "students_with_debt": 3,
     "memberships_with_advance": 2,
-    "debtors_debt_total": 500000,
-    "debt_waiting_total": 0,
-    "students_debtors": 3,
-    "students_waiting": 0,
     "students_with_advance": 2
   },
   "checks": [

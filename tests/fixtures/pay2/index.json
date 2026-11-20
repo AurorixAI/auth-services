@@ -4,6 +4,7 @@
   "e2_preview_*": "PaymentPreview",
   "e3_preview_*": "PaymentPreview",
   "e5_preview_*": "PaymentPreview",
+  "e10_preview_*": "PaymentPreview",
   "e1_create_300000": "PaymentCreated",
   "e8_replace_*": "PaymentCreated",
   "e1_void_300000": "PaymentVoided",

@@ -35,11 +35,11 @@ def test_s0_debt_on_the_day_before_the_start_for_a_student_of_september(world, f
     m = membership(world)
     stay(world, m, D(2026, 9, 1))
     out = put(world, m, {"debt_amount": 550_000, "debt_on": "2026-10-31"})
-    assert out["opening"]["debt_on"] == "2026-10-31" and out["row"]["debt"] == 550_000
+    assert out["opening"]["debt_on"] == "2026-10-31" and out["row"]["unpaid"] == 550_000
     st = owner(world).get(f"{API}/org/memberships/{m.id}/statement").json()
     first = st["rows"][0]
     assert first["type"] == "opening_debt" and first["debit"] == 550_000 and "31.10.2026" in first["title"]
-    assert st["summary"]["reconciles"] and st["summary"]["debt"] == 550_000
+    assert st["summary"]["reconciles"] and st["summary"]["unpaid"] == 550_000
     # a day later than L is still refused, and the hint names the day
     r = owner(world).put(f"{API}/org/memberships/{m.id}/opening-balance", json={"debt_amount": 5, "debt_on": "2026-11-01"})
     assert r.status_code == 422 and r.json()["detail"]["code"] == "OPENING_RANGE" and "31.10.2026" in r.json()["detail"]["message"]
@@ -51,7 +51,7 @@ def test_s0_paid_until_the_day_before_the_start_is_a_reviewed_row_that_changes_n
     stay(world, m, D(2026, 9, 1))
     out = put(world, m, {"paid_until": "2026-10-31"})
     assert out["opening"]["paid_until"] == "2026-10-31" and len(live(world)) == 1               # stored: the row is «проверено»
-    assert (out["row"]["debt"], out["row"]["advance"], out["row"]["paid_until"]) == (0, 0, "2026-10-31")
+    assert (out["row"]["unpaid"], out["row"]["advance"], out["row"]["paid_until"]) == (0, 0, "2026-10-31")
     assert world.db.query(GroupAudit).filter_by(org_id=world.org.id, action="opening_balance_set").count() == 1
     st = owner(world).get(f"{API}/org/memberships/{m.id}/statement").json()
     line = next(r for r in st["rows"] if r["type"] == "opening_paid_until")
@@ -74,10 +74,10 @@ def test_s0_paid_until_in_november_pays_november(world, fixed_today):
     stay(world, m, D(2026, 9, 1))
     out = put(world, m, {"paid_until": "2026-11-30"})
     assert out["opening"]["paid_until"] == "2026-11-30"
-    assert (out["row"]["debt"], out["row"]["paid_until"]) == (0, "2026-11-30")
+    assert (out["row"]["unpaid"], out["row"]["paid_until"]) == (0, "2026-11-30")
     fixed_today(D(2026, 11, 20))
     row = put(world, m, {"paid_until": "2026-11-30"})["row"]
-    assert (row["debt"], row["advance"], row["status"], row["paid_until"]) == (0, 0, "active", "2026-11-30")
+    assert (row["unpaid"], row["advance"], row["status"], row["paid_until"]) == (0, 0, "active", "2026-11-30")
     fixed_today(D(2026, 12, 3))
     got = owner(world).get(f"{API}/org/memberships/{m.id}/opening-balance").json()
     assert got["paid_until"] == "2026-11-30"

@@ -667,7 +667,7 @@
         "type": "object"
       },
       "DebtAgeBasket": {
-        "description": "Money-2 T18: one basket of the age of the debt of the REAL debtors (not the waiting ones): distinct students, memberships and the sum of the debt.",
+        "description": "Money-2 T18: one basket of the age of the debt (``overdue_days``): distinct students, memberships and the sum of ``debt_amount``.",
         "properties": {
           "bucket": {
             "enum": [
@@ -699,73 +699,6 @@
           "bucket"
         ],
         "title": "DebtAgeBasket",
-        "type": "object"
-      },
-      "DebtSplit": {
-        "description": "Money-1 B7 / R3 №20: the debt of the centre split by ONE definition.  ``debtors`` + ``waiting_students`` (the memberships and the sums too) = the old ``students_with_debt`` /\n``memberships_with_debt`` / ``debt_total``.  ``expired`` / ``due`` / ``students_expired`` / ``students_due`` are the old status counters WITHOUT the students who only wait: the red banner, the\ncard «Просрочено» and the card «К оплате» read these.",
-        "properties": {
-          "all_debt_total": {
-            "default": 0,
-            "title": "All Debt Total",
-            "type": "integer"
-          },
-          "all_students_with_debt": {
-            "default": 0,
-            "title": "All Students With Debt",
-            "type": "integer"
-          },
-          "debtors": {
-            "default": 0,
-            "title": "Debtors",
-            "type": "integer"
-          },
-          "debtors_debt_total": {
-            "default": 0,
-            "title": "Debtors Debt Total",
-            "type": "integer"
-          },
-          "debtors_memberships": {
-            "default": 0,
-            "title": "Debtors Memberships",
-            "type": "integer"
-          },
-          "due": {
-            "default": 0,
-            "title": "Due",
-            "type": "integer"
-          },
-          "expired": {
-            "default": 0,
-            "title": "Expired",
-            "type": "integer"
-          },
-          "students_due": {
-            "default": 0,
-            "title": "Students Due",
-            "type": "integer"
-          },
-          "students_expired": {
-            "default": 0,
-            "title": "Students Expired",
-            "type": "integer"
-          },
-          "waiting_debt_total": {
-            "default": 0,
-            "title": "Waiting Debt Total",
-            "type": "integer"
-          },
-          "waiting_memberships": {
-            "default": 0,
-            "title": "Waiting Memberships",
-            "type": "integer"
-          },
-          "waiting_students": {
-            "default": 0,
-            "title": "Waiting Students",
-            "type": "integer"
-          }
-        },
-        "title": "DebtSplit",
         "type": "object"
       },
       "DiffBrief": {
@@ -914,6 +847,26 @@
           "divisor"
         ],
         "title": "DivisorRow",
+        "type": "object"
+      },
+      "DueNearest": {
+        "description": "PAY-DUE 10.2: the nearest term among the sums that are «К оплате»: the day and the words (``до сегодня`` / ``до завтра, 21.11`` / ``до 24.11``).",
+        "properties": {
+          "date": {
+            "format": "date",
+            "title": "Date",
+            "type": "string"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "date",
+          "text"
+        ],
+        "title": "DueNearest",
         "type": "object"
       },
       "FirstPriceInfo": {
@@ -2475,23 +2428,6 @@
             "title": "Advance",
             "type": "integer"
           },
-          "bucket": {
-            "anyOf": [
-              {
-                "enum": [
-                  "debt",
-                  "expiring",
-                  "active",
-                  "paused"
-                ],
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Bucket"
-          },
           "class_level": {
             "anyOf": [
               {
@@ -2502,11 +2438,6 @@
               }
             ],
             "title": "Class Level"
-          },
-          "current_due": {
-            "default": 0,
-            "title": "Current Due",
-            "type": "integer"
           },
           "days_left": {
             "anyOf": [
@@ -2530,11 +2461,6 @@
             ],
             "title": "Days Overdue"
           },
-          "debt": {
-            "default": 0,
-            "title": "Debt",
-            "type": "integer"
-          },
           "debt_age_bucket": {
             "anyOf": [
               {
@@ -2552,32 +2478,37 @@
             ],
             "title": "Debt Age Bucket"
           },
-          "debt_age_days": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Debt Age Days"
+          "debt_amount": {
+            "default": 0,
+            "title": "Debt Amount",
+            "type": "integer"
           },
-          "debt_reason": {
+          "debt_lessons": {
+            "default": 0,
+            "title": "Debt Lessons",
+            "type": "integer"
+          },
+          "debt_sub": {
             "anyOf": [
               {
-                "enum": [
-                  "overdue",
-                  "partial",
-                  "never_paid"
-                ],
                 "type": "string"
               },
               {
                 "type": "null"
               }
             ],
-            "title": "Debt Reason"
+            "title": "Debt Sub"
+          },
+          "debt_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Debt Text"
           },
           "display_id": {
             "anyOf": [
@@ -2589,6 +2520,59 @@
               }
             ],
             "title": "Display Id"
+          },
+          "due_amount": {
+            "default": 0,
+            "title": "Due Amount",
+            "type": "integer"
+          },
+          "due_lessons": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "integer"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Due Lessons"
+          },
+          "due_sub": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Due Sub"
+          },
+          "due_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Due Text"
+          },
+          "due_until": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Due Until"
           },
           "group_id": {
             "title": "Group Id",
@@ -2679,6 +2663,17 @@
               }
             ]
           },
+          "overdue_days": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Overdue Days"
+          },
           "paid_through_forecast": {
             "anyOf": [
               {
@@ -2706,11 +2701,6 @@
           "partial_credit": {
             "default": 0,
             "title": "Partial Credit",
-            "type": "integer"
-          },
-          "past_debt": {
-            "default": 0,
-            "title": "Past Debt",
             "type": "integer"
           },
           "paused": {
@@ -2751,7 +2741,26 @@
             "title": "Price Missing",
             "type": "boolean"
           },
-          "reason": {
+          "refundable": {
+            "default": 0,
+            "title": "Refundable",
+            "type": "integer"
+          },
+          "state": {
+            "default": "none",
+            "enum": [
+              "debt",
+              "to_pay",
+              "expiring",
+              "paused",
+              "paid",
+              "free",
+              "none"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "state_text": {
             "anyOf": [
               {
                 "type": "string"
@@ -2760,12 +2769,7 @@
                 "type": "null"
               }
             ],
-            "title": "Reason"
-          },
-          "refundable": {
-            "default": 0,
-            "title": "Refundable",
-            "type": "integer"
+            "title": "State Text"
           },
           "status": {
             "enum": [
@@ -2787,24 +2791,6 @@
           "student_name": {
             "title": "Student Name",
             "type": "string"
-          },
-          "tab": {
-            "anyOf": [
-              {
-                "enum": [
-                  "debtors",
-                  "waiting",
-                  "expiring",
-                  "active",
-                  "paused"
-                ],
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Tab"
           },
           "teacher_id": {
             "anyOf": [
@@ -2828,28 +2814,10 @@
             ],
             "title": "Teacher Name"
           },
-          "waiting_reason": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Waiting Reason"
-          },
-          "waiting_until": {
-            "anyOf": [
-              {
-                "format": "date",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Waiting Until"
+          "unpaid": {
+            "default": 0,
+            "title": "Unpaid",
+            "type": "integer"
           },
           "writeoff_allowed": {
             "default": false,
@@ -3155,6 +3123,36 @@
           "difference"
         ],
         "title": "NextPeriod",
+        "type": "object"
+      },
+      "OpenPart": {
+        "description": "PAY-DUE 10.11 (lead 20.11, decision 6): one named part of what is open on a statement row (``paid`` / ``due`` / ``debt`` / ``advance``) with its words.",
+        "properties": {
+          "amount": {
+            "title": "Amount",
+            "type": "integer"
+          },
+          "name": {
+            "enum": [
+              "paid",
+              "due",
+              "debt",
+              "advance"
+            ],
+            "title": "Name",
+            "type": "string"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "amount",
+          "text"
+        ],
+        "title": "OpenPart",
         "type": "object"
       },
       "OpeningBrief": {
@@ -4065,6 +4063,35 @@
         "title": "PausedRange",
         "type": "object"
       },
+      "PayDueImpact": {
+        "description": "``to_due``: students who are debtors now and would not be (their unpaid sum becomes «К оплате»); ``to_debt``: the other way round.  ``texts``: the words for the line before saving (none at zero).",
+        "properties": {
+          "texts": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Texts",
+            "type": "array"
+          },
+          "to_debt": {
+            "default": 0,
+            "title": "To Debt",
+            "type": "integer"
+          },
+          "to_due": {
+            "default": 0,
+            "title": "To Due",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "to_due",
+          "to_debt",
+          "texts"
+        ],
+        "title": "PayDueImpact",
+        "type": "object"
+      },
       "PayError": {
         "properties": {
           "detail": {
@@ -4947,6 +4974,30 @@
             "title": "Lessons Per Payment",
             "type": "integer"
           },
+          "pay_due_days": {
+            "default": 5,
+            "maximum": 14.0,
+            "minimum": 0.0,
+            "title": "Pay Due Days",
+            "type": "integer"
+          },
+          "pay_due_impact": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PayDueImpact"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "pay_due_lessons": {
+            "default": 2,
+            "maximum": 4.0,
+            "minimum": 0.0,
+            "title": "Pay Due Lessons",
+            "type": "integer"
+          },
           "period_mode": {
             "default": "calendar",
             "enum": [
@@ -5133,6 +5184,32 @@
             ],
             "title": "Lessons Per Payment"
           },
+          "pay_due_days": {
+            "anyOf": [
+              {
+                "maximum": 14.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pay Due Days"
+          },
+          "pay_due_lessons": {
+            "anyOf": [
+              {
+                "maximum": 4.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pay Due Lessons"
+          },
           "period_mode": {
             "anyOf": [
               {
@@ -5154,6 +5231,11 @@
       },
       "PaymentStatusPage": {
         "properties": {
+          "amount_total": {
+            "default": 0,
+            "title": "Amount Total",
+            "type": "integer"
+          },
           "as_of": {
             "title": "As Of",
             "type": "string"
@@ -5171,6 +5253,11 @@
           },
           "offset": {
             "title": "Offset",
+            "type": "integer"
+          },
+          "students": {
+            "default": 0,
+            "title": "Students",
             "type": "integer"
           },
           "total": {
@@ -5221,16 +5308,16 @@
         "type": "object"
       },
       "PaymentsBuckets": {
-        "description": "Memberships per tab of the payments page (the same sets ``GET /org/payments/status?bucket=`` lists).",
+        "description": "Memberships per tab of the payments page (the same sets ``GET /org/payments/status?bucket=`` lists); ``debtors`` and ``to_pay`` overlap (a membership with both sums is in both).",
         "properties": {
           "active": {
             "default": 0,
             "title": "Active",
             "type": "integer"
           },
-          "debt": {
+          "debtors": {
             "default": 0,
-            "title": "Debt",
+            "title": "Debtors",
             "type": "integer"
           },
           "expiring": {
@@ -5242,12 +5329,18 @@
             "default": 0,
             "title": "Paused",
             "type": "integer"
+          },
+          "to_pay": {
+            "default": 0,
+            "title": "To Pay",
+            "type": "integer"
           }
         },
         "title": "PaymentsBuckets",
         "type": "object"
       },
       "PaymentsSummary": {
+        "description": "PAY-DUE 10.2: ONE meaning of the unpaid sum.  ``debt_total`` / ``debtors`` are the parts whose term has passed (``debt_amount`` of the rows), ``due_total`` / ``due_students`` the parts still within\ntheir term; the tabs overlap (a student with both sums is counted in both), so the number of a tab = the number of such students and the sum of its rows = its card = the part of the centre.  ``debt_total +\ndue_total`` = everything unpaid (the sum of ``ledger.debt`` of the same memberships, ``scope = all``).",
         "properties": {
           "accounting_start_date": {
             "anyOf": [
@@ -5284,17 +5377,9 @@
             "title": "Debt Ages",
             "type": "array"
           },
-          "debt_split": {
-            "$ref": "#/components/schemas/DebtSplit"
-          },
           "debt_total": {
             "default": 0,
             "title": "Debt Total",
-            "type": "integer"
-          },
-          "debt_waiting_total": {
-            "default": 0,
-            "title": "Debt Waiting Total",
             "type": "integer"
           },
           "debtors": {
@@ -5302,16 +5387,28 @@
             "title": "Debtors",
             "type": "integer"
           },
-          "due": {
-            "title": "Due",
+          "due_nearest": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DueNearest"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "due_students": {
+            "default": 0,
+            "title": "Due Students",
+            "type": "integer"
+          },
+          "due_total": {
+            "default": 0,
+            "title": "Due Total",
             "type": "integer"
           },
           "ends_today": {
             "title": "Ends Today",
-            "type": "integer"
-          },
-          "expired": {
-            "title": "Expired",
             "type": "integer"
           },
           "expiring": {
@@ -5340,6 +5437,16 @@
             "title": "Paused",
             "type": "integer"
           },
+          "pay_due_days": {
+            "default": 5,
+            "title": "Pay Due Days",
+            "type": "integer"
+          },
+          "pay_due_lessons": {
+            "default": 2,
+            "title": "Pay Due Lessons",
+            "type": "integer"
+          },
           "period_mode": {
             "enum": [
               "calendar",
@@ -5353,32 +5460,14 @@
             "title": "Price Missing",
             "type": "integer"
           },
-          "students_due": {
-            "title": "Students Due",
-            "type": "integer"
-          },
-          "students_expired": {
-            "title": "Students Expired",
-            "type": "integer"
-          },
           "students_paused": {
             "default": 0,
             "title": "Students Paused",
             "type": "integer"
           },
-          "students_waiting": {
-            "default": 0,
-            "title": "Students Waiting",
-            "type": "integer"
-          },
           "students_with_advance": {
             "default": 0,
             "title": "Students With Advance",
-            "type": "integer"
-          },
-          "students_with_debt": {
-            "default": 0,
-            "title": "Students With Debt",
             "type": "integer"
           },
           "tracked_total": {
@@ -5388,18 +5477,14 @@
         },
         "required": [
           "as_of",
-          "due",
           "ends_today",
-          "expired",
           "expiring",
           "none",
           "active",
           "free",
           "tracked_total",
           "period_mode",
-          "lessons_per_payment",
-          "students_due",
-          "students_expired"
+          "lessons_per_payment"
         ],
         "title": "PaymentsSummary",
         "type": "object"
@@ -5890,19 +5975,80 @@
         "type": "object"
       },
       "PreviewDue": {
-        "description": "What the student owes today (before the typed amount).",
+        "description": "What the student owes today (before the typed amount), named by ``pay_due`` (10.2: the old ``past_debt`` / ``current_due`` / ``days_overdue`` are gone).",
         "properties": {
           "advance": {
             "default": 0,
             "title": "Advance",
             "type": "integer"
           },
-          "current_due": {
+          "debt_amount": {
             "default": 0,
-            "title": "Current Due",
+            "title": "Debt Amount",
             "type": "integer"
           },
-          "days_overdue": {
+          "debt_sub": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Debt Sub"
+          },
+          "debt_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Debt Text"
+          },
+          "due_amount": {
+            "default": 0,
+            "title": "Due Amount",
+            "type": "integer"
+          },
+          "due_sub": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Due Sub"
+          },
+          "due_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Due Text"
+          },
+          "due_until": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Due Until"
+          },
+          "overdue_days": {
             "anyOf": [
               {
                 "type": "integer"
@@ -5911,12 +6057,7 @@
                 "type": "null"
               }
             ],
-            "title": "Days Overdue"
-          },
-          "debt": {
-            "default": 0,
-            "title": "Debt",
-            "type": "integer"
+            "title": "Overdue Days"
           },
           "paid_until": {
             "anyOf": [
@@ -5930,27 +6071,32 @@
             ],
             "title": "Paid Until"
           },
-          "past_debt": {
-            "default": 0,
-            "title": "Past Debt",
-            "type": "integer"
-          },
           "segments": {
             "items": {
               "$ref": "#/components/schemas/Segment"
             },
             "title": "Segments",
             "type": "array"
+          },
+          "unpaid": {
+            "default": 0,
+            "title": "Unpaid",
+            "type": "integer"
           }
         },
         "required": [
-          "debt",
-          "past_debt",
-          "current_due",
+          "unpaid",
+          "debt_amount",
+          "due_amount",
+          "due_until",
+          "overdue_days",
+          "debt_text",
+          "debt_sub",
+          "due_text",
+          "due_sub",
           "advance",
           "segments",
-          "paid_until",
-          "days_overdue"
+          "paid_until"
         ],
         "title": "PreviewDue",
         "type": "object"
@@ -6002,26 +6148,27 @@
             "title": "Allocations",
             "type": "array"
           },
-          "current_due_after": {
+          "debt_amount_after": {
             "default": 0,
-            "title": "Current Due After",
+            "title": "Debt Amount After",
             "type": "integer"
           },
-          "days_overdue_after": {
+          "due_amount_after": {
+            "default": 0,
+            "title": "Due Amount After",
+            "type": "integer"
+          },
+          "due_until_after": {
             "anyOf": [
               {
-                "type": "integer"
+                "format": "date",
+                "type": "string"
               },
               {
                 "type": "null"
               }
             ],
-            "title": "Days Overdue After"
-          },
-          "debt_after": {
-            "default": 0,
-            "title": "Debt After",
-            "type": "integer"
+            "title": "Due Until After"
           },
           "lessons": {
             "anyOf": [
@@ -6032,6 +6179,17 @@
                 "type": "null"
               }
             ]
+          },
+          "overdue_days_after": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Overdue Days After"
           },
           "paid_until_after": {
             "anyOf": [
@@ -6062,11 +6220,6 @@
             "title": "Partial Credit After",
             "type": "integer"
           },
-          "past_debt_after": {
-            "default": 0,
-            "title": "Past Debt After",
-            "type": "integer"
-          },
           "price_ahead": {
             "items": {
               "$ref": "#/components/schemas/PriceAhead"
@@ -6092,18 +6245,24 @@
             "default": "",
             "title": "Summary Text",
             "type": "string"
+          },
+          "unpaid_after": {
+            "default": 0,
+            "title": "Unpaid After",
+            "type": "integer"
           }
         },
         "required": [
           "allocations",
-          "debt_after",
-          "past_debt_after",
-          "current_due_after",
+          "unpaid_after",
+          "debt_amount_after",
+          "due_amount_after",
+          "due_until_after",
+          "overdue_days_after",
           "advance_after",
           "paid_until_before",
           "paid_until_after",
           "status_after",
-          "days_overdue_after",
           "partial_credit_after",
           "lessons",
           "summary_text",
@@ -7686,6 +7845,13 @@
             "title": "Partial Credit",
             "type": "integer"
           },
+          "parts": {
+            "items": {
+              "$ref": "#/components/schemas/SegmentPart"
+            },
+            "title": "Parts",
+            "type": "array"
+          },
           "period_from": {
             "format": "date",
             "title": "Period From",
@@ -7752,7 +7918,8 @@
           "covered_through",
           "partial_credit",
           "state",
-          "bucket"
+          "bucket",
+          "parts"
         ],
         "title": "Segment",
         "type": "object"
@@ -7774,6 +7941,54 @@
           "in_period"
         ],
         "title": "SegmentLessons",
+        "type": "object"
+      },
+      "SegmentPart": {
+        "description": "PAY-DUE 10.11: the unpaid part of ONE segment by name (``debt`` / ``due``); a package segment may hold both (the debt first): the statement and the Excel read the same field.",
+        "properties": {
+          "due_until": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Due Until"
+          },
+          "lessons": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lessons"
+          },
+          "name": {
+            "enum": [
+              "debt",
+              "due"
+            ],
+            "title": "Name",
+            "type": "string"
+          },
+          "unpaid": {
+            "title": "Unpaid",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "name",
+          "unpaid",
+          "due_until",
+          "lessons"
+        ],
+        "title": "SegmentPart",
         "type": "object"
       },
       "SettleItem": {
@@ -8821,6 +9036,52 @@
           "details": {
             "$ref": "#/components/schemas/StatementDetails"
           },
+          "open_amount": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Open Amount"
+          },
+          "open_name": {
+            "anyOf": [
+              {
+                "enum": [
+                  "paid",
+                  "due",
+                  "debt",
+                  "advance"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Open Name"
+          },
+          "open_parts": {
+            "items": {
+              "$ref": "#/components/schemas/OpenPart"
+            },
+            "title": "Open Parts",
+            "type": "array"
+          },
+          "open_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Open Text"
+          },
           "outflow": {
             "default": 0,
             "title": "Outflow",
@@ -8894,6 +9155,10 @@
           "outflow",
           "balance_after",
           "balance_text",
+          "open_amount",
+          "open_name",
+          "open_text",
+          "open_parts",
           "voided_at",
           "void_reason",
           "voided_by_name",
@@ -8915,10 +9180,101 @@
             "title": "Charged",
             "type": "integer"
           },
-          "debt": {
+          "debt_amount": {
             "default": 0,
-            "title": "Debt",
+            "title": "Debt Amount",
             "type": "integer"
+          },
+          "debt_lessons": {
+            "default": 0,
+            "title": "Debt Lessons",
+            "type": "integer"
+          },
+          "debt_sub": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Debt Sub"
+          },
+          "debt_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Debt Text"
+          },
+          "due_amount": {
+            "default": 0,
+            "title": "Due Amount",
+            "type": "integer"
+          },
+          "due_lessons": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "integer"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Due Lessons"
+          },
+          "due_sub": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Due Sub"
+          },
+          "due_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Due Text"
+          },
+          "due_until": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Due Until"
+          },
+          "overdue_days": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Overdue Days"
           },
           "paid": {
             "default": 0,
@@ -8952,6 +9308,31 @@
             "title": "Refunded",
             "type": "integer"
           },
+          "state": {
+            "default": "none",
+            "enum": [
+              "debt",
+              "to_pay",
+              "expiring",
+              "paused",
+              "paid",
+              "free",
+              "none"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "state_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "State Text"
+          },
           "status": {
             "default": "none",
             "enum": [
@@ -8976,6 +9357,11 @@
             "title": "Transferred Out",
             "type": "integer"
           },
+          "unpaid": {
+            "default": 0,
+            "title": "Unpaid",
+            "type": "integer"
+          },
           "written_off": {
             "default": 0,
             "title": "Written Off",
@@ -8983,6 +9369,18 @@
           }
         },
         "required": [
+          "debt_amount",
+          "due_amount",
+          "due_until",
+          "overdue_days",
+          "due_lessons",
+          "debt_lessons",
+          "debt_text",
+          "debt_sub",
+          "due_text",
+          "due_sub",
+          "state",
+          "state_text",
           "charged",
           "paid",
           "transferred_in",
@@ -8990,7 +9388,7 @@
           "recalculated",
           "refunded",
           "transferred_out",
-          "debt",
+          "unpaid",
           "advance",
           "paid_until",
           "status",
@@ -10993,7 +11391,7 @@
     },
     "/org/payments/status": {
       "get": {
-        "description": "Членства со статусом оплаты (по вкладкам), с точным total. PAY-2: вкладка ``debt`` — члены с долгом > 0\n(в том числе ушедшие и архивные), ``sort=debt`` — по убыванию долга. LOGIC-A (решение владельца 21.10): вкладки\n``debt`` Должники / ``expiring`` Скоро платить / ``active`` Оплачено / ``paused`` На паузе (``due`` — старое имя ``debt``; ``none`` — старая\nвкладка, один релиз).",
+        "description": "Членства со статусом оплаты (по вкладкам), с точным ``total`` (строки). PAY-DUE: вкладки ``debtors`` Должники (есть ``debt_amount``; ``debt`` — старое имя) / ``to_pay`` К оплате (есть ``due_amount``,\nв том числе у должников) / ``expiring`` Заканчивается оплата / ``active`` Без долга / ``paused`` На паузе; обе вкладки неоплаты читают и закрытые участия. ``students`` — число разных учеников фильтра,\n``amount_total`` — сумма части вкладки по всем строкам фильтра. ``sort=debt`` — по убыванию ``debt_amount`` (``to_pay`` — по ближайшему сроку).",
         "parameters": [
           {
             "in": "query",
@@ -11002,14 +11400,13 @@
             "schema": {
               "default": "all",
               "enum": [
-                "debt",
                 "debtors",
-                "waiting",
+                "debt",
+                "to_pay",
                 "expiring",
                 "active",
                 "paused",
                 "all",
-                "due",
                 "none"
               ],
               "title": "Bucket",

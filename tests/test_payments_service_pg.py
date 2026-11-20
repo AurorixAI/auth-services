@@ -196,9 +196,12 @@ def test_history_listing_and_include_voided(world):
 def test_status_boundaries_through_the_api(world, offset, status):
     pay(world, paid_on=day(-30), valid_from=day(-30), valid_to=day(offset))
     row = row_of(world)
-    assert row["status"] == status
-    if status == "expired":
-        assert row["days_overdue"] == 1
+    # PAY-DUE 3.2: the money covers the days only up to ``offset``, the rest of the period is unpaid - so the ROW is named by the unpaid sum (``active`` + ``state``), not by the paid-until status; the paid-until
+    # boundaries stay in ``paid_until`` / ``days_left`` and in the counters of the summary (the statuses live on for «Заканчивается оплата» at a zero balance: see the tab tests)
+    assert row["paid_until"] == day(offset).isoformat() and row["unpaid"] > 0 and row["status"] == "active" and row["days_overdue"] is None
+    assert row["state"] in ("debt", "to_pay")
+    s = summary(world)
+    assert (s["ends_today"], s["expiring"]) == ({"ends_today": 1}.get(status, 0), 1 if status == "expiring" else 0)
     assert status_page(world, bucket="all")["total"] == 3
 
 
@@ -275,7 +278,8 @@ def test_student_in_two_groups_is_two_rows_with_their_own_statuses(world):
     page = status_page(world, bucket="all", search="Каримова")
     assert page["total"] == 2
     by_group = {r["group_name"]: r for r in page["items"]}
-    assert by_group["Группа"]["status"] == "expired" and by_group["Вторая"]["status"] == "active"
+    assert by_group["Группа"]["status"] == "active" and by_group["Группа"]["state"] in ("debt", "to_pay") and by_group["Группа"]["paid_until"] == day(-1).isoformat()      # PAY-DUE 3.2: owes -> named by ``state``
+    assert by_group["Вторая"]["status"] == "active"
     assert by_group["Группа"]["is_primary"] and not by_group["Вторая"]["is_primary"]
     rows = owner(world).get(f"{API}/org/students/{world.students[0].id}/memberships").json()
     assert [r["group_name"] for r in rows] == ["Группа", "Вторая"]
@@ -421,9 +425,9 @@ def test_the_old_fee_endpoint_is_gone_and_says_where_to_go(world):
 
 def test_expiring_thresholds_come_from_the_settings(world):
     pay(world, paid_on=day(-20), valid_from=day(-20), valid_to=day(5))
-    assert row_of(world)["status"] == "active"
+    assert row_of(world)["status"] == "active" and summary(world)["expiring"] == 0
     set_settings(world, expiring_days=5)
-    assert row_of(world)["status"] == "expiring"
+    assert row_of(world)["status"] == "active" and summary(world)["expiring"] == 1       # PAY-DUE 3.2: the row owes (the money covers only 5 days of the period), so its status stays ``active``; the counter shows the threshold
 
 
 def test_other_organisation_gets_404_everywhere_and_sees_nothing(world):

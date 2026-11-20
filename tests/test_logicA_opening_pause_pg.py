@@ -52,7 +52,7 @@ def test_opening_a_paid_until_golden(world, fixed_today):
     out = put(world, m, {"paid_until": "2026-10-31", "note": "из таблицы Excel"})
     assert out["opening"]["paid_until"] == "2026-10-31" and out["opening"]["source"] == "manual"
     row = out["row"]
-    assert (row["debt"], row["advance"], row["status"], row["paid_until"], row["days_left"]) == (0, 0, "active", "2026-10-31", 10)
+    assert (row["unpaid"], row["advance"], row["status"], row["paid_until"], row["days_left"]) == (0, 0, "active", "2026-10-31", 10)
     assert row["opening"]["paid_until"] == "2026-10-31"
     imp = out["impact"]
     assert (imp["debt_before"], imp["debt_after"], imp["charged_delta"], imp["paid_until_after"]) == (213_000, 0, -213_000, "2026-10-31")
@@ -66,10 +66,10 @@ def test_opening_b_debt_and_the_payment_that_closes_it_first(world, fixed_today)
     m = enrolled(world, D(2026, 10, 21))
     out = put(world, m, {"debt_amount": 250_000, "debt_on": "2026-09-30"})
     row = out["row"]
-    assert (row["debt"], row["debt_amount"], row["due_amount"], row["due_until"], row["status"], row["days_overdue"]) == (463_000, 250_000, 213_000, "2026-10-25", "expired", 21)      # the opening debt is a debt at once; the period that begins today is «К оплате» until the 5th day
+    assert (row["unpaid"], row["debt_amount"], row["due_amount"], row["due_until"], row["status"], row["days_overdue"], row["overdue_days"]) == (463_000, 250_000, 213_000, "2026-10-25", "active", None, 21)      # the opening debt is a debt at once; the period that begins today is «К оплате» until the 5th day
     assert row["paid_until"] is None
     pv = owner(world).get(f"{API}/org/memberships/{m.id}/payments/preview", params={"amount": 300_000}).json()
-    assert pv["result"]["paid_until_after"] == "2026-10-22" and pv["result"]["debt_after"] == 163_000
+    assert pv["result"]["paid_until_after"] == "2026-10-22" and pv["result"]["unpaid_after"] == 163_000
     assert pv["result"]["summary_text"] == "Погасит долг 250 000 сум · к оплате 50 000 сум из 213 000 сум → оплачено до 22.10 · останется 163 000 сум"
     created = post_payment(world, m, amount=300_000)
     items = created["allocation"]["items"]
@@ -78,7 +78,7 @@ def test_opening_b_debt_and_the_payment_that_closes_it_first(world, fixed_today)
     st = owner(world).get(f"{API}/org/memberships/{m.id}/statement").json()
     kinds = [r["type"] for r in st["rows"]]
     assert kinds[0] == "opening_debt" and st["rows"][0]["title"] == "Долг на начало учёта на 30.09.2026" and st["rows"][0]["debit"] == 250_000
-    assert st["summary"]["reconciles"] and st["summary"]["debt"] == 163_000
+    assert st["summary"]["reconciles"] and st["summary"]["unpaid"] == 163_000
 
 
 def test_opening_c_both_and_dry_run_writes_nothing(world, fixed_today):
@@ -168,7 +168,7 @@ def chain1_world(w):
 def test_pause_golden_chain1_and_void_restores(world, fixed_today):
     m = chain1_world(world)
     row0 = owner(world).get(f"{API}/org/students/{m.student_id}/memberships").json()[0]
-    assert (row0["debt"], row0["paid_until"]) == (20_000, "2026-10-30")
+    assert (row0["unpaid"], row0["paid_until"]) == (20_000, "2026-10-30")
     out = pause(world, m, "2026-10-20", "2026-10-24", reason="уехал к родственникам")
     imp, row = out["impact"], out["row"]
     assert (imp["debt_before"], imp["advance_after"], imp["charged_delta"], imp["refundable_after"], imp["paid_until_after"]) == (
@@ -181,7 +181,7 @@ def test_pause_golden_chain1_and_void_restores(world, fixed_today):
     v = owner(world).post(f"{API}/org/pauses/{out['pause']['id']}/void", json={"reason": "ошибся датой"})
     assert v.status_code == 200, v.text
     back = v.json()
-    assert back["row"]["debt"] == 20_000 and back["row"]["status"] != "paused" and back["impact"]["charged_delta"] == 100_000
+    assert back["row"]["unpaid"] == 20_000 and back["row"]["status"] != "paused" and back["impact"]["charged_delta"] == 100_000
     assert len(audit(world, "membership_pause_set")) == 1 and len(audit(world, "membership_pause_void")) == 1
     assert owner(world).get(f"{API}/org/memberships/{m.id}/pauses").json()[0]["voided_at"]
 

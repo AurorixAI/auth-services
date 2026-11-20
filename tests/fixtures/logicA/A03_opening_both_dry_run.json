@@ -25,6 +25,18 @@
   },
   "dry_run": true,
   "row": {
+    "debt_amount": 100000,
+    "due_amount": 0,
+    "due_until": null,
+    "overdue_days": 21,
+    "due_lessons": null,
+    "debt_lessons": 0,
+    "debt_text": "Долг 100 000 сум",
+    "debt_sub": "просрочено 21 день · оплачено до 25.10",
+    "due_text": null,
+    "due_sub": null,
+    "state": "debt",
+    "state_text": "Долг 100 000 сум",
     "membership_id": "00000000-0000-4000-8000-000000000101",
     "student_id": "00000000-0000-4000-8000-000000000201",
     "student_name": "Каримов Алишер",
@@ -56,9 +68,7 @@
     "lessons_left": null,
     "paid_through_forecast": null,
     "last_payment": null,
-    "debt": 100000,
-    "past_debt": 100000,
-    "current_due": 0,
+    "unpaid": 100000,
     "advance": 0,
     "partial_credit": 0,
     "price_missing": false,
@@ -73,14 +83,7 @@
       "debt_on": "2026-09-30"
     },
     "price_ends_on_leave": false,
-    "bucket": null,
-    "debt_reason": null,
-    "reason": null,
-    "tab": null,
-    "waiting_until": null,
-    "waiting_reason": null,
-    "debt_age_days": null,
-    "debt_age_bucket": null
+    "debt_age_bucket": "to_30"
   },
   "warnings": []
 }

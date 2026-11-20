@@ -100,10 +100,10 @@ def test_17_the_real_month_with_two_extra_lessons(pg_session, clock):
         assert r.status_code == 201, r.text
     clock.set("2026-11-20 12:00")
     (row,) = rows(w, s)
-    assert row["debt"] == 323_000
+    assert row["unpaid"] == 323_000
     cancel(w, g, "lesson-mon", "2026-11-23")                                              # a cancelled regular lesson stays in the numerator
     (row,) = rows(w, s)
-    assert row["debt"] == 323_000
+    assert row["unpaid"] == 323_000
 
 
 @needs_pg

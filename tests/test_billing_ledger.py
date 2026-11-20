@@ -5,7 +5,9 @@ from datetime import date, timedelta
 import pytest
 
 from src.auth import billing_ledger as bl
+from src.auth import pay_due
 from src.auth import payment_status as ps
+from src.auth import payments_views as pv
 
 from tests.pay2_ledger_helpers import (
     A_PAY, D, TODAY, alloc_tuple, credit, e1, e2, e3, e5, fixture, fixture_alloc_tuple, fixture_seg, flat, make,
@@ -18,22 +20,27 @@ def check_preview(fx: dict, inp: bl.LedgerInput, new: bl.Credit):
     inp = replace(inp, credits=tuple(c for c in inp.credits if c.id != new.id))
     before, after = bl.run_ledger(inp), bl.run_ledger(replace(inp, credits=tuple(inp.credits) + (new,)))
     due = fx["due"]
-    assert (before.debt, before.past_debt, before.current_due, before.advance) == (
-        due["debt"], due["past_debt"], due["current_due"], due["advance"])
+    today = date.fromisoformat(fx["as_of"])
+    # PAY-DUE: the names of the unpaid sum come from the ONE function over the ledger and must be the ones written by hand in the fixture (term 5 days, 2 lessons, the student is in the centre)
+    named = pay_due.classify(before, today, 5, 2, True)
+    assert (before.debt, before.advance) == (due["unpaid"], due["advance"])
+    assert (named.debt_amount, named.due_amount, named.due_until if named.due_amount else None, named.overdue_days if named.debt_amount else None) == (
+        due["debt_amount"], due["due_amount"], date.fromisoformat(due["due_until"]) if due["due_until"] else None, due["overdue_days"])
     shown = [seg_dict(s) for s in before.segments if s.begun and s.unpaid > 0]
     assert shown == [fixture_seg(d) for d in due["segments"]]
     if before.status.status != ps.NONE:
         assert before.status.paid_until.isoformat() == due["paid_until"] if due["paid_until"] else True
-        assert before.status.days_overdue == due["days_overdue"]
     else:
         assert due["paid_until"] is None
     res = fx["result"]
     assert [alloc_tuple(a) for a in after.allocations if a.credit_id == new.id] == [
         fixture_alloc_tuple(a) for a in res["allocations"]]
-    assert (after.debt, after.past_debt, after.current_due, after.advance) == (
-        res["debt_after"], res["past_debt_after"], res["current_due_after"], res["advance_after"])
-    assert after.status.status == res["status_after"]
-    assert after.status.days_overdue == res["days_overdue_after"]
+    named_after = pay_due.classify(after, today, 5, 2, True)
+    assert (after.debt, after.advance) == (res["unpaid_after"], res["advance_after"])
+    assert (named_after.debt_amount, named_after.due_amount, named_after.due_until if named_after.due_amount else None,
+            named_after.overdue_days if named_after.debt_amount else None) == (
+        res["debt_amount_after"], res["due_amount_after"], date.fromisoformat(res["due_until_after"]) if res["due_until_after"] else None, res["overdue_days_after"])
+    assert pv.status_without_paid_until(after.status.status, after.debt) == res["status_after"]
     assert after.partial_credit == res["partial_credit_after"]
     if after.mode == bl.CALENDAR:
         assert (after.status.paid_until.isoformat() if after.status.paid_until else None) == res["paid_until_after"]

@@ -55,7 +55,7 @@ def test_the_preview_is_the_state_after_for_both_kinds_and_writes_nothing(pg_ses
     assert seen["moneyEffects"]["text"] == (f"Ученикам — перерасчёт: долг уменьшится сразу на {each * 5:,} сум (5 учеников)".replace(",", NB).replace(" сум", NB + "сум") if each else "Ученикам перерасчёта не будет")
     def balance():
         w.db.expire_all()
-        return sum(statement(w, m)["summary"]["advance"] - statement(w, m)["summary"]["debt"] for m in ms)
+        return sum(statement(w, m)["summary"]["advance"] - statement(w, m)["summary"]["unpaid"] for m in ms)
 
     account_before = balance()
     real = post(w, "owner", url, body)

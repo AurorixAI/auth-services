@@ -147,16 +147,14 @@ def state_of(e) -> str:
     return STATE_PAID
 
 
-HIDE_PAID_UNTIL_STATUS_ON_UNPAID = False      # ТЗ 3.2: a row that owes something would not say ``expired`` / ``ends_today`` / ``expiring`` (it is ``active`` there); OFF until the lead decides (every old test reads the raw status)
-
-
 def unpaid_status(e) -> str:
-    """The ``status`` of a row.  With ``HIDE_PAID_UNTIL_STATUS_ON_UNPAID`` the paid-until statuses (``expired`` ...) describe the PAID days, not the unpaid sum, and stay only for «Заканчивается оплата» at a zero
-    balance: a row that owes something is then ``active`` (``paused`` / ``free`` / ``none`` kept; the name of the sum is ``state``)."""
-    status = e.ledger.status.status
-    if HIDE_PAID_UNTIL_STATUS_ON_UNPAID and e.due.unpaid > 0 and status in (ps.EXPIRED, ps.ENDS_TODAY, ps.EXPIRING):
-        return ps.ACTIVE
-    return status
+    """The ``status`` of a row (PAY-DUE 3.2).  The paid-until statuses (``expired`` / ``ends_today`` / ``expiring``) describe the PAID days, not the unpaid sum: they stay only for «Заканчивается оплата» at a zero
+    balance; a row that owes something is ``active`` (``paused`` / ``free`` / ``none`` are kept).  The name of the sum is ``state``."""
+    return status_without_paid_until(e.ledger.status.status, e.due.unpaid)
+
+
+def status_without_paid_until(status: str, unpaid: int) -> str:
+    return ps.ACTIVE if unpaid > 0 and status in (ps.EXPIRED, ps.ENDS_TODAY, ps.EXPIRING) else status
 
 
 DEBT_AGE_BASKETS = ("to_30", "31_60", "61_90", "over_90")       # Money-2 T18: the baskets of the age of a debt in days: up to 30 | 31-60 | 61-90 | over 90
@@ -217,22 +215,29 @@ def parts_of_segment(due, seg_id: str) -> list:
 
 
 def open_of_row(kind: str, ref_id: str, ledger: bl.Ledger, due, segments: dict) -> dict:
-    """PAY-DUE 10.11: ``open_amount`` / ``open_name`` / ``open_text`` of a statement row (see ``StatementRow``).  A charge whose segment holds BOTH names (a package) is named by its debt part (the rest is in ``parts``)."""
-    none = {"open_amount": None, "open_name": None, "open_text": None}
+    """PAY-DUE 10.11: ``open_amount`` / ``open_name`` / ``open_text`` / ``open_parts`` of a statement row (see ``StatementRow``).  A charge whose unpaid part holds BOTH names (a package) has two ``open_parts``
+    (the debt first), ``open_name`` is the worst of them and ``open_text`` says both."""
+    none = {"open_amount": None, "open_name": None, "open_text": None, "open_parts": []}
     if kind in ("charge", "opening_debt"):
         seg = segments[ref_id]
         parts = due.parts_of(seg.id)
+        packages = due.due_lessons is not None
         debt = sum(p.unpaid for p in parts if p.name == pay_due.DEBT)
         owed = sum(p.unpaid for p in parts if p.name == pay_due.DUE)
-        packages = due.due_lessons is not None
+        out = []
         if debt > 0:
-            return {"open_amount": debt, "open_name": "debt", "open_text": tx.debt_text(debt, sum(p.lessons or 0 for p in parts if p.name == pay_due.DEBT) if packages else None)}
+            out.append({"name": "debt", "amount": debt, "text": tx.debt_text(debt, sum(p.lessons or 0 for p in parts if p.name == pay_due.DEBT) if packages else None)})
         if owed > 0:
-            return {"open_amount": owed, "open_name": "due", "open_text": tx.due_text(owed, sum(p.lessons or 0 for p in parts if p.name == pay_due.DUE) if packages else None)}
-        return {"open_amount": 0, "open_name": "paid", "open_text": "Оплачено"}
+            out.append({"name": "due", "amount": owed, "text": tx.due_text(owed, sum(p.lessons or 0 for p in parts if p.name == pay_due.DUE) if packages else None)})
+        if not out:
+            out = [{"name": "paid", "amount": 0, "text": "Оплачено"}]
+        text = tx.open_both_text(out[0]["text"], out[1]["text"]) if len(out) == 2 else out[0]["text"]
+        return {"open_amount": sum(p["amount"] for p in out), "open_name": out[0]["name"], "open_text": text, "open_parts": out}
     if kind == bl.PAYMENT:
         left = sum(a.amount for a in ledger.allocations if a.credit_id == ref_id and a.bucket == bl.ADVANCE)       # money laid on a period that has not begun, or on no period yet
-        return {"open_amount": left, "open_name": "advance", "open_text": tx.advance_text(left)} if left > 0 else none
+        if left > 0:
+            text = tx.advance_text(left)
+            return {"open_amount": left, "open_name": "advance", "open_text": text, "open_parts": [{"name": "advance", "amount": left, "text": text}]}
     return none
 
 
@@ -241,7 +246,7 @@ def due_block(before: bl.Ledger, due, today: date) -> PreviewDue:
     shown = [segment_out(s, due) for s in before.segments if s.begun and s.unpaid > 0]
     packages = due.due_lessons is not None
     return PreviewDue(
-        debt=before.debt, debt_amount=due.debt_amount, due_amount=due.due_amount, due_until=due.due_until,
+        unpaid=before.debt, debt_amount=due.debt_amount, due_amount=due.due_amount, due_until=due.due_until,
         overdue_days=due.overdue_days if due.debt_amount > 0 else None,
         debt_text=tx.debt_text(due.debt_amount, due.debt_lessons if packages else None) if due.debt_amount > 0 else None,
         debt_sub=tx.debt_sub(due.overdue_days, None if packages else before.status.paid_until) if due.debt_amount > 0 else None,
@@ -322,10 +327,10 @@ def preview_result(before: bl.Ledger, after: bl.Ledger, credit_id: str, price_to
         lessons=(after.lessons.covered, after.lessons.left) if lessons else None,
     )
     return PreviewResult(
-        allocations=allocs, debt_after=after.debt, debt_amount_after=due_after.debt_amount, due_amount_after=due_after.due_amount,
+        allocations=allocs, unpaid_after=after.debt, debt_amount_after=due_after.debt_amount, due_amount_after=due_after.due_amount,
         due_until_after=due_after.due_until, overdue_days_after=due_after.overdue_days if due_after.debt_amount > 0 else None,
         advance_after=after.advance, paid_until_before=before.status.paid_until, paid_until_after=after.status.paid_until,
-        status_after=after.status.status,
+        status_after=status_without_paid_until(after.status.status, after.debt),
         partial_credit_after=after.partial_credit, lessons=lessons, summary_text=text,
         price_ahead=price_ahead(after, credit_id, price_today),
     )

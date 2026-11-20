@@ -65,7 +65,7 @@ def ledger(w):
     out = {}
     for student in (w.early, w.late):
         rows = client(w, "owner").get(f"{API}/org/students/{student.id}/memberships").json()
-        out[student.last_name] = [(r["debt"], r["advance"], r["paid_until"], r["status"], r["debt_amount"], r["due_amount"]) for r in rows]
+        out[student.last_name] = [(r["unpaid"], r["advance"], r["paid_until"], r["status"], r["debt_amount"], r["due_amount"]) for r in rows]
     return out
 
 

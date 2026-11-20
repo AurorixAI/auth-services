@@ -235,7 +235,7 @@ def test_cancel_note_and_totals():
     s = StatementSummary(charged=10, paid=100, transferred_in=5, refunded=7, transferred_out=3, advance=92)
     assert [x[0] for x in t.total_lines(s)] == ["Стоимость обучения", "Оплачено", "Деньги из других групп", "Возвращено",
                                                  "Деньги в другие группы", "Остаток"]
-    assert t.total_lines(StatementSummary(debt=92_000))[-1] == ("Остаток", "Долг 92 000")
+    assert t.total_lines(StatementSummary(unpaid=92_000))[-1] == ("Остаток", "Долг 92 000")
     assert t.total_lines(StatementSummary(advance=508_000))[-1] == ("Остаток", "Аванс 508 000")
 
 

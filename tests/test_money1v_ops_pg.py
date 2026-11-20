@@ -230,7 +230,7 @@ def test_v3_a_typo_in_the_price_is_corrected_backdated_with_a_reason_and_the_win
     paid_one = [i for i in done["impact"]["money"]["items"] if i["has_money"]][0]                   # the student with the payment: 4 600 000 -> 100 000
     assert (paid_one["debt_before"], paid_one["debt_after"]) == (4_600_000, 100_000)
     row = owner(world).get(f"{API}/org/students/{m.student_id}/memberships").json()[0]
-    assert (row["debt"], row["advance"]) == (100_000, 0)
+    assert (row["unpaid"], row["advance"]) == (100_000, 0)
     world.db.expire_all()
     from src.models.auth import GroupAudit
     snaps = [a.snapshot for a in world.db.query(GroupAudit).filter(GroupAudit.org_id == world.org.id, GroupAudit.action == "group_price_set")]

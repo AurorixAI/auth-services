@@ -5,6 +5,8 @@
   "lessons_per_payment": 12,
   "expiring_days": 3,
   "expiring_lessons": 3,
+  "pay_due_days": 5,
+  "pay_due_lessons": 2,
   "excuse_deadline_days": 5,
   "excuse_deadline_lessons": 2,
   "admin_can_manage": false,
@@ -31,5 +33,6 @@
     "override_students": [],
     "override_total": 0,
     "override_truncated": false
-  }
+  },
+  "pay_due_impact": null
 }

@@ -398,5 +398,5 @@ def total_lines(summary) -> List[Tuple[str, object]]:
                          ("Перерасчёт", summary.recalculated), ("Возвращено", summary.refunded), ("Деньги в другие группы", summary.transferred_out)):
         if int(value) > 0:
             out.append((label, int(value)))
-    out.append(("Остаток", balance_cell(int(summary.advance) - int(summary.debt))[1]))
+    out.append(("Остаток", balance_cell(int(summary.advance) - int(summary.unpaid))[1]))
     return out

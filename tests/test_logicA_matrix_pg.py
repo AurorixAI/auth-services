@@ -376,7 +376,7 @@ def test_logicA_d3_n_a_month_costs_the_same_but_the_teacher_is_paid_for_the_less
     row_before = owner(world).get(f"{API}/org/students/{world.students[0].id}/memberships").json()[0]
     cancel_lesson(world, m, 13)
     assert line_of(preview(world, m), world.students[0])["counted"] == 3
-    assert owner(world).get(f"{API}/org/students/{world.students[0].id}/memberships").json()[0]["debt"] == row_before["debt"]
+    assert owner(world).get(f"{API}/org/students/{world.students[0].id}/memberships").json()[0]["unpaid"] == row_before["unpaid"]
 
 
 def test_logicA_d3_o_more_than_half_of_the_lessons_cancelled_changes_no_charge(world):
@@ -385,7 +385,7 @@ def test_logicA_d3_o_more_than_half_of_the_lessons_cancelled_changes_no_charge(w
     for n in (3, 8, 10):
         cancel_lesson(world, m, n)
     after = owner(world).get(f"{API}/org/students/{world.students[0].id}/memberships").json()[0]
-    assert (after["debt"], after["advance"]) == (before["debt"], before["advance"])
+    assert (after["unpaid"], after["advance"]) == (before["unpaid"], before["advance"])
 
 
 def test_logicA_d3_z_a_month_of_only_cancelled_lessons_pays_the_teacher_nothing_without_warnings(world):

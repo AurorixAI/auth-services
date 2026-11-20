@@ -28,6 +28,7 @@ from src.auth.payments_schemas import (  # noqa: E402
     BalancesPage,
     BalanceRow,
     MembershipPaymentRow,
+    OpenPart,
     PaymentAllocationOut,
     PaymentCreated,
     PaymentOut,
@@ -48,6 +49,7 @@ from src.auth.payments_schemas import (  # noqa: E402
     RefundOut,
     Segment,
     SegmentLessons,
+    SegmentPart,
     SnapshotPrice,
     StatementDetails,
     StatementMembership,
@@ -186,6 +188,158 @@ def totals(segs: List[HSeg], total_credit: int, today: date, paid_total: int):
     return dict(charged=charged, debt=debt, advance=advance, past=past, current=debt - past, through=through)
 
 
+# ------------------------------------------------------------------ the names of the unpaid sum, by hand (PAY-DUE) -----
+
+DUE_DAYS, DUE_LESSONS, DUE_MAX = 5, 2, 14    # the defaults of ``pay_due_days`` / ``pay_due_lessons`` and the 14-day limit of a package lesson
+
+
+@dataclass
+class HPart:
+    seg_id: str
+    name: str                    # debt | due
+    unpaid: int
+    due_until: Optional[date] = None
+    age: int = 0                 # K of a debt part (days after its term)
+    lessons: Optional[int] = None
+
+
+@dataclass
+class HNames:
+    parts: List[HPart]
+    packages: bool = False
+
+    def amount(self, name: str) -> int:
+        return sum(p.unpaid for p in self.parts if p.name == name)
+
+    @property
+    def debt(self) -> int:
+        return self.amount("debt")
+
+    @property
+    def due(self) -> int:
+        return self.amount("due")
+
+    @property
+    def due_until(self) -> Optional[date]:
+        return min((p.due_until for p in self.parts if p.name == "due"), default=None)
+
+    @property
+    def overdue(self) -> int:
+        return max((p.age for p in self.parts if p.name == "debt"), default=0)
+
+    def lessons(self, name: str) -> int:
+        return sum(p.lessons or 0 for p in self.parts if p.name == name)
+
+    def of(self, seg_id: str) -> List[HPart]:
+        return [p for p in self.parts if p.seg_id == seg_id]
+
+
+def hand_names(segs: List[HSeg], today: date, total_credit: int = 0, in_centre: bool = True) -> HNames:
+    """Who is «К оплате» and who is «Долг», by hand: a period part is «к оплате» until its ``DUE_DAYS``-th day (the first billable day is the first), then a debt aged ``today - term`` days; a package: the
+    ``DUE_LESSONS`` newest unpaid lessons are «к оплате» (only within ``DUE_MAX`` days of their date), the older ones a debt aged from the day they stopped being «к оплате» (the earlier of the date + 14 and
+    the day before the lesson that pushed them out)."""
+    packages = any(s.kind == "package" for s in segs)
+    if not packages:
+        out = []
+        for s in segs:
+            unpaid = max(0, s.charge - s.money - s.wo)
+            if s.a > today or unpaid == 0:
+                continue
+            term = s.dlist[0] + timedelta(days=DUE_DAYS - 1)
+            out.append(HPart(s.id, "due", unpaid, term) if in_centre and today <= term else HPart(s.id, "debt", unpaid, None, max(0, (today - term).days)))
+        return HNames(out)
+    lessons, run = [], 0     # the unpaid lessons, the oldest first (the money settles the oldest first)
+    for s in segs:
+        cost = s.charge // s.n
+        for day in s.dlist:
+            got = min(cost, max(0, total_credit - run))
+            run += cost
+            if cost - got > 0:
+                lessons.append((day, cost - got, s.id))
+    grouped: Dict[tuple, HPart] = {}
+    n = len(lessons)
+    for j, (day, cost, seg_id) in enumerate(lessons):
+        is_due = in_centre and n - 1 - j < DUE_LESSONS and today <= day + timedelta(days=DUE_MAX)
+        name = "due" if is_due else "debt"
+        part = grouped.setdefault((seg_id, name), HPart(seg_id, name, 0, day + timedelta(days=DUE_MAX) if is_due else None, 0, 0))
+        part.unpaid += cost
+        part.lessons += 1
+        if not is_due:
+            term = day + timedelta(days=DUE_MAX)
+            if j + DUE_LESSONS < n:
+                term = min(term, lessons[j + DUE_LESSONS][0] - timedelta(days=1))
+            part.age = max(part.age, max(0, (today - term).days))
+    return HNames(list(grouped.values()), packages=True)
+
+
+def seg_parts(names: HNames, seg_id: str) -> List[SegmentPart]:
+    return [SegmentPart(name=p.name, unpaid=p.unpaid, due_until=p.due_until if p.name == "due" else None, lessons=p.lessons if names.packages else None)
+            for p in names.of(seg_id)]
+
+
+def unpaid_kwargs(names: HNames, today: date, paid_until: Optional[date] = None) -> dict:
+    """The fields of ``UnpaidFields`` the way the server fills them (``payments_views.unpaid_fields``) - without ``state`` / ``state_text``."""
+    pk, debt, due = names.packages, names.debt, names.due
+    return dict(
+        debt_amount=debt, due_amount=due, due_until=names.due_until if due else None, overdue_days=names.overdue if debt else None,
+        due_lessons={"used": names.lessons("due"), "limit": DUE_LESSONS} if pk and (debt or due) else None, debt_lessons=names.lessons("debt"),
+        debt_text=tx.debt_text(debt, names.lessons("debt") if pk else None) if debt else None,
+        debt_sub=tx.debt_sub(names.overdue, None if pk else paid_until) if debt else None,
+        due_text=tx.due_text(due, names.lessons("due") if pk else None) if due else None,
+        due_sub=tx.due_sub(names.due_until, today) if due else None,
+    )
+
+
+def state_kwargs(names: HNames, today: date, *, status: str, paid_until: Optional[date], advance: int = 0, **unpaid) -> dict:
+    """``state`` / ``state_text`` of the WORST state: debt, to_pay, expiring (status ``expired`` / ``ends_today`` / ``expiring`` at a zero balance), paid, none."""
+    if names.debt:
+        return dict(state="debt", state_text=unpaid["debt_text"])
+    if names.due:
+        return dict(state="to_pay", state_text=unpaid["due_text"])
+    if status in ("expired", "ends_today", "expiring"):
+        return dict(state="expiring", state_text=tx.paid_until_text(paid_until))
+    if status == "none" and advance <= 0:
+        return dict(state="none", state_text=None)
+    return dict(state="paid", state_text=tx.paid_until_text(paid_until) if paid_until else (tx.advance_text(advance) if advance > 0 else None))
+
+
+def shown_status(status: str, unpaid: int) -> str:
+    """PAY-DUE 3.2: a membership that owes something is ``active`` (the paid-until statuses stay for «Заканчивается оплата» at a zero balance)."""
+    return "active" if unpaid > 0 and status in ("expired", "ends_today", "expiring") else status
+
+
+def paid_by_name(before: HNames, allocs: List[Allocation]) -> tuple:
+    """``(to debt, to «к оплате»)`` of a payment by the names of the parts BEFORE it (the oldest first inside a segment, the debt part is the older one)."""
+    to_debt = to_due = 0
+    for a in allocs:
+        if a.bucket == "advance":
+            continue
+        left = a.amount
+        for part in before.of(a.segment_id):
+            take = min(left, part.unpaid)
+            if part.name == "debt":
+                to_debt += take
+            else:
+                to_due += take
+            left -= take
+    return to_debt, to_due
+
+
+def open_of(kind: str, names: HNames, seg_id: Optional[str] = None, advance_left: int = 0) -> dict:
+    """``open_*`` of a statement row by hand (10.11 + decision 6): a charge - the unpaid part(s) of THIS segment (the debt first), paid = «Оплачено»; a payment - the advance not yet laid on a charge; else nothing."""
+    if kind == "charge":
+        parts = names.of(seg_id)
+        out = [OpenPart(name=p.name, amount=p.unpaid, text=tx.debt_text(p.unpaid, p.lessons if names.packages else None) if p.name == "debt"
+                        else tx.due_text(p.unpaid, p.lessons if names.packages else None)) for p in sorted(parts, key=lambda p: p.name != "debt")]
+        out = out or [OpenPart(name="paid", amount=0, text="Оплачено")]
+        text = tx.open_both_text(out[0].text, out[1].text) if len(out) == 2 else out[0].text
+        return dict(open_amount=sum(x.amount for x in out), open_name=out[0].name, open_text=text, open_parts=out)
+    if kind == "payment" and advance_left > 0:
+        text = tx.advance_text(advance_left)
+        return dict(open_amount=advance_left, open_name="advance", open_text=text, open_parts=[OpenPart(name="advance", amount=advance_left, text=text)])
+    return {}
+
+
 # ------------------------------------------------------------------ builders --------------------------------------
 
 GROUP_PRICE = lambda amount, since=D(2026, 1, 1): PriceOut(  # noqa: E731
@@ -193,7 +347,7 @@ GROUP_PRICE = lambda amount, since=D(2026, 1, 1): PriceOut(  # noqa: E731
 )
 
 
-def seg_model(s: HSeg, today: date) -> Segment:
+def seg_model(s: HSeg, today: date, names: Optional[HNames] = None) -> Segment:
     vol = s.money + s.wo
     cd = s.covered(vol)
     partial = vol - (cd * s.charge) // s.n if s.n and s.charge else 0
@@ -217,7 +371,7 @@ def seg_model(s: HSeg, today: date) -> Segment:
         price=GROUP_PRICE(s.price, s.since) if s.price is not None else PriceOut(), charge=s.charge, basis=s.basis,
         lessons=SegmentLessons(in_part=s.lessons[0], in_period=s.lessons[1]) if s.lessons else None,
         paid=s.money, written_off=s.wo, unpaid=unpaid, remaining=unpaid, covered_days=cd, covered_through=through,
-        partial_credit=partial, state=state, bucket=bucket,
+        partial_credit=partial, state=state, bucket=bucket, parts=seg_parts(names, s.id) if names is not None else [],
     )
 
 
@@ -293,18 +447,27 @@ def pay_out(n: int, *, amount: int, paid_on: date, method: str = "cash", receipt
 
 def row_model(*, mid=1, student="Хасанов Азиз", display_id="N13-004", group="Математика 7А", group_id=11,
               teacher="Иванова Мария", price: PriceOut, status: str, mode="calendar", paid_until=None,
-              overdue=None, left=None, last_payment=None, debt=0, past=0, current=0, advance=0, partial=0,
+              left=None, last_payment=None, names: Optional[HNames] = None, today: date = None, unpaid=0, advance=0, partial=0,
               refundable=0, writeoff_allowed=False, active=True, lessons=None, lessons_unpaid=0) -> MembershipPaymentRow:
+    names = names or HNames([])
+    fields = unpaid_kwargs(names, today, paid_until)
+    shown = shown_status(status, unpaid)         # PAY-DUE 3.2: ``days_overdue`` is gone with the name of the sum (a row that owes is ``active``)
     return MembershipPaymentRow(
         membership_id=uid(mid), student_id=uid(100 + mid), student_name=student, display_id=display_id, class_level=7,
         group_id=uid(group_id), group_name=group, teacher_id=uid(21), teacher_name=teacher, is_primary=True,
-        is_active=active, price=price, monthly_fee=price.amount, status=status, period_mode=mode,
-        paid_until=paid_until, days_overdue=overdue, days_left=left,
+        is_active=active, price=price, monthly_fee=price.amount, status=shown, period_mode=mode,
+        paid_until=paid_until, days_overdue=None, days_left=left,
         lessons_total=lessons[0] if lessons else None, lessons_used=lessons[1] if lessons else None,
         lessons_left=lessons[2] if lessons else None, last_payment=last_payment,
-        debt=debt, past_debt=past, current_due=current, advance=advance, partial_credit=partial,
+        unpaid=unpaid, advance=advance, partial_credit=partial,
         price_missing=False, lessons_unpaid=lessons_unpaid, refundable=refundable, writeoff_allowed=writeoff_allowed,
+        debt_age_bucket=tx_age_basket(names.overdue) if names.debt else None,
+        **fields, **state_kwargs(names, today, status=status, paid_until=paid_until, advance=advance, **fields),
     )
+
+
+def tx_age_basket(days: int) -> str:
+    return "to_30" if days <= 30 else "31_60" if days <= 60 else "61_90" if days <= 90 else "over_90"
 
 
 def status_of(paid_until: Optional[date], today: date, expiring: int = 3):
@@ -318,12 +481,9 @@ def status_of(paid_until: Optional[date], today: date, expiring: int = 3):
     return "active", None, delta
 
 
-def due_model(segs: List[HSeg], t: dict, today: date, paid_until, overdue) -> PreviewDue:
-    shown = [seg_model(s, today) for s in segs if s.a <= today and max(0, s.charge - s.money - s.wo) > 0]
-    return PreviewDue(
-        debt=t["debt"], past_debt=t["past"], current_due=t["current"], advance=t["advance"], segments=shown,
-        paid_until=paid_until, days_overdue=overdue,
-    )
+def due_model(segs: List[HSeg], t: dict, today: date, paid_until, names: HNames) -> PreviewDue:
+    shown = [seg_model(s, today, names) for s in segs if s.a <= today and max(0, s.charge - s.money - s.wo) > 0]
+    return PreviewDue(unpaid=t["debt"], advance=t["advance"], segments=shown, paid_until=paid_until, **unpaid_kwargs(names, today, paid_until))
 
 
 def write(name: str, model, store: Dict[str, str]) -> None:
@@ -363,9 +523,12 @@ def e1_previews(store):
     # --- before: only the payment of 231 000
     segs0, cr0, t0 = e1_state([])
     assert (t0["debt"], t0["past"], t0["current"], t0["through"]) == (769_000, 269_000, 500_000, D(2026, 9, 27))
-    overdue0 = (TODAY - t0["through"]).days
-    assert overdue0 == 24
-    due0 = due_model(segs0, t0, TODAY, t0["through"], overdue0)
+    # PAY-DUE, by hand (term 5 days, the first billable day is the first): the period 15.09 -> term 19.09, 269 000 unpaid; the period 15.10 -> term 19.10, 500 000 unpaid; today 21.10 is after both, so the
+    # whole 769 000 is a «Долг»; K of the oldest part = 21.10 - 19.09 = 32 days
+    names0 = hand_names(segs0, TODAY, sum(c.amount for c in cr0))
+    assert (names0.debt, names0.due, names0.overdue) == (769_000, 0, 32)
+    due0 = due_model(segs0, t0, TODAY, t0["through"], names0)
+    assert due0.debt_sub == nb("просрочено 32 дня · оплачено до 27.09")
     write("e1_preview_due.json", PaymentPreview(
         as_of=TODAY, mode="calendar", price=GROUP_PRICE(500_000), due=due0, suggested_amount=769_000, amount=None,
         result=None, warnings=[]), store)
@@ -387,20 +550,23 @@ def e1_previews(store):
             exp["debt"], exp["past"], exp["current"], exp["through"]), (amount, t)
         allocs = allocations_of(segs, credits, "new")
         assert [(a.amount, a.days) for a in allocs] == [(v, d) for _, v, d in exp["days"]], allocs
-        status, overdue, left = status_of(t["through"], TODAY)
+        status, _, left = status_of(t["through"], TODAY)
         adv_periods = [(a.period_from, a.period_to) for a in allocs if a.bucket == "advance"]
+        names = hand_names(segs, TODAY, sum(c.amount for c in credits))
+        to_debt, to_due = paid_by_name(names0, allocs)
+        assert (to_debt, to_due) == (amount - t["advance"] if amount - t["advance"] <= 769_000 else 769_000, 0), (amount, to_debt, to_due)
         result = PreviewResult(
-            allocations=allocs, debt_after=t["debt"], past_debt_after=t["past"], current_due_after=t["current"],
+            allocations=allocs, unpaid_after=t["debt"], debt_amount_after=names.debt, due_amount_after=names.due,
+            due_until_after=names.due_until if names.due else None, overdue_days_after=names.overdue if names.debt else None,
             advance_after=t["advance"], paid_until_before=t0["through"], paid_until_after=t["through"],
-            status_after=status, days_overdue_after=overdue, partial_credit_after=exp["partial"], lessons=None,
+            status_after=shown_status(status, t["debt"]), partial_credit_after=exp["partial"], lessons=None,
             summary_text=tx.summary_text(
-                past=sum(a.amount for a in allocs if a.bucket == "past_debt"),
-                current=sum(a.amount for a in allocs if a.bucket == "current"),
+                debt_paid=to_debt, debt_before=names0.debt, due_paid=to_due, due_before=names0.due,
                 advance=sum(a.amount for a in allocs if a.bucket == "advance"),
-                past_debt_before=t0["past"], debt_after=t["debt"], paid_until_after=t["through"],
-                advance_periods=adv_periods),
+                debt_after=t["debt"], paid_until_after=t["through"], advance_periods=adv_periods),
             price_ahead=[],
         )
+        assert (names.debt, names.due) == (t["debt"], 0)       # both periods are past their term: what is left is all a debt
         # the partial day is read off the segment where the first unpaid day lies
         sm = [seg_model(s, TODAY) for s in segs]
         first_open = next((m for m in sm if m.covered_days < m.billable_days), None)
@@ -411,9 +577,9 @@ def e1_previews(store):
             amount=amount, result=result, warnings=[]), store)
     # the headline sentences of the design
     assert json.loads(store["e1_preview_300000.json"])["result"]["summary_text"] == (
-        nb("Погасит долг 269 000 сум · на текущий период 31 000 сум → оплачено до 15.10 · останется 469 000 сум"))
+        nb("Погасит 300 000 сум из долга 769 000 сум → оплачено до 15.10 · останется 469 000 сум"))
     assert json.loads(store["e1_preview_790000.json"])["result"]["summary_text"] == (
-        nb("Погасит долг 269 000 сум · на текущий период 500 000 сум · Переплата 21 000 сум → аванс на следующий период "
+        nb("Погасит долг 769 000 сум · Переплата 21 000 сум → аванс на следующий период "
            "(15.11–14.12), оплачено до 15.11"))
 
 
@@ -424,13 +590,15 @@ def e1_create_replace_void(store):
     segs, credits, t = e1_state([new])
     allocs = allocations_of(segs, credits, "p18")
     status, overdue, left = status_of(t["through"], TODAY)
-    assert (status, overdue) == ("expired", 6)
+    assert (status, overdue) == ("expired", 6)           # the paid days ended 6 days ago ...
+    names = hand_names(segs, TODAY, sum(c.amount for c in credits))
+    assert (names.debt, names.due, names.overdue) == (469_000, 0, 2)     # ... but the NAME of the 469 000 is a debt aged 21.10 - 19.10 (the term of the period 15.10) = 2 days
     alloc_out = PaymentAllocationOut(items=allocs, refunded=0, net=300_000)
     p18 = pay_out(18, amount=300_000, paid_on=TODAY, receipt_no=18, note="за октябрь", first=D(2026, 9, 15),
                   last=t["through"], allocation=alloc_out)
     price = GROUP_PRICE(500_000)
-    row = row_model(price=price, status=status, paid_until=t["through"], overdue=overdue, last_payment=p18,
-                    debt=469_000, past=0, current=469_000, advance=0, partial=14_871, writeoff_allowed=True)
+    row = row_model(price=price, status=status, paid_until=t["through"], last_payment=p18, names=names, today=TODAY,
+                    unpaid=469_000, advance=0, partial=14_871, writeoff_allowed=True)
     write("e1_create_300000.json", PaymentCreated(
         payment=p18,
         allocation=AllocationSummary(items=allocs, debt_before=769_000, debt_after=469_000, advance_after=0,
@@ -463,8 +631,10 @@ def e1_create_replace_void(store):
     p19 = pay_out(19, amount=250_000, paid_on=TODAY, receipt_no=19, note="за октябрь", first=D(2026, 9, 15),
                   last=t2["through"], allocation=PaymentAllocationOut(items=allocs2, refunded=0, net=250_000),
                   replaces=18, created_at="2026-10-21T09:20:00")
-    row2 = row_model(price=price, status=st2, paid_until=t2["through"], overdue=ov2, last_payment=p19, debt=519_000,
-                     past=19_000, current=500_000, advance=0, partial=14_334, writeoff_allowed=True)
+    names2 = hand_names(segs2, TODAY, sum(c.amount for c in credits2))
+    assert (names2.debt, names2.due, names2.overdue) == (519_000, 0, 32)        # 19 000 of the period 15.09 (K = 32) and 500 000 of 15.10 (K = 2): all debt, the age is the oldest part's
+    row2 = row_model(price=price, status=st2, paid_until=t2["through"], last_payment=p19, names=names2, today=TODAY,
+                     unpaid=519_000, advance=0, partial=14_334, writeoff_allowed=True)
     write("e8_replace_300000_by_250000.json", PaymentCreated(
         payment=p19,
         allocation=AllocationSummary(items=allocs2, debt_before=769_000, debt_after=519_000, advance_after=0,
@@ -477,8 +647,9 @@ def e1_create_replace_void(store):
     seg_p17 = pay_out(17, amount=231_000, paid_on=D(2026, 9, 20), receipt_no=17, first=D(2026, 9, 15),
                       last=t0["through"], created_at="2026-09-20T10:00:00",
                       allocation=PaymentAllocationOut(items=allocations_of(segs0, cr0, "p17"), refunded=0, net=231_000))
-    row0 = row_model(price=price, status="expired", paid_until=t0["through"], overdue=24, last_payment=seg_p17,
-                     debt=769_000, past=269_000, current=500_000, advance=0, partial=14_334, writeoff_allowed=True)
+    names0 = hand_names(segs0, TODAY, sum(c.amount for c in cr0))
+    row0 = row_model(price=price, status="expired", paid_until=t0["through"], last_payment=seg_p17, names=names0, today=TODAY,
+                     unpaid=769_000, advance=0, partial=14_334, writeoff_allowed=True)
     write("e1_void_300000.json", PaymentVoided(payment=voided, row=row0), store)
 
 
@@ -490,7 +661,8 @@ def e9_price_ahead(store):
     cr0 = [A_PAY]
     net, spans, tc = hand_ledger(segs0, cr0, TODAY)
     t0 = totals(segs0, tc, TODAY, 231_000)
-    due0 = due_model(segs0, t0, TODAY, t0["through"], 24)
+    names0 = hand_names(segs0, TODAY, 231_000)
+    due0 = due_model(segs0, t0, TODAY, t0["through"], names0)
     new = HCredit("new", "payment", TODAY, 1_069_000)
     credits = [A_PAY, new]
     net, spans, tc = hand_ledger(segs, credits, TODAY)
@@ -502,10 +674,10 @@ def e9_price_ahead(store):
     assert 300_000 * 30 // 500_000 == 18 and 300_000 * 30 // 600_000 == 15
     ahead = [PriceAhead(period_from=D(2026, 11, 15), period_to=D(2026, 12, 14), amount=600_000, current_amount=500_000)]
     res = PreviewResult(
-        allocations=allocs, debt_after=0, past_debt_after=0, current_due_after=0, advance_after=300_000,
-        paid_until_before=t0["through"], paid_until_after=t["through"], status_after="active", days_overdue_after=None,
+        allocations=allocs, unpaid_after=0, advance_after=300_000,
+        paid_until_before=t0["through"], paid_until_after=t["through"], status_after="active",
         partial_credit_after=0, lessons=None,
-        summary_text=tx.summary_text(past=269_000, current=500_000, advance=300_000, past_debt_before=269_000,
+        summary_text=tx.summary_text(debt_paid=769_000, debt_before=769_000, due_paid=0, due_before=0, advance=300_000,
                                      debt_after=0, paid_until_after=t["through"],
                                      advance_periods=[(D(2026, 11, 15), D(2026, 12, 14))]),
         price_ahead=ahead)
@@ -530,23 +702,29 @@ def e1_statement(store):
     bal = 0
     rows = []
 
-    def add(date_, type_, title, debit=0, credit=0, outflow=0, details=None):
+    names = hand_names(segs, TODAY, sum(c.amount for c in credits))
+    assert (names.debt, names.due) == (0, 0)
+
+    def add(date_, type_, title, debit=0, credit=0, outflow=0, details=None, **open_):
         nonlocal bal
         bal += credit - debit - outflow
         rows.append(StatementRow(seq=len(rows) + 1, date=date_, type=type_, title=title, debit=debit, credit=credit,
                                  outflow=outflow, balance_after=bal, balance_text=tx.balance_text(bal),
-                                 details=details or StatementDetails()))
+                                 details=details or StatementDetails(), **open_))
 
-    add(D(2026, 9, 15), "charge", "Стоимость 15.09–14.10", debit=500_000, details=StatementDetails(segment=sm[0]))
+    add(D(2026, 9, 15), "charge", "Стоимость 15.09–14.10", debit=500_000, details=StatementDetails(segment=sm[0]), **open_of("charge", names, segs[0].id))
     add(D(2026, 9, 20), "payment", "Оплата № 17", credit=231_000, details=StatementDetails(
-        payment_id=uid(17), receipt_no=17, method="cash", created_by_name="Рустам Каримов", allocations=a17))
-    add(D(2026, 10, 15), "charge", "Стоимость 15.10–14.11", debit=500_000, details=StatementDetails(segment=sm[1]))
+        payment_id=uid(17), receipt_no=17, method="cash", created_by_name="Рустам Каримов", allocations=a17), **open_of("payment", names))
+    add(D(2026, 10, 15), "charge", "Стоимость 15.10–14.11", debit=500_000, details=StatementDetails(segment=sm[1]), **open_of("charge", names, segs[1].id))
     add(D(2026, 10, 21), "payment", "Оплата № 18", credit=790_000, details=StatementDetails(
-        payment_id=uid(18), receipt_no=18, method="cash", created_by_name="Рустам Каримов", note="аванс", allocations=a18))
+        payment_id=uid(18), receipt_no=18, method="cash", created_by_name="Рустам Каримов", note="аванс", allocations=a18),
+        **open_of("payment", names, advance_left=21_000))      # 21 000 of the payment lies on a period that has not begun: the row says «Аванс 21 000 сум»
     assert bal == 21_000 and rows[-1].balance_text == nb("Аванс 21 000")
+    fields = unpaid_kwargs(names, TODAY, t["through"])
     summary = StatementSummary(charged=1_000_000, paid=1_021_000, transferred_in=0, written_off=0, refunded=0,
-                               transferred_out=0, debt=0, advance=21_000, paid_until=t["through"], status="active",
-                               reconciles=(1_000_000 - 1_021_000 == 0 - 21_000))
+                               transferred_out=0, unpaid=0, advance=21_000, paid_until=t["through"], status="active",
+                               reconciles=(1_000_000 - 1_021_000 == 0 - 21_000), **fields,
+                               **state_kwargs(names, TODAY, status="active", paid_until=t["through"], advance=21_000, **fields))
     write("e1_statement_790000.json", StatementOut(
         membership=StatementMembership(
             membership_id=uid(1), student_id=uid(101), student_name="Хасанов Азиз", display_id="N13-004",
@@ -557,8 +735,8 @@ def e1_statement(store):
     p18 = pay_out(18, amount=790_000, paid_on=TODAY, receipt_no=18, note="аванс", first=D(2026, 9, 15),
                   last=t["through"], allocation=PaymentAllocationOut(items=a18, refunded=0, net=790_000))
     write("e1_row_after_790000.json", row_model(
-        price=GROUP_PRICE(500_000), status="active", paid_until=t["through"], left=25, last_payment=p18,
-        debt=0, advance=21_000, partial=4_334, refundable=21_000, writeoff_allowed=False), store)
+        price=GROUP_PRICE(500_000), status="active", paid_until=t["through"], left=25, last_payment=p18, names=names, today=TODAY,
+        unpaid=0, advance=21_000, partial=4_334, refundable=21_000, writeoff_allowed=False), store)
     assert (t["through"] - TODAY).days == 25
 
 
@@ -591,7 +769,11 @@ def e2_e3(store):
     t0 = totals(s0, tc, today, 0)
     assert (t0["debt"], t0["past"], t0["current"]) == (323_000, 0, 323_000)
     price = GROUP_PRICE(600_000)
-    due = due_model(s0, t0, today, None, None)
+    # PAY-DUE, by hand: the first billable day is 16.10, the term of 5 days is 20.10; today 21.10 is after it: 323 000 is a «Долг» aged 1 day
+    names0 = hand_names(s0, today, 0)
+    assert (names0.debt, names0.due, names0.overdue) == (323_000, 0, 1)
+    due = due_model(s0, t0, today, None, names0)
+    assert due.debt_sub == "просрочено 1 день"
     write("e2_preview_due.json", PaymentPreview(as_of=today, mode="calendar", price=price, due=due,
                                                  suggested_amount=323_000, amount=None, result=None, warnings=[]), store)
     for amount, (debt, through, partial_exp, days_exp) in {
@@ -610,14 +792,18 @@ def e2_e3(store):
         fo = next((m for m in sm if m.covered_days < m.billable_days), None)
         if fo is not None:
             assert fo.partial_credit == partial_exp, (amount, fo.partial_credit)
-        st, ov, left = status_of(t["through"], today)
+        st, _, left = status_of(t["through"], today)
+        names = hand_names(ss, today, amount)
+        assert (names.debt, names.due) == (t["debt"], 0)
+        to_debt, to_due = paid_by_name(names0, allocs)
+        assert (to_debt, to_due) == (min(amount, 323_000), 0)
         res = PreviewResult(
-            allocations=allocs, debt_after=t["debt"], past_debt_after=0, current_due_after=t["current"],
-            advance_after=t["advance"], paid_until_before=None, paid_until_after=t["through"], status_after=st,
-            days_overdue_after=ov, partial_credit_after=partial_exp, lessons=None,
+            allocations=allocs, unpaid_after=t["debt"], debt_amount_after=names.debt, due_amount_after=0, overdue_days_after=names.overdue if names.debt else None,
+            advance_after=t["advance"], paid_until_before=None, paid_until_after=t["through"], status_after=shown_status(st, t["debt"]),
+            partial_credit_after=partial_exp, lessons=None,
             summary_text=tx.summary_text(
-                past=0, current=sum(a.amount for a in allocs if a.bucket == "current"),
-                advance=sum(a.amount for a in allocs if a.bucket == "advance"), past_debt_before=0,
+                debt_paid=to_debt, debt_before=323_000, due_paid=0, due_before=0,
+                advance=sum(a.amount for a in allocs if a.bucket == "advance"),
                 debt_after=t["debt"], paid_until_after=t["through"],
                 advance_periods=[(a.period_from, a.period_to) for a in allocs if a.bucket == "advance"]))
         write(f"e2_preview_{amount}.json", PaymentPreview(
@@ -641,7 +827,10 @@ def e2_e3(store):
     net, spans, tc = hand_ledger(s0, [], today)
     t0 = totals(s0, tc, today, 0)
     price3 = GROUP_PRICE(300_000)
-    due3 = due_model(s0, t0, today, None, None)
+    # PAY-DUE, by hand: the first billable day is 01.10, the term is 05.10, today 25.10: a «Долг» aged 20 days
+    names0 = hand_names(s0, today, 0)
+    assert (names0.debt, names0.due, names0.overdue) == (213_000, 0, 20)
+    due3 = due_model(s0, t0, today, None, names0)
     write("e3_preview_due.json", PaymentPreview(as_of=today, mode="calendar", price=price3, due=due3,
                                                  suggested_amount=213_000, amount=None, result=None, warnings=[]), store)
     for amount, (debt, through, partial_exp, d_exp) in {
@@ -658,16 +847,72 @@ def e2_e3(store):
         sm = seg_model(ss[0], today)
         if sm.covered_days < sm.billable_days:
             assert sm.partial_credit == partial_exp
-        st, ov, left = status_of(t["through"], today)
+        st, _, left = status_of(t["through"], today)
+        names = hand_names(ss, today, amount)
+        assert (names.debt, names.due) == (t["debt"], 0)
         res = PreviewResult(
-            allocations=allocs, debt_after=t["debt"], past_debt_after=0, current_due_after=t["current"],
-            advance_after=0, paid_until_before=None, paid_until_after=t["through"], status_after=st,
-            days_overdue_after=ov, partial_credit_after=partial_exp, lessons=None,
-            summary_text=tx.summary_text(past=0, current=amount, advance=0, past_debt_before=0, debt_after=t["debt"],
+            allocations=allocs, unpaid_after=t["debt"], debt_amount_after=names.debt, overdue_days_after=names.overdue if names.debt else None,
+            advance_after=0, paid_until_before=None, paid_until_after=t["through"], status_after=shown_status(st, t["debt"]),
+            partial_credit_after=partial_exp, lessons=None,
+            summary_text=tx.summary_text(debt_paid=amount, debt_before=213_000, due_paid=0, due_before=0, advance=0, debt_after=t["debt"],
                                          paid_until_after=t["through"]))
         write(f"e3_preview_{amount}.json", PaymentPreview(
             as_of=today, mode="calendar", price=price3, due=due3, suggested_amount=213_000, amount=amount, result=res,
             warnings=[]), store)
+
+
+# ================================================================================================================
+# E10 - PAY-DUE: a student who joined yesterday owes «К оплате», not a debt (price 500 000, joined 20.10, today 21.10, term 5 days)
+# ================================================================================================================
+
+
+def e10(store):
+    today = D(2026, 10, 21)
+    dl = days(D(2026, 10, 20), D(2026, 11, 19))
+    assert len(dl) == 31
+
+    def segs():
+        return [HSeg("seg:0:2026-10-20", D(2026, 10, 20), D(2026, 11, 19), dl, 500_000, price=500_000)]
+
+    s0 = segs()
+    net, spans, tc = hand_ledger(s0, [], today)
+    t0 = totals(s0, tc, today, 0)
+    # by hand: the first billable day is 20.10, the 5th day is 24.10; today is 21.10, so 500 000 is «К оплате до 24.10» and nothing is a debt
+    names0 = hand_names(s0, today, 0)
+    assert (names0.debt, names0.due, names0.due_until, names0.overdue) == (0, 500_000, D(2026, 10, 24), 0)
+    due = due_model(s0, t0, today, None, names0)
+    assert (due.due_text, due.due_sub) == (nb("К оплате 500 000 сум"), "до 24.10")
+    price = GROUP_PRICE(500_000)
+    write("e10_preview_due.json", PaymentPreview(as_of=today, mode="calendar", price=price, due=due, suggested_amount=500_000, amount=None,
+                                                  result=None, warnings=[]), store)
+    # 200 000: 200 000 * 31 // 500 000 = 12 days (20.10 ... 31.10), the credit inside the 13th day is 200 000 - 12 * 500 000 // 31 = 6 452
+    assert 200_000 * 31 // 500_000 == 12 and 200_000 - 12 * 500_000 // 31 == 6_452
+    for amount, (left_, through, partial_exp, d_exp) in {200_000: (300_000, D(2026, 10, 31), 6_452, 12), 500_000: (0, D(2026, 11, 19), 0, 31)}.items():
+        new = HCredit("new", "payment", today, amount)
+        ss = segs()
+        net, spans, tc = hand_ledger(ss, [new], today)
+        t = totals(ss, tc, today, amount)
+        assert (t["debt"], t["through"]) == (left_, through), (amount, t)
+        allocs = allocations_of(ss, [new], "new")
+        assert allocs[0].days == d_exp
+        sm = seg_model(ss[0], today)
+        if sm.covered_days < sm.billable_days:
+            assert sm.partial_credit == partial_exp
+        st, _, left = status_of(t["through"], today)
+        names = hand_names(ss, today, amount)
+        assert (names.debt, names.due) == (0, left_)            # what is left keeps its name and its term: still «К оплате до 24.10»
+        to_debt, to_due = paid_by_name(names0, allocs)
+        assert (to_debt, to_due) == (0, amount)
+        res = PreviewResult(
+            allocations=allocs, unpaid_after=left_, debt_amount_after=0, due_amount_after=names.due, due_until_after=names.due_until if names.due else None,
+            advance_after=0, paid_until_before=None, paid_until_after=t["through"], status_after=shown_status(st, left_), partial_credit_after=partial_exp,
+            lessons=None,
+            summary_text=tx.summary_text(debt_paid=0, debt_before=0, due_paid=to_due, due_before=500_000, advance=0, debt_after=left_, paid_until_after=t["through"]))
+        write(f"e10_preview_{amount}.json", PaymentPreview(as_of=today, mode="calendar", price=price, due=due, suggested_amount=500_000, amount=amount,
+                                                           result=res, warnings=[]), store)
+    assert json.loads(store["e10_preview_200000.json"])["result"]["summary_text"] == (
+        nb("Закроет 200 000 сум из «К оплате» 500 000 сум → оплачено до 31.10 · останется 300 000 сум"))
+    assert json.loads(store["e10_preview_500000.json"])["result"]["summary_text"] == nb("Закроет «К оплате»: 500 000 сум → оплачено до 19.11")
 
 
 # ================================================================================================================
@@ -700,23 +945,27 @@ def e4(store):
     assert sm[1].covered_days == 4 and sm[1].partial_credit == 11_667
     al = allocations_of(segs, credits, "tin")
     assert [(a.amount, a.days, a.bucket) for a in al] == [(258_000, 20, "current"), (65_000, 4, "advance")]
+    names = hand_names(segs, today, sum(c.amount for c in credits))
+    assert (names.debt, names.due) == (0, 0)
     rows = [
         StatementRow(seq=1, date=T, type="transfer_in", title="Перенос из «Математика 7А»", debit=0, credit=x,
                      outflow=0, balance_after=x, balance_text="Аванс 323 000", details=StatementDetails(
-                         from_group_name="Математика 7А", from_membership_id=uid(1), allocations=al)),
+                         from_group_name="Математика 7А", from_membership_id=uid(1), allocations=al)),        # a transfer: no ``open_*`` (10.11)
         StatementRow(seq=2, date=D(2026, 10, 12), type="charge", title="Стоимость 01.10–31.10",
                      debit=charge_b, credit=0, outflow=0, balance_after=x - charge_b, balance_text="Аванс 65 000",
-                     details=StatementDetails(segment=sm[0])),
+                     details=StatementDetails(segment=sm[0]), **open_of("charge", names, segs[0].id)),
     ]
     status, _, left = status_of(t["through"], today)
+    fields = unpaid_kwargs(names, today, t["through"])
     write("e4_statement_B.json", StatementOut(
         membership=StatementMembership(
             membership_id=uid(2), student_id=uid(101), student_name="Хасанов Азиз", display_id="N13-004",
             group_id=uid(12), group_name="Алгебра 7Б", teacher_name="Петров Олег", is_active=True),
         as_of=today, mode="calendar", accounting_start=D(2026, 9, 1),
         summary=StatementSummary(charged=charge_b, paid=0, transferred_in=x, written_off=0, refunded=0,
-                                 transferred_out=0, debt=0, advance=65_000, paid_until=t["through"], status=status,
-                                 reconciles=(charge_b - x == 0 - 65_000)),
+                                 transferred_out=0, unpaid=0, advance=65_000, paid_until=t["through"], status=status,
+                                 reconciles=(charge_b - x == 0 - 65_000), **fields,
+                                 **state_kwargs(names, today, status=status, paid_until=t["through"], advance=65_000, **fields)),
         rows=rows, voided=[], upcoming=[sm[1]]), store)
     # statement of the group being left (A): paid 500 000 on 01.10, left on T
     seg_a = [HSeg("seg:0:2026-10-01", D(2026, 10, 1), D(2026, 10, 11), days(D(2026, 10, 1), D(2026, 10, 11)),
@@ -729,13 +978,17 @@ def e4(store):
     al_a = [Allocation(segment_id=seg_a[0].id, period_from=D(2026, 10, 1), period_to=D(2026, 10, 11), amount=500_000,
                        days=11, bucket="current", closes=True, price=500_000, segment_remaining_after=0,
                        label=tx.allocation_label(bucket="current", closes=True, start=D(2026, 10, 1), end=D(2026, 10, 11)))]
+    names_a = hand_names(seg_a, today, 500_000 - x)
+    assert (names_a.debt, names_a.due) == (0, 0)
+    fields_a = unpaid_kwargs(names_a, today, D(2026, 10, 11))
     rows_a = [
         StatementRow(seq=1, date=D(2026, 10, 1), type="charge", title="Стоимость 01.10–11.10", debit=charge_a, credit=0,
-                     outflow=0, balance_after=-charge_a, balance_text="Долг 177 000", details=StatementDetails(segment=sma)),
+                     outflow=0, balance_after=-charge_a, balance_text="Долг 177 000", details=StatementDetails(segment=sma),
+                     **open_of("charge", names_a, seg_a[0].id)),
         StatementRow(seq=2, date=D(2026, 10, 1), type="payment", title="Оплата № 21", debit=0, credit=500_000, outflow=0,
                      balance_after=x, balance_text="Аванс 323 000", details=StatementDetails(
                          payment_id=uid(21), receipt_no=21, method="cash", created_by_name="Рустам Каримов",
-                         allocations=al_a)),
+                         allocations=al_a)),        # 177 000 on the charge, 323 000 went to the other group: nothing is left open on the row
         StatementRow(seq=3, date=T, type="transfer_out", title="Перенос в «Алгебра 7Б»", debit=0, credit=0, outflow=x,
                      balance_after=0, balance_text="0", details=StatementDetails(
                          to_group_name="Алгебра 7Б", to_membership_id=uid(2))),
@@ -746,8 +999,9 @@ def e4(store):
             group_id=uid(11), group_name="Математика 7А", teacher_name="Иванова Мария", is_active=False),
         as_of=today, mode="calendar", accounting_start=D(2026, 9, 1),
         summary=StatementSummary(charged=charge_a, paid=500_000, transferred_in=0, written_off=0, refunded=0,
-                                 transferred_out=x, debt=0, advance=0, paid_until=D(2026, 10, 11), status="none",
-                                 reconciles=(charge_a - 500_000 + x == 0)),
+                                 transferred_out=x, unpaid=0, advance=0, paid_until=D(2026, 10, 11), status="none",
+                                 reconciles=(charge_a - 500_000 + x == 0), **fields_a,
+                                 **state_kwargs(names_a, today, status="none", paid_until=D(2026, 10, 11), advance=0, **fields_a)),
         rows=rows_a, voided=[], upcoming=[]), store)
 
 
@@ -786,9 +1040,10 @@ def e5(store):
         # before: no money
         for s in segs:
             s.money = s.wo = 0
-        due_models = [seg_model(s, today) for s in segs]
-        due = PreviewDue(debt=due_debt, past_debt=past, current_due=due_debt - past, advance=0, segments=due_models,
-                         paid_until=None, days_overdue=None)
+        # PAY-DUE, by hand: of the unpaid lessons the 2 NEWEST are «К оплате» (50 000 each, within 14 days of their date), the rest is a «Долг»
+        names0 = hand_names(segs, today, 0)
+        due_models = [seg_model(s, today, names0) for s in segs]
+        due = PreviewDue(unpaid=due_debt, advance=0, segments=due_models, paid_until=None, **unpaid_kwargs(names0, today))
         # after: the money
         new = HCredit("new", "payment", today, amount)
         net, spans, tc = hand_ledger(segs, [new], today)
@@ -813,27 +1068,41 @@ def e5(store):
         unpaid = max(0, used - covered_lessons)
         partial = tc - covered_lessons * 50_000 if tc >= charged else 0
         st = "expired" if left == 0 else ("expiring" if left <= 3 else "active")
+        names = hand_names(segs, today, tc)
+        assert (names.debt + names.due) == debt_after
+        to_debt, to_due = paid_by_name(names0, allocs)
         res = PreviewResult(
-            allocations=allocs, debt_after=debt_after, past_debt_after=sum(
-                max(0, s.charge - s.money - s.wo) for s in segs if s.lessons[0] >= s.lessons[1]),
-            current_due_after=0, advance_after=leftover, paid_until_before=None, paid_until_after=None,
-            status_after=st, days_overdue_after=None, partial_credit_after=partial,
+            allocations=allocs, unpaid_after=debt_after, debt_amount_after=names.debt, due_amount_after=names.due,
+            due_until_after=names.due_until if names.due else None, overdue_days_after=names.overdue if names.debt else None,
+            advance_after=leftover, paid_until_before=None, paid_until_after=None,
+            status_after=shown_status(st, debt_after), partial_credit_after=partial,
             lessons=PreviewLessons(covered_before=0, covered_after=covered_lessons, left_after=left, unpaid_after=unpaid),
             summary_text=tx.summary_text(
-                past=sum(a.amount for a in allocs if a.bucket == "past_debt"),
-                current=sum(a.amount for a in allocs if a.bucket == "current"),
-                advance=leftover, past_debt_before=past, debt_after=debt_after, paid_until_after=None,
+                debt_paid=to_debt, debt_before=names0.debt, due_paid=to_due, due_before=names0.due,
+                advance=leftover, debt_after=debt_after, paid_until_after=None,
                 lessons=(covered_lessons, left)))
-        res.current_due_after = debt_after - res.past_debt_after
+        scenario.names0, scenario.names = names0, names
         write(name, PaymentPreview(
             as_of=today, mode="lessons", price=price, due=due, suggested_amount=due_debt, amount=amount, result=res,
             warnings=[]), store)
 
     scenario(12, D(2026, 10, 21), 630_000, "e5_preview_630000_held12.json", 12, 0)
+    # held 12, today 21.10, no money: lessons 25.09 ... 21.10; the 2 newest (19.10, 21.10) are «К оплате» 100 000 until 19.10 + 14 = 02.11; the 10 older ones are a debt of 500 000; the oldest (25.09) stopped being
+    # «К оплате» on 29.09 (the day before the lesson of 30.09 pushed it out; its own limit was 09.10): K = 21.10 - 29.09 = 22
+    n0 = scenario.names0
+    assert (n0.debt, n0.due, n0.due_until, n0.overdue, n0.lessons("due"), n0.lessons("debt")) == (500_000, 100_000, D(2026, 11, 2), 22, 2, 10)
     scenario(14, D(2026, 10, 27), 700_000, "e5_preview_700000_held14.json", 14, 0)
+    # held 14, today 27.10: the 2 newest are the lessons of 23.10 and 26.10 (all of the package 2): «К оплате» 100 000 until 23.10 + 14 = 06.11; the 12 of the package 1 are a debt of 600 000; K = 27.10 - 29.09 = 28
+    n0 = scenario.names0
+    assert (n0.debt, n0.due, n0.due_until, n0.overdue, n0.lessons("due"), n0.lessons("debt")) == (600_000, 100_000, D(2026, 11, 6), 28, 2, 12)
     scenario(14, D(2026, 10, 27), 650_000, "e5_preview_650000_held14.json", 13, 50_000)
+    # 650 000 settles the oldest 13 lessons: all the debt and one of the two lessons «К оплате»; the last lesson (26.10) is left, «К оплате» 50 000 until 09.11
+    n = scenario.names
+    assert (n.debt, n.due, n.due_until) == (0, 50_000, D(2026, 11, 9))
     assert json.loads(store["e5_preview_630000_held12.json"])["result"]["summary_text"] == (
-        nb("Погасит долг 600 000 сум → оплачено уроков 12, осталось 0 · аванс 30 000 сум"))
+        nb("Погасит долг 500 000 сум · к оплате 100 000 сум → оплачено уроков 12, осталось 0 · аванс 30 000 сум"))
+    assert json.loads(store["e5_preview_650000_held14.json"])["result"]["summary_text"] == (
+        nb("Погасит долг 600 000 сум · к оплате 50 000 сум из 100 000 сум → оплачено уроков 13, осталось 0 · останется 50 000 сум"))
 
 
 # ================================================================================================================
@@ -857,8 +1126,11 @@ def e6_e7(store):
     a31 = allocations_of(seg, cr, "p31")
     p31 = pay_out(31, amount=400_000, paid_on=D(2026, 10, 15), receipt_no=31, first=D(2026, 10, 15), last=t["through"],
                   allocation=PaymentAllocationOut(items=a31, refunded=0, net=400_000), created_at="2026-10-15T10:00:00")
+    # PAY-DUE, by hand: the period 15.10 has the term 19.10, today is 21.10: the 60 000 that is left is a «Долг» aged 2 days
+    names = hand_names(seg, today, 440_000)
+    assert (names.debt, names.due, names.overdue) == (60_000, 0, 2)
     row = row_model(mid=3, student="Каримова Алия", display_id="N13-007", price=price, status=st,
-                    paid_until=t["through"], left=left, last_payment=p31, debt=60_000, past=0, current=60_000,
+                    paid_until=t["through"], left=left, last_payment=p31, names=names, today=today, unpaid=60_000,
                     advance=0, partial=4_517, writeoff_allowed=True)
     wo = WriteoffOut(id=uid(41), membership_id=uid(3), amount=40_000, reason="болезнь, договорённость с родителем",
                      effective_on=today, created_by=uid(901), created_by_name="Рустам Каримов",
@@ -887,8 +1159,8 @@ def e6_e7(store):
     a18 = allocations_of(segs, credits, "p18")
     p18 = pay_out(18, amount=790_000, paid_on=D(2026, 10, 21), receipt_no=18, note="аванс", first=D(2026, 9, 15),
                   last=t["through"], allocation=PaymentAllocationOut(items=a18, refunded=344_000, net=446_000))
-    row = row_model(price=price, status="none", paid_until=t["through"], last_payment=p18, debt=0, advance=0,
-                    active=False)
+    row = row_model(price=price, status="none", paid_until=t["through"], last_payment=p18, names=hand_names(segs, today, 0), today=today,
+                    unpaid=0, advance=0, active=False)
     rf = RefundOut(id=uid(51), membership_id=uid(1), amount=344_000, method="cash", reason="ученик ушёл", note=None,
                    effective_on=today, created_by=uid(901), created_by_name="Рустам Каримов",
                    created_at="2026-10-25T12:00:00")
@@ -944,8 +1216,9 @@ def report(store):
             {"bucket": "2026-10-21", "received": 790_000, "by_method": {"cash": 790_000}, "to_past_debt": 269_000,
              "to_current": 500_000, "to_advance": 21_000, "written_off": 0, "refunded": 0, "count": 1},
         ],
-        "position": {"debt_total": 70_000, "past_debt_total": 0, "advance_total": 21_000, "memberships_with_debt": 1,
-                     "students_with_debt": 1, "memberships_with_advance": 1},
+        # PAY-DUE: the student with 70 000 unpaid joined 15.10 (term 19.10, today 21.10): it is a debt, not «К оплате»
+        "position": {"debt_total": 70_000, "due_total": 0, "debtors": 1, "due_students": 0, "advance_total": 21_000, "memberships_with_debt": 1,
+                     "memberships_with_advance": 1},
         "reconciliation": {"ok": True, "checks": [
             {"code": "received_eq_allocated_plus_refunded", "left": 1_540_000, "right": 1_216_000 + 324_000, "diff": 0},
             {"code": "charged_minus_paid_eq_debt_minus_advance", "left": left, "right": 49_000, "diff": 0},
@@ -965,20 +1238,27 @@ def report(store):
         method="cash", receipt_no=18, allocations=a18)
     write("receipts_items_to_past_debt.json", ReceiptItems(items=[item], total=1, limit=50, offset=0), store)
 
+    one = HSeg("seg:0:2026-10-15", D(2026, 10, 15), D(2026, 11, 14), days(D(2026, 10, 15), D(2026, 11, 14)), 500_000, price=500_000)
+    one.money = 430_000
+    names = hand_names([one], today)
+    assert (names.debt, names.due, names.overdue) == (70_000, 0, 2)
+    fields = unpaid_kwargs(names, today, D(2026, 11, 1))
     row = BalanceRow(
         membership_id=uid(5), student_id=uid(105), student_name="Каримова Алия", display_id="N13-007",
         group_id=uid(13), group_name="Алгебра 9Б", teacher_id=uid(22), teacher_name="Петров Олег", is_active=True,
-        student_archived=False, status="active", paid_until=D(2026, 11, 1), debt=70_000, past_debt=0,
-        current_due=70_000, advance=0, refundable=0)
-    write("balances_debt.json", BalancesPage(items=[row], total=1, limit=50, offset=0), store)
+        student_archived=False, status="active", paid_until=D(2026, 11, 1), unpaid=70_000, advance=0, refundable=0, **fields,
+        **state_kwargs(names, today, status="active", paid_until=D(2026, 11, 1), **fields))
+    write("balances_debt.json", BalancesPage(items=[row], total=1, limit=50, offset=0, debt_total=70_000, due_total=0), store)
 
     st = PaymentSettingsChanged(
         period_mode="calendar", billing_anchor="payment_date", billing_day=1, lessons_per_payment=12,
-        expiring_days=3, expiring_lessons=3, excuse_deadline_days=5, excuse_deadline_lessons=2,
+        expiring_days=3, expiring_lessons=3, pay_due_days=10, pay_due_lessons=2, excuse_deadline_days=5, excuse_deadline_lessons=2,
         admin_can_manage=True, accounting_start_date=D(2026, 9, 1), updated_by=uid(901),
         updated_at="2026-10-01T08:00:00", dry_run=True,
         impact={"memberships_with_new_debt": 12, "debt_delta": 5_400_000, "memberships_with_changed_advance": 3,
-                "advance_delta": -1_200_000, "refundable_delta": -900_000})
+                "advance_delta": -1_200_000, "refundable_delta": -900_000},
+        # PAY-DUE: the term 5 -> 10 days; 3 debtors would become «К оплате» (by hand: three students joined 12.10 - 16.10 have the terms 16.10 - 20.10 on 21.10, with 10 days they are 21.10 - 25.10)
+        pay_due_impact={"to_due": 3, "to_debt": 0, "texts": tx.pay_due_impact_texts(3, 0)})
     write("settings_dry_run.json", st, store)
 
     # error bodies the front maps to texts
@@ -1002,7 +1282,7 @@ def report(store):
 MODELS = {
     # fixture -> response model name of the contract (checked by tests/test_pay2_golden.py)
     "e1_preview_*": "PaymentPreview", "e9_preview_*": "PaymentPreview", "e2_preview_*": "PaymentPreview", "e3_preview_*": "PaymentPreview",
-    "e5_preview_*": "PaymentPreview", "e1_create_300000": "PaymentCreated", "e8_replace_*": "PaymentCreated",
+    "e5_preview_*": "PaymentPreview", "e10_preview_*": "PaymentPreview", "e1_create_300000": "PaymentCreated", "e8_replace_*": "PaymentCreated",
     "e1_void_300000": "PaymentVoided", "e1_receipt_snapshot": "ReceiptSnapshot", "e1_receipt_300000": "ReceiptOut",
     "e1_statement_790000": "StatementOut", "e4_statement_*": "StatementOut", "e1_row_after_790000": "MembershipPaymentRow",
     "e6_writeoff_40000": "WriteoffCreated", "e7_refund_344000": "RefundCreated",
@@ -1018,6 +1298,7 @@ def build() -> Dict[str, str]:
     e9_price_ahead(store)
     e1_statement(store)
     e2_e3(store)
+    e10(store)
     e4(store)
     e5(store)
     e6_e7(store)

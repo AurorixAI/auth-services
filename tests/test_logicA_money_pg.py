@@ -59,7 +59,7 @@ def test_leave_preview_and_leave_with_a_refund(world, fixed_today):
     assert not world.db.get(StudentGroup, m.id).is_active
     assert world.db.query(StudentRefund).filter_by(membership_id=m.id, voided_at=None).one().amount == 87_000
     row = owner(world).get(f"{API}/org/students/{m.student_id}/memberships").json()[0]
-    assert (row["advance"], row["debt"], row["refundable"]) == (0, 0, 0)
+    assert (row["advance"], row["unpaid"], row["refundable"]) == (0, 0, 0)
     assert world.db.query(GroupAudit).filter_by(org_id=world.org.id, action="student_left_group").count() == 1
     # R: a second click finds him gone: nothing is refunded twice
     r = owner(world).post(f"{API}/org/groups/{world.group.id}/students/{world.students[0].id}/leave", json=body)
@@ -84,7 +84,7 @@ def test_leave_with_a_writeoff_and_the_balance_changed_answer(world, fixed_today
     ok = {"settle": [{"membership_id": str(m.id), "action": "writeoff", "expected_debt": 113_000, "reason": "договорённость"}]}
     out = leave(world, world.group, world.students[0], ok)
     assert out["settled"][0]["amount"] == 113_000
-    assert owner(world).get(f"{API}/org/students/{m.student_id}/memberships").json()[0]["debt"] == 0
+    assert owner(world).get(f"{API}/org/students/{m.student_id}/memberships").json()[0]["unpaid"] == 0
     # refund without a method
     m2 = membership(world, world.students[1]); stay(world, m2, D(2026, 10, 11)); seed_payment(world, m2, 400_000, D(2026, 10, 16))
     r = owner(world).post(f"{API}/org/groups/{world.group.id}/students/{world.students[1].id}/leave",
@@ -142,7 +142,7 @@ def test_a_left_student_pays_the_debt_and_nothing_more(world, fixed_today):
     assert r.status_code == 422 and r.json()["detail"]["code"] == "PAYMENT_EXCEEDS_DEBT" and r.json()["detail"]["debt"] == 113_000
     assert r.json()["detail"]["message"] == "Ученик ушёл: принять можно не больше долга 113 000 сум"
     created = post_payment(world, m, amount=50_000)               # P: partial is fine
-    assert created["row"]["debt"] == 63_000 and created["row"]["advance"] == 0
+    assert created["row"]["unpaid"] == 63_000 and created["row"]["advance"] == 0
     post_payment(world, m, amount=63_000)
     r = owner(world).post(f"{API}/org/memberships/{m.id}/payments", json={"amount": 1, "paid_on": TODAY.isoformat(), "method": "cash"})
     assert r.status_code == 422 and r.json()["detail"]["code"] == "NOTHING_TO_PAY"                  # Z: no debt
@@ -264,7 +264,7 @@ def test_f12_the_running_period_is_not_cut_and_the_dry_run_says_who_switches(wor
     hist = world.org.settings["payments"]["billing_history"]
     assert hist[-1]["defer"] is True and hist[-1]["from"] == "2026-10-21" and hist[-1]["period_mode"] == "lessons" and "defer" not in hist[0]
     row = c.get(f"{API}/org/students/{m.student_id}/memberships").json()[0]
-    assert (row["debt"], row["advance"], row["paid_until"], row["period_mode"]) == (0, 0, "2026-11-14", "calendar")     # the running period goes on
+    assert (row["unpaid"], row["advance"], row["paid_until"], row["period_mode"]) == (0, 0, "2026-11-14", "calendar")     # the running period goes on
     # two identical saves on one day replace the entry of the day
     assert c.put(f"{API}/org/settings/payments", json={"period_mode": "calendar"}).status_code == 200
     world.db.expire_all()
@@ -290,7 +290,7 @@ def test_add_student_with_an_opening_balance(world, fixed_today):
     mid_ = r.json()["membership_id"]
     row = c.get(f"{API}/org/memberships/{mid_}/opening-balance").json()
     assert row["debt_amount"] == 250_000 and row["source"] == "add"
-    assert c.get(f"{API}/org/students/{s.id}/memberships").json()[0]["debt"] == 463_000
+    assert c.get(f"{API}/org/students/{s.id}/memberships").json()[0]["unpaid"] == 463_000
     # the range is checked: «оплачено до» before the enrolment is refused and nothing is added
     s2 = new_student(world, "Второй")
     r = c.post(f"{API}/org/groups/{world.group.id}/students/{s2.id}?mode=add", json={"opening_balance": {"paid_until": "2026-10-01"}})
@@ -363,12 +363,12 @@ def test_a_cancelled_lesson_does_not_change_the_charge_of_an_incomplete_first_pe
     world.db.commit()
     m = membership(world); stay(world, m, D(2026, 10, 16))
     before = owner(world).get(f"{API}/org/students/{m.student_id}/memberships").json()[0]
-    assert before["debt"] == 323_000                                           # 7 of 13 lessons (E2)
+    assert before["unpaid"] == 323_000                                           # 7 of 13 lessons (E2)
     world.db.add(GroupAttendance(org_id=world.org.id, group_id=world.group.id, lesson_date="2026-10-19", lesson_id="s1", status="cancelled",
                                  cancellation_reason="учитель заболел", records={}, roster_snapshot=[]))
     world.db.commit()
     after = owner(world).get(f"{API}/org/students/{m.student_id}/memberships").json()[0]
-    assert after["debt"] == before["debt"] == 323_000                         # the month costs the same
+    assert after["unpaid"] == before["unpaid"] == 323_000                         # the month costs the same
 
 
 # ---- the payment tabs (owner's rule of 21.10) -------------------------------------------------------------------------------------------------------------
@@ -388,13 +388,13 @@ def test_the_tabs_debt_due_soon_paid_and_the_summary_invariants(world, fixed_tod
     owing = set(by["debtors"]) | set(by["to_pay"])          # PAY-DUE: the unpaid sum of A and C is a debt or «К оплате» (the tabs overlap); both are owed, neither is on the calm tabs
     assert owing == {str(a.id), str(c3.id)} and set(by["active"]) == {str(b.id)} and by["expiring"] == {} and by["paused"] == {}
     for row in [*by["debtors"].values(), *by["to_pay"].values()]:
-        assert row["state"] in ("debt", "to_pay") and row["debt_amount"] + row["due_amount"] == row["debt"] and (row["debt_text"] or row["due_text"])
+        assert row["state"] in ("debt", "to_pay") and row["debt_amount"] + row["due_amount"] == row["unpaid"] and (row["debt_text"] or row["due_text"])
     assert by["active"][str(b.id)]["state"] == "paid"
     # the invariants of the summary
     assert summary["buckets"] == {"debtors": pages["debtors"]["total"], "to_pay": pages["to_pay"]["total"], "expiring": 0, "active": 1, "paused": 0}
     assert summary["debtors"] == pages["debtors"]["students"] and summary["due_students"] == pages["to_pay"]["students"]
     assert summary["memberships_with_debt"] == pages["debtors"]["total"]
-    assert summary["debt_total"] + summary["due_total"] == sum(i["debt"] for i in c.get(f"{API}/org/payments/status", params={"limit": 100}).json()["items"]) == 750_000       # A 150 000 + C 600 000
+    assert summary["debt_total"] + summary["due_total"] == sum(i["unpaid"] for i in c.get(f"{API}/org/payments/status", params={"limit": 100}).json()["items"]) == 750_000       # A 150 000 + C 600 000
     assert sum(i["debt_amount"] for i in pages["debtors"]["items"]) == summary["debt_total"] and sum(i["due_amount"] for i in pages["to_pay"]["items"]) == summary["due_total"]
     assert summary["students_with_advance"] == 1 and summary["advance_total"] == sum(i["advance"] for i in c.get(f"{API}/org/payments/status", params={"limit": 100}).json()["items"])
     assert {"free", "price_missing"} <= set(summary)

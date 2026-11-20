@@ -63,7 +63,7 @@ def test_a_student_with_a_debt_and_a_sum_within_the_term_is_in_both_tabs_and_the
     assert (a_in_debtors["debt_amount"], a_in_debtors["due_amount"], a_in_debtors["overdue_days"]) == (600_000, 600_000, 27)      # 01.11 - 05.10
     assert (a_in_debtors["state"], a_in_debtors["state_text"]) == ("debt", "Долг 600\xa0000\xa0сум")                                # the one label: the worst state
     assert (a_in_debtors["due_text"], a_in_debtors["due_sub"], a_in_debtors["debt_sub"]) == ("К оплате 600\xa0000\xa0сум", "до 05.11", "просрочено 27 дней")
-    assert a_in_debtors["debt"] == 1_200_000                                                       # everything unpaid of the membership
+    assert a_in_debtors["unpaid"] == 1_200_000                                                       # everything unpaid of the membership
     # the old tail and the new month are two named parts of the statement of A
     r = client(w, "owner").get(f"{API}/org/memberships/{ms[0].id}/statement")
     assert r.status_code == 200
@@ -128,7 +128,7 @@ def test_the_term_never_touches_the_money_or_the_payroll(pg_session, clock):
                 "payments": [(p["amount"], p["paid_on"], p["kind"]) for p in client(w, "owner").get(f"{API}/org/memberships/{m.id}/payments").json()],
                 "statement": [(r["date"], r["type"], r["debit"], r["credit"], r["outflow"], r["balance_after"]) for r in client(w, "owner").get(f"{API}/org/memberships/{m.id}/statement").json()["rows"]],
             }
-        rows = {r["membership_id"]: (r["debt"], r["advance"], r["paid_until"], r["partial_credit"], r["refundable"]) for r in status_page(w, "all")["items"]}
+        rows = {r["membership_id"]: (r["unpaid"], r["advance"], r["paid_until"], r["partial_credit"], r["refundable"]) for r in status_page(w, "all")["items"]}
         calc = client(w, "owner").post(f"{API}/org/payroll/months/2026-10/calculate", json={"teacher_ids": [str(w.A.id)]})
         assert calc.status_code == 200, calc.text
         return out, rows, calc.json()["sheets"]

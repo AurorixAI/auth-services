@@ -48,7 +48,7 @@ def test_1_a_cancellation_without_a_kind_is_by_the_fault_of_the_centre_and_the_a
     w = build_org(pg_session)
     g, s, m = month_world(w, clock)
     cancel(w, g, "lesson-mon", "2026-10-26")
-    assert kind_of(w, g, "2026-10-26", "lesson-mon") == "centre" and row_of(w, s)["debt"] == 554_000
+    assert kind_of(w, g, "2026-10-26", "lesson-mon") == "centre" and row_of(w, s)["unpaid"] == 554_000
     cancel(w, g, "lesson-wed", "2026-10-28", kind="centre")                                      # saying «centre» is allowed
     audit = w.db.query(GroupAttendanceAudit).filter_by(group_id=g.id, action="cancelled").all()
     assert sorted(a.details["cancellation_kind"] for a in audit) == ["centre", "centre"]
@@ -63,16 +63,16 @@ def test_1_an_owner_or_admin_chooses_and_changes_the_kind_of_a_cancelled_lesson(
     grant_money_right(w)                    # Money-1 A4: the kind of a cancellation moves the deduction of the students and the pay: the money right
     g, s, m = month_world(w, clock)
     cancel(w, g, "lesson-wed", "2026-10-21")                                                   # «по вине центра» by default
-    assert recalc_days(w, m) == ["2026-10-21"] and row_of(w, s)["debt"] == 554_000
+    assert recalc_days(w, m) == ["2026-10-21"] and row_of(w, s)["unpaid"] == 554_000
     put = lambda who, body, expect=200: (lambda r: (r.status_code == expect or pytest.fail(r.text), r)[1])(  # noqa: E731
         client(w, who).put(f"{API}/org/groups/{g.id}/attendance/cancellation-kind", json={"lessonDate": "2026-10-21", "lessonId": "lesson-wed", **body}))
     put("A", {"cancellationKind": "holiday", "reason": "Праздник"}, 403)                       # a teacher may not
     put("admin", {"cancellationKind": "holiday"}, 422)                                         # a reason is required
     r = put("admin", {"cancellationKind": "holiday", "reason": "Это был праздник"}).json()
     assert r["changed"] is True and r["cancellationKind"] == "holiday"
-    assert recalc_days(w, m) == [] and row_of(w, s)["debt"] == 600_000                          # the line disappears by itself
+    assert recalc_days(w, m) == [] and row_of(w, s)["unpaid"] == 600_000                          # the line disappears by itself
     put("owner", {"cancellationKind": "centre", "reason": "Ошиблись: это вина центра"})
-    assert recalc_days(w, m) == ["2026-10-21"] and row_of(w, s)["debt"] == 554_000              # and comes back
+    assert recalc_days(w, m) == ["2026-10-21"] and row_of(w, s)["unpaid"] == 554_000              # and comes back
     assert put("owner", {"cancellationKind": "centre", "reason": "ещё раз"}).json()["changed"] is False
     audit = w.db.query(GroupAttendanceAudit).filter_by(group_id=g.id, action="corrected").order_by(GroupAttendanceAudit.created_at).all()
     assert [(a.details["cancellation_kind"]["from"], a.details["cancellation_kind"]["to"], a.correction_reason) for a in audit] == [
@@ -109,10 +109,10 @@ def test_3_an_extra_one_off_lesson_costs_nothing_and_two_cancellations_of_a_day_
     extra = one_off(w, g, "2026-10-28")
     cancel(w, g, extra, "2026-10-28")                                                         # the extra lesson only
     assert kind_of(w, g, "2026-10-28", extra) == "centre"
-    assert recalc_days(w, m) == [] and row_of(w, s)["debt"] == 600_000
+    assert recalc_days(w, m) == [] and row_of(w, s)["unpaid"] == 600_000
     cancel(w, g, "lesson-wed", "2026-10-28")                                                  # the regular lesson of the same day
     # exactly one line, priced by the REGULAR schedule (600 000 / 13): the extra lesson of the period does not cheapen the deducted lesson
-    assert recalc_days(w, m) == ["2026-10-28"] and row_of(w, s)["debt"] == 600_000 - 46_000 == 554_000
+    assert recalc_days(w, m) == ["2026-10-28"] and row_of(w, s)["unpaid"] == 600_000 - 46_000 == 554_000
 
 
 def test_3_the_copy_of_a_moved_lesson_is_in_the_price_when_the_centre_cancels_it(pg_session, clock):
@@ -121,9 +121,9 @@ def test_3_the_copy_of_a_moved_lesson_is_in_the_price_when_the_centre_cancels_it
     r = client(w, "admin").post(f"{API}/org/groups/{g.id}/lesson-move", json={
         "lessonId": "lesson-wed", "lessonDate": "2026-10-28", "newDate": "2026-10-29", "startTime": "10:00", "endTime": "11:00", "reason": "Перенос по просьбе центра"})
     copy = r.json()["result"]["newLesson"]["id"]
-    assert row_of(w, s)["debt"] == 600_000                                                    # the move itself is neutral
+    assert row_of(w, s)["unpaid"] == 600_000                                                    # the move itself is neutral
     cancel(w, g, copy, "2026-10-29")
-    assert recalc_days(w, m) == ["2026-10-29"] and row_of(w, s)["debt"] == 554_000
+    assert recalc_days(w, m) == ["2026-10-29"] and row_of(w, s)["unpaid"] == 554_000
 
 
 # ---- 4. the horizon of the next period ------------------------------------------------------------------------------------------------------------------
@@ -135,9 +135,9 @@ def test_4_paid_in_full_the_next_period_asks_for_the_price_minus_the_deduction_b
     cancel(w, g, "lesson-wed", "2026-10-21")                                                  # today is 25.10, the next period begins 06.11
     due = client(w, "owner").get(f"{API}/org/memberships/{m.id}/payments/preview").json()
     assert due["suggested_amount"] == 554_000
-    assert row_of(w, s)["advance"] == 46_000 and row_of(w, s)["debt"] == 0
+    assert row_of(w, s)["advance"] == 46_000 and row_of(w, s)["unpaid"] == 0
     after = client(w, "owner").get(f"{API}/org/memberships/{m.id}/payments/preview", params={"amount": 554_000}).json()["result"]
-    assert after["debt_after"] == 0 and after["paid_until_after"] == "2026-12-05"           # 554 000 + the deduction pay the whole next period (06.11-05.12)
+    assert after["unpaid_after"] == 0 and after["paid_until_after"] == "2026-12-05"           # 554 000 + the deduction pay the whole next period (06.11-05.12)
 
 
 # ---- 6. the robust day off ----------------------------------------------------------------------------------------------------------------------------------
@@ -337,7 +337,7 @@ def test_16_the_income_report_reduces_the_month_of_the_cancelled_lesson(pg_sessi
     october = IncomeReports._collection(shown, D(2026, 10, 1), D(2026, 10, 31))
     november = IncomeReports._collection(shown, D(2026, 11, 1), D(2026, 11, 30))
     assert (october.total.charged, october.total.paid, october.total.debt) == (600_000, 600_000, 0)       # October's target is not touched
-    assert (november.total.charged, november.total.paid, november.total.debt) == (554_000, 0, 554_000)    # November's target shrank by the lesson of November
+    assert (november.total.charged, november.total.paid, november.total.debt + november.total.due) == (554_000, 0, 554_000)    # November's target shrank by the lesson of November
 
 
 def test_1_the_journal_says_the_kind_of_every_cancelled_lesson(pg_session, clock, monkeypatch):

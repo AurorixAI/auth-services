@@ -160,8 +160,8 @@ def test_m1_overdue_days_do_not_count_the_paused_days(world, fixed_today):
     rows = owner(world).get(f"{API}/org/payments/status", params={"bucket": "to_pay"}).json()["items"]
     row = next(x for x in rows if x["membership_id"] == str(m.id))
     # paid through 19.10 (informational), paused 20.10-15.11: the first charged unpaid day is 16.11 = today - overdue for one day, not 28
-    assert row["paid_until"] == "2026-10-19" and row["debt"] == 281_000
-    assert row["days_overdue"] == 1        # the paid-until status counts the days after 19.10 without the pause: one
+    assert row["paid_until"] == "2026-10-19" and row["unpaid"] == 281_000
+    assert (row["days_overdue"], row["status"]) == (None, "active")        # PAY-DUE 3.2: a row that owes is not named by the paid-until status (it counted ONE day after 19.10 without the pause); the pause is taken into account by the term below
     # PAY-DUE: the debt of a period whose first charged day is today (after the pause) is «К оплате»: the 5th unpaused day from 16.11 is 20.11 (the pause 20.10-15.11 moves nothing here: the term starts after it)
     assert (row["state"], row["debt_amount"], row["due_amount"], row["due_until"], row["due_text"], row["due_sub"]) == ("to_pay", 0, 281_000, "2026-11-20", "К оплате 281\xa0000\xa0сум", "до 20.11")
 
@@ -234,7 +234,7 @@ def test_m5_the_card_keeps_a_closed_membership_with_only_an_opening_debt(world, 
     put_opening(world, m, {"debt_amount": 250_000, "debt_on": "2026-09-30"})
     assert owner(world).post(f"{API}/org/groups/{world.group.id}/students/{debtor.id}/leave", json={}).status_code == 200
     got = owner(world).get(f"{API}/org/students/{debtor.id}/memberships").json()
-    assert [r["membership_id"] for r in got] == [str(m.id)] and got[0]["debt"] >= 250_000      # no payment, no write-off: only the opening debt
+    assert [r["membership_id"] for r in got] == [str(m.id)] and got[0]["unpaid"] >= 250_000      # no payment, no write-off: only the opening debt
 
 
 # ---- m7: money cells of the import - inf / nan / overflow are a row error, never a 500 -----------------------------------------------------------

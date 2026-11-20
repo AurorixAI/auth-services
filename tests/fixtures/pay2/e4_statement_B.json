@@ -13,6 +13,18 @@
   "mode": "calendar",
   "accounting_start": "2026-09-01",
   "summary": {
+    "debt_amount": 0,
+    "due_amount": 0,
+    "due_until": null,
+    "overdue_days": null,
+    "due_lessons": null,
+    "debt_lessons": 0,
+    "debt_text": null,
+    "debt_sub": null,
+    "due_text": null,
+    "due_sub": null,
+    "state": "paid",
+    "state_text": "Оплачено до 04.11",
     "charged": 258000,
     "paid": 0,
     "transferred_in": 323000,
@@ -20,7 +32,7 @@
     "recalculated": 0,
     "refunded": 0,
     "transferred_out": 0,
-    "debt": 0,
+    "unpaid": 0,
     "advance": 65000,
     "paid_until": "2026-11-04",
     "status": "active",
@@ -37,6 +49,10 @@
       "outflow": 0,
       "balance_after": 323000,
       "balance_text": "Аванс 323 000",
+      "open_amount": null,
+      "open_name": null,
+      "open_text": null,
+      "open_parts": [],
       "voided_at": null,
       "void_reason": null,
       "voided_by_name": null,
@@ -97,6 +113,16 @@
       "outflow": 0,
       "balance_after": 65000,
       "balance_text": "Аванс 65 000",
+      "open_amount": 0,
+      "open_name": "paid",
+      "open_text": "Оплачено",
+      "open_parts": [
+        {
+          "name": "paid",
+          "amount": 0,
+          "text": "Оплачено"
+        }
+      ],
       "voided_at": null,
       "void_reason": null,
       "voided_by_name": null,
@@ -129,7 +155,8 @@
           "covered_through": "2026-10-31",
           "partial_credit": 0,
           "state": "closed",
-          "bucket": "current"
+          "bucket": "current",
+          "parts": []
         },
         "payment_id": null,
         "receipt_no": null,
@@ -182,7 +209,8 @@
       "covered_through": "2026-11-04",
       "partial_credit": 11667,
       "state": "future",
-      "bucket": "future"
+      "bucket": "future",
+      "parts": []
     }
   ]
 }

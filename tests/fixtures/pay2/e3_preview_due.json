@@ -11,9 +11,15 @@
     "scheduled": null
   },
   "due": {
-    "debt": 213000,
-    "past_debt": 0,
-    "current_due": 213000,
+    "unpaid": 213000,
+    "debt_amount": 213000,
+    "due_amount": 0,
+    "due_until": null,
+    "overdue_days": 20,
+    "debt_text": "Долг 213 000 сум",
+    "debt_sub": "просрочено 20 дней",
+    "due_text": null,
+    "due_sub": null,
     "advance": 0,
     "segments": [
       {
@@ -44,11 +50,18 @@
         "covered_through": null,
         "partial_credit": 0,
         "state": "open",
-        "bucket": "current"
+        "bucket": "current",
+        "parts": [
+          {
+            "name": "debt",
+            "unpaid": 213000,
+            "due_until": null,
+            "lessons": null
+          }
+        ]
       }
     ],
-    "paid_until": null,
-    "days_overdue": null
+    "paid_until": null
   },
   "suggested_amount": 213000,
   "amount": null,

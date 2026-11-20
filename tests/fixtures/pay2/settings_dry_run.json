@@ -5,6 +5,8 @@
   "lessons_per_payment": 12,
   "expiring_days": 3,
   "expiring_lessons": 3,
+  "pay_due_days": 10,
+  "pay_due_lessons": 2,
   "excuse_deadline_days": 5,
   "excuse_deadline_lessons": 2,
   "admin_can_manage": true,
@@ -22,5 +24,12 @@
     "refundable_delta": -900000,
     "openings_to_review": 0
   },
-  "regime_impact": null
+  "regime_impact": null,
+  "pay_due_impact": {
+    "to_due": 3,
+    "to_debt": 0,
+    "texts": [
+      "3 ученика из должников станут «К оплате»"
+    ]
+  }
 }

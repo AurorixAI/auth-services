@@ -245,7 +245,7 @@ def late_joiner(w):
     for s in (w.s2, w.s3):
         pay(w, member(w, s, w.G1), 600_000, date(2026, 10, 1))
     joined(w, w.s1, w.G1, date(2026, 10, 14))
-    return membership_row(w, w.s1, w.G1)["debt"]
+    return membership_row(w, w.s1, w.G1)["unpaid"]
 
 
 def test_a_lesson_cancelled_by_a_b2_decision_leaves_the_calendar_month_price_unchanged(w, clock, sync):
@@ -257,7 +257,7 @@ def test_a_lesson_cancelled_by_a_b2_decision_leaves_the_calendar_month_price_unc
     out = decide(w, "admin", item["id"], decision="cancel", reason="Преподаватель болен, замены нет")
     assert out.status_code == 200, out.text
     assert row_of(w, w.G1, "lesson-l1", "2026-10-26").status == "cancelled"
-    assert membership_row(w, w.s1, w.G1)["debt"] == debt
+    assert membership_row(w, w.s1, w.G1)["unpaid"] == debt
 
 
 def test_a_lesson_moved_by_a_b2_decision_is_neutral_for_the_proration(w, clock, sync):
@@ -269,7 +269,7 @@ def test_a_lesson_moved_by_a_b2_decision_is_neutral_for_the_proration(w, clock, 
     assert out.status_code == 200, out.text
     assert out.json()["result"]["newLesson"]["id"]
     assert row_of(w, w.G1, "lesson-l2", "2026-10-28").status == "cancelled"
-    assert membership_row(w, w.s1, w.G1)["debt"] == debt                            # 375 000 - not 6/9 of the month
+    assert membership_row(w, w.s1, w.G1)["unpaid"] == debt                            # 375 000 - not 6/9 of the month
 
 
 def test_a_lesson_cancelled_by_a_b2_decision_does_not_consume_a_package(w, clock, sync):
@@ -289,7 +289,7 @@ def test_a_lesson_cancelled_by_a_b2_decision_does_not_consume_a_package(w, clock
     assert decide(w, "admin", item["id"], decision="cancel", reason="Преподаватель болен, замены нет").status_code == 200
     clock.set("2026-10-21 23:00")
     after = row()
-    assert after["lessons_used"] == 3 and after["lessons_left"] == before["lessons_left"] and after["debt"] == before["debt"]
+    assert after["lessons_used"] == 3 and after["lessons_left"] == before["lessons_left"] and after["unpaid"] == before["unpaid"]
 
 
 # ======================================================================================================================== 6. import x seat rule x opening

@@ -16,8 +16,9 @@ def statement(w, m):
 def open_sums(st):
     out = {"due": 0, "debt": 0, "advance": 0, "paid": 0}
     for row in st["rows"]:
-        if row["open_name"]:
-            out[row["open_name"]] += row["open_amount"]
+        for part in row["open_parts"]:       # decision 6: a row with two names has two parts
+            out[part["name"]] += part["amount"]
+        assert (row["open_amount"] or 0) == sum(x["amount"] for x in row["open_parts"])
     return out
 
 
@@ -26,7 +27,7 @@ def check_equalities(st):
     s, o = st["summary"], open_sums(st)
     assert o["due"] == s["due_amount"] and o["debt"] == s["debt_amount"] and o["advance"] == s["advance"], (o, s)
     assert s["charged"] - s["paid"] - s["transferred_in"] - s["written_off"] - s["recalculated"] + s["refunded"] + s["transferred_out"] == s["debt_amount"] + s["due_amount"] - s["advance"]
-    assert s["debt"] == s["debt_amount"] + s["due_amount"]
+    assert s["unpaid"] == s["debt_amount"] + s["due_amount"]
 
 
 def test_a_partial_payment_the_charge_row_says_what_is_left_and_the_payment_row_nothing(pg_session, clock):

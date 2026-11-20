@@ -195,11 +195,6 @@
             "title": "Advance",
             "type": "integer"
           },
-          "debt": {
-            "default": 0,
-            "title": "Debt",
-            "type": "integer"
-          },
           "debt_amount": {
             "default": 0,
             "title": "Debt Amount",
@@ -414,6 +409,11 @@
               }
             ],
             "title": "Teacher Name"
+          },
+          "unpaid": {
+            "default": 0,
+            "title": "Unpaid",
+            "type": "integer"
           }
         },
         "required": [
@@ -441,7 +441,7 @@
           "student_archived",
           "status",
           "paid_until",
-          "debt",
+          "unpaid",
           "advance",
           "refundable"
         ],
@@ -646,11 +646,6 @@
               }
             ],
             "title": "Days Overdue"
-          },
-          "debt": {
-            "default": 0,
-            "title": "Debt",
-            "type": "integer"
           },
           "debt_age_bucket": {
             "anyOf": [
@@ -1005,6 +1000,11 @@
             ],
             "title": "Teacher Name"
           },
+          "unpaid": {
+            "default": 0,
+            "title": "Unpaid",
+            "type": "integer"
+          },
           "writeoff_allowed": {
             "default": false,
             "title": "Writeoff Allowed",
@@ -1058,6 +1058,36 @@
           "difference"
         ],
         "title": "NextPeriod",
+        "type": "object"
+      },
+      "OpenPart": {
+        "description": "PAY-DUE 10.11 (lead 20.11, decision 6): one named part of what is open on a statement row (``paid`` / ``due`` / ``debt`` / ``advance``) with its words.",
+        "properties": {
+          "amount": {
+            "title": "Amount",
+            "type": "integer"
+          },
+          "name": {
+            "enum": [
+              "paid",
+              "due",
+              "debt",
+              "advance"
+            ],
+            "title": "Name",
+            "type": "string"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "amount",
+          "text"
+        ],
+        "title": "OpenPart",
         "type": "object"
       },
       "OpeningBrief": {
@@ -2885,11 +2915,6 @@
             "title": "Advance",
             "type": "integer"
           },
-          "debt": {
-            "default": 0,
-            "title": "Debt",
-            "type": "integer"
-          },
           "debt_amount": {
             "default": 0,
             "title": "Debt Amount",
@@ -2985,10 +3010,15 @@
             },
             "title": "Segments",
             "type": "array"
+          },
+          "unpaid": {
+            "default": 0,
+            "title": "Unpaid",
+            "type": "integer"
           }
         },
         "required": [
-          "debt",
+          "unpaid",
           "debt_amount",
           "due_amount",
           "due_until",
@@ -3050,11 +3080,6 @@
             },
             "title": "Allocations",
             "type": "array"
-          },
-          "debt_after": {
-            "default": 0,
-            "title": "Debt After",
-            "type": "integer"
           },
           "debt_amount_after": {
             "default": 0,
@@ -3153,11 +3178,16 @@
             "default": "",
             "title": "Summary Text",
             "type": "string"
+          },
+          "unpaid_after": {
+            "default": 0,
+            "title": "Unpaid After",
+            "type": "integer"
           }
         },
         "required": [
           "allocations",
-          "debt_after",
+          "unpaid_after",
           "debt_amount_after",
           "due_amount_after",
           "due_until_after",
@@ -5960,6 +5990,52 @@
           "details": {
             "$ref": "#/components/schemas/StatementDetails"
           },
+          "open_amount": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Open Amount"
+          },
+          "open_name": {
+            "anyOf": [
+              {
+                "enum": [
+                  "paid",
+                  "due",
+                  "debt",
+                  "advance"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Open Name"
+          },
+          "open_parts": {
+            "items": {
+              "$ref": "#/components/schemas/OpenPart"
+            },
+            "title": "Open Parts",
+            "type": "array"
+          },
+          "open_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Open Text"
+          },
           "outflow": {
             "default": 0,
             "title": "Outflow",
@@ -6033,6 +6109,10 @@
           "outflow",
           "balance_after",
           "balance_text",
+          "open_amount",
+          "open_name",
+          "open_text",
+          "open_parts",
           "voided_at",
           "void_reason",
           "voided_by_name",
@@ -6052,11 +6132,6 @@
           "charged": {
             "default": 0,
             "title": "Charged",
-            "type": "integer"
-          },
-          "debt": {
-            "default": 0,
-            "title": "Debt",
             "type": "integer"
           },
           "debt_amount": {
@@ -6236,6 +6311,11 @@
             "title": "Transferred Out",
             "type": "integer"
           },
+          "unpaid": {
+            "default": 0,
+            "title": "Unpaid",
+            "type": "integer"
+          },
           "written_off": {
             "default": 0,
             "title": "Written Off",
@@ -6262,7 +6342,7 @@
           "recalculated",
           "refunded",
           "transferred_out",
-          "debt",
+          "unpaid",
           "advance",
           "paid_until",
           "status",

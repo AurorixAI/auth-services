@@ -181,7 +181,7 @@ class PaymentsReports:
             voided = self._voided_rows(org_id, membership_id)
         summary = StatementSummary(
             charged=ledger.charged, paid=ledger.paid, transferred_in=ledger.transferred_in, written_off=ledger.written_off,
-            recalculated=ledger.recalculated, refunded=ledger.refunded, transferred_out=ledger.transferred_out, debt=ledger.debt, advance=ledger.advance,
+            recalculated=ledger.recalculated, refunded=ledger.refunded, transferred_out=ledger.transferred_out, unpaid=ledger.debt, advance=ledger.advance,
             paid_until=ledger.status.paid_until, status=pv.unpaid_status(entry), reconciles=ledger.reconciles,
             **pv.unpaid_fields(entry, today))
         return StatementOut(
@@ -289,7 +289,7 @@ class PaymentsReports:
             ["Выписка", f"{st.membership.student_name} · {st.membership.group_name}", f"на {st.as_of.strftime('%d.%m.%Y')}"],
             ["Стоимость обучения", st.summary.charged, "Оплачено", st.summary.paid + st.summary.transferred_in],
             ["Прощено", st.summary.written_off, "Возвращено / деньги в другие группы", st.summary.refunded + st.summary.transferred_out],
-            ["Остаток", tx.balance_text(st.summary.advance - st.summary.debt)],
+            ["Остаток", tx.balance_text(st.summary.advance - st.summary.unpaid)],
         ]
         body = [[r.seq, r.date.strftime("%d.%m.%Y"), r.title, r.debit or "", r.credit or "", r.outflow or "",
                  r.balance_after if r.balance_after is not None else "", detail(r)] for r in [*st.rows, *st.voided]]
@@ -538,7 +538,7 @@ class PaymentsReports:
                 group_id=str(e.group.id), group_name=e.group.name, teacher_id=str(e.group.teacher_id) if e.group.teacher_id else None,
                 teacher_name=_person(e.teacher), is_active=bool(e.membership.is_active),
                 student_archived=e.student.status == "archived", status=pv.unpaid_status(e), paid_until=l.status.paid_until,
-                debt=l.debt, advance=l.advance, refundable=l.refundable, **pv.unpaid_fields(e, today)))
+                unpaid=l.debt, advance=l.advance, refundable=l.refundable, **pv.unpaid_fields(e, today)))
         return BalancesPage(items=rows, total=len(picked), limit=limit, offset=offset,
                             debt_total=sum(e.due.debt_amount for e in picked) if kind == pv.BUCKET_DEBTORS else 0,
                             due_total=sum(e.due.due_amount for e in picked) if kind == pv.BUCKET_TO_PAY else 0)

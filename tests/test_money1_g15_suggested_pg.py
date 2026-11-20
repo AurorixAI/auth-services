@@ -29,7 +29,7 @@ def preview(w, m):
 def test_g15_a_period_paid_exactly_suggests_the_price_of_the_next_period(world, fixed_today):
     m = paid_exactly_world(world, fixed_today)
     body = preview(world, m)
-    assert body["due"]["debt"] == 0 and body["suggested_amount"] == 600_000
+    assert body["due"]["unpaid"] == 0 and body["suggested_amount"] == 600_000
 
 
 def test_g15_the_old_quote_says_the_same_number(world, fixed_today):

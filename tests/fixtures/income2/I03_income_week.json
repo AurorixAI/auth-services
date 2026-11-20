@@ -140,15 +140,12 @@
   "collection": null,
   "position": {
     "debt_total": 500000,
-    "past_debt_total": 0,
+    "due_total": 0,
+    "debtors": 3,
+    "due_students": 0,
     "advance_total": 450000,
     "memberships_with_debt": 3,
-    "students_with_debt": 3,
     "memberships_with_advance": 2,
-    "debtors_debt_total": 500000,
-    "debt_waiting_total": 0,
-    "students_debtors": 3,
-    "students_waiting": 0,
     "students_with_advance": 2
   },
   "checks": [
