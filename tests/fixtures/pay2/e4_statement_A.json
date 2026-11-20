@@ -54,6 +54,7 @@
       "open_amount": 0,
       "open_name": "paid",
       "open_text": "Оплачено",
+      "open_sub": null,
       "open_parts": [
         {
           "name": "paid",
@@ -129,6 +130,7 @@
       "open_amount": null,
       "open_name": null,
       "open_text": null,
+      "open_sub": null,
       "open_parts": [],
       "voided_at": null,
       "void_reason": null,
@@ -181,6 +183,7 @@
       "open_amount": null,
       "open_name": null,
       "open_text": null,
+      "open_sub": null,
       "open_parts": [],
       "voided_at": null,
       "void_reason": null,

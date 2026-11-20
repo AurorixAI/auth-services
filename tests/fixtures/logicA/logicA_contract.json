@@ -1698,11 +1698,6 @@
             "title": "Charged After Leave",
             "type": "integer"
           },
-          "debt": {
-            "default": 0,
-            "title": "Debt",
-            "type": "integer"
-          },
           "debt_amount": {
             "default": 0,
             "title": "Debt Amount",
@@ -1746,10 +1741,15 @@
             "default": 0,
             "title": "Refundable",
             "type": "integer"
+          },
+          "unpaid": {
+            "default": 0,
+            "title": "Unpaid",
+            "type": "integer"
           }
         },
         "required": [
-          "debt",
+          "unpaid",
           "debt_amount",
           "due_amount",
           "due_until",
@@ -3200,6 +3200,7 @@
           "name": {
             "enum": [
               "paid",
+              "forgiven",
               "due",
               "debt",
               "advance"
@@ -8128,17 +8129,6 @@
             "title": "Action",
             "type": "string"
           },
-          "expected_debt": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Expected Debt"
-          },
           "expected_refundable": {
             "anyOf": [
               {
@@ -8149,6 +8139,17 @@
               }
             ],
             "title": "Expected Refundable"
+          },
+          "expected_unpaid": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Unpaid"
           },
           "membership_id": {
             "title": "Membership Id",
@@ -9177,6 +9178,7 @@
               {
                 "enum": [
                   "paid",
+                  "forgiven",
                   "due",
                   "debt",
                   "advance"
@@ -9195,6 +9197,17 @@
             },
             "title": "Open Parts",
             "type": "array"
+          },
+          "open_sub": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Open Sub"
           },
           "open_text": {
             "anyOf": [
@@ -9283,6 +9296,7 @@
           "open_amount",
           "open_name",
           "open_text",
+          "open_sub",
           "open_parts",
           "voided_at",
           "void_reason",
@@ -9900,7 +9914,7 @@
         "x-errors": [
           {
             "code": "PRICE_BACKDATE_WITH_PAYMENTS",
-            "message": "Нельзя изменить цену задним числом: у {N} учеников уже есть оплаты за период, который это затронет ({names}). Разницу за прошлое закройте прощением долга или возвратом.",
+            "message": "Нельзя изменить цену задним числом: у {N} учеников уже есть оплаты за период, который это затронет ({names}). Разницу за прошлое закройте прощением или возвратом.",
             "status": 409
           },
           {
@@ -10772,12 +10786,12 @@
         "x-errors": [
           {
             "code": "PAYMENT_EXCEEDS_DEBT",
-            "message": "Ученик ушёл: принять можно не больше долга {N} сум",
+            "message": "Ученик ушёл: принять можно не больше неоплаченной суммы {N} сум",
             "status": 422
           },
           {
             "code": "NOTHING_TO_PAY",
-            "message": "Ученик ушёл, долга нет: принимать нечего",
+            "message": "Ученик ушёл, неоплаченной суммы нет: принимать нечего",
             "status": 422
           }
         ]
@@ -10989,7 +11003,7 @@
         "x-errors": [
           {
             "code": "PRICE_BACKDATE_WITH_PAYMENTS",
-            "message": "Нельзя изменить цену задним числом: у {N} учеников уже есть оплаты за период, который это затронет ({names}). Разницу за прошлое закройте прощением долга или возвратом.",
+            "message": "Нельзя изменить цену задним числом: у {N} учеников уже есть оплаты за период, который это затронет ({names}). Разницу за прошлое закройте прощением или возвратом.",
             "status": 409
           },
           {
@@ -11827,12 +11841,12 @@
         "x-errors": [
           {
             "code": "PAYMENT_EXCEEDS_DEBT",
-            "message": "Ученик ушёл: принять можно не больше долга {N} сум",
+            "message": "Ученик ушёл: принять можно не больше неоплаченной суммы {N} сум",
             "status": 422
           },
           {
             "code": "NOTHING_TO_PAY",
-            "message": "Ученик ушёл, долга нет: принимать нечего",
+            "message": "Ученик ушёл, неоплаченной суммы нет: принимать нечего",
             "status": 422
           }
         ]

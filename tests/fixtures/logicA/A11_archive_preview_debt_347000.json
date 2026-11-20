@@ -6,7 +6,7 @@
       "group_id": "00000000-0000-4000-8000-000000000301",
       "group_name": "A-1",
       "money": {
-        "debt": 347000,
+        "unpaid": 0,
         "debt_amount": 0,
         "due_amount": 0,
         "due_until": null,

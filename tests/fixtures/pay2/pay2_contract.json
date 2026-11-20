@@ -1116,6 +1116,7 @@
           "name": {
             "enum": [
               "paid",
+              "forgiven",
               "due",
               "debt",
               "advance"
@@ -6146,6 +6147,7 @@
               {
                 "enum": [
                   "paid",
+                  "forgiven",
                   "due",
                   "debt",
                   "advance"
@@ -6164,6 +6166,17 @@
             },
             "title": "Open Parts",
             "type": "array"
+          },
+          "open_sub": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Open Sub"
           },
           "open_text": {
             "anyOf": [
@@ -6252,6 +6265,7 @@
           "open_amount",
           "open_name",
           "open_text",
+          "open_sub",
           "open_parts",
           "voided_at",
           "void_reason",

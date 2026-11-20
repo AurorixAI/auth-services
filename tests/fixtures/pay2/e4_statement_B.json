@@ -54,6 +54,7 @@
       "open_amount": 65000,
       "open_name": "advance",
       "open_text": "Аванс 65 000 сум",
+      "open_sub": null,
       "open_parts": [
         {
           "name": "advance",
@@ -124,6 +125,7 @@
       "open_amount": 0,
       "open_name": "paid",
       "open_text": "Оплачено",
+      "open_sub": null,
       "open_parts": [
         {
           "name": "paid",

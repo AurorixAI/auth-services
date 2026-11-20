@@ -54,6 +54,7 @@
       "open_amount": 250000,
       "open_name": "debt",
       "open_text": "Долг 250 000 сум",
+      "open_sub": null,
       "open_parts": [
         {
           "name": "debt",
@@ -129,6 +130,7 @@
       "open_amount": 213000,
       "open_name": "due",
       "open_text": "К оплате 213 000 сум",
+      "open_sub": null,
       "open_parts": [
         {
           "name": "due",
