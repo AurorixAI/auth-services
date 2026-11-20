@@ -2292,11 +2292,12 @@ class PaymentService:
         total = sum(carried_sums)
         pay_from = next((p.billing_from for p in target.periods if p.left_at is None and p.billing_from is not None), None)      # R3 Т4: the «Оплата с» that went along (it is named in the line)
         if actor_id:                      # the journal needs an author; a transfer made by the system (none today) leaves only the link
+            stamps = bc.action_moments(moment)      # one line per closed membership: moment + 1 us, + 2 us ... in the order of writing (the link rows stay at ``moment``)
             for link, carried in zip(made, carried_sums):
                 self._audit(org_id, target, actor_id, self.role_of(org_id, actor_id), AUDIT_TRANSFER, {
                     "actor_id": str(actor_id), "student_id": str(link.student_id), "transfer_id": str(link.id), "from_membership_id": str(link.from_membership_id),
                     "to_membership_id": str(link.to_membership_id), "amount": int(carried), "at": link.at.isoformat(),
-                    "pay_from": pay_from.isoformat() if pay_from is not None else None}, at=moment)
+                    "pay_from": pay_from.isoformat() if pay_from is not None else None}, at=stamps.next())
         logger.info("transfer recorded to=%s from=%s actor=%s", target.id, [str(m.id) for m in sources], actor_id)
         invalidate_summary(org_id)
         notes: List[Dict[str, Any]] = []

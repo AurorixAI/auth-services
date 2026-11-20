@@ -263,6 +263,7 @@ class LeaveService:
         # 2. validation of what the choice needs
         out: List[SettledOut] = []
         now = (at.astimezone(timezone.utc).replace(tzinfo=None) if at is not None and at.tzinfo is not None else at) or _utcnow()
+        stamps = bc.action_moments(now)          # the journal lines of the settlement: now + 1 us, + 2 us ... in the order of writing (the leave line itself stays at ``now``, before them)
         for item in todo:
             membership = by_id[item.membership_id]
             ledger, refundable = after[membership.id]
@@ -281,7 +282,7 @@ class LeaveService:
                     "actor_id": str(actor_id), "membership_id": str(membership.id), "student_id": str(membership.student_id),
                     "writeoff_id": str(row.id), "amount": int(row.amount), "reason": reason, "effective_on": today.isoformat(),
                     "debt_before": ledger.debt, "debt_after": 0, "at_leave": True,
-                    "expected_debt": item.expected_debt}, at=now)        # the numbers the client saw (null: it sent none) and the ones used
+                    "expected_debt": item.expected_debt}, at=stamps.next())        # the numbers the client saw (null: it sent none) and the ones used
                 out.append(SettledOut(membership_id=item.membership_id, action="writeoff", amount=int(row.amount), writeoff_id=str(row.id)))
             else:
                 if not item.method:
@@ -298,7 +299,7 @@ class LeaveService:
                     "actor_id": str(actor_id), "membership_id": str(membership.id), "student_id": str(membership.student_id),
                     "refund_id": str(row.id), "amount": int(refundable), "method": item.method, "effective_on": today.isoformat(),
                     "advance_before": ledger.advance, "advance_after": max(0, ledger.advance - int(refundable)), "debt_before": ledger.debt, "debt_after": ledger.debt, "at_leave": True,
-                    "expected_refundable": item.expected_refundable, "refundable_used": refundable}, at=now)
+                    "expected_refundable": item.expected_refundable, "refundable_used": refundable}, at=stamps.next())
                 out.append(SettledOut(membership_id=item.membership_id, action="refund", amount=int(refundable), refund_id=str(row.id)))
         self.pay._family_check(org_id, [m.id for m in memberships])
         return out

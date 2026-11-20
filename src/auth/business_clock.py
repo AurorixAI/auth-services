@@ -153,6 +153,24 @@ def business_now() -> datetime:
     return moment.astimezone(BUSINESS_TIMEZONE)
 
 
+class ActionMoments:
+    """The journal lines of ONE action: ``moment + 1 us``, ``+ 2 us``, ... in the order of the calls - the journal of decisions sorts by ``created_at``, so
+    the lines keep the order they were written in (before the stand clock they got the clock of their own insert).  Only the JOURNAL lines draw from it: the
+    data rows (and whatever is joined by equality or ``>= since``) stay at the exact ``moment``."""
+
+    def __init__(self, moment: datetime) -> None:
+        self._moment = moment
+        self._steps = 0
+
+    def next(self) -> datetime:
+        self._steps += 1
+        return self._moment + timedelta(microseconds=self._steps)
+
+
+def action_moments(moment: datetime) -> ActionMoments:
+    return ActionMoments(moment)
+
+
 def business_now_naive() -> datetime:
     """Now as the naive Tashkent wall time that ``group_attendance.started_at / completed_at`` hold."""
     return business_now().replace(tzinfo=None)
