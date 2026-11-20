@@ -512,8 +512,8 @@ def test_a_transfer_records_a_link_and_the_money_follows(two, monkeypatch):
     old, new = statement(two, two.group), statement(two, two.second)
     assert old["transferred_out"] > 0 and old["advance"] == 0 and old["reconciles"] and new["reconciles"]
     assert new["transferred_in"] == old["transferred_out"] > 0
-    # the whole 900 000 is accounted for: charged in both groups plus what is left, minus any debt
-    assert old["charged"] + new["charged"] + new["advance"] - new["debt"] - old["debt"] == 3_000_000
+    # the whole 900 000 is accounted for: charged in both groups plus what is left, minus whatever is unpaid (debt or due: the name is not the point here)
+    assert old["charged"] + new["charged"] + new["advance"] - new["unpaid"] - old["unpaid"] == 3_000_000
     assert carry_warnings(result)
 
 
@@ -525,7 +525,8 @@ def test_voiding_the_payment_of_the_old_group_takes_the_money_back_from_the_new_
     assert statement(two, two.second)["transferred_in"] > 0
     assert owner(two).post(f"{API}/org/payments/{p['id']}/void", json={"reason": "ошибка"}).status_code == 200
     new = statement(two, two.second)
-    assert new["transferred_in"] == 0 and new["debt"] > 0
+    assert new["transferred_in"] == 0 and new["unpaid"] > 0
+    assert new["debt_amount"] + new["due_amount"] == new["unpaid"]      # the unpaid sum is split into the two names with nothing lost
 
 
 def test_a_round_trip_conserves_the_money(two, monkeypatch):
@@ -542,7 +543,7 @@ def test_a_round_trip_conserves_the_money(two, monkeypatch):
     total_out = a["transferred_out"] + b["transferred_out"]
     total_in = a["transferred_in"] + b["transferred_in"]
     assert total_out == total_in > 0
-    money_left = (a["advance"] - a["debt"]) + (b["advance"] - b["debt"])
+    money_left = (a["advance"] - a["unpaid"]) + (b["advance"] - b["unpaid"])
     assert money_left + a["charged"] + b["charged"] == 4_000_000
 
 

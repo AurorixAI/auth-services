@@ -231,7 +231,7 @@ def test_p3_a_correction_back_to_the_biggest_sum_is_refused_when_another_payment
     cut = replace_it(world, p1, 10_000)["payment"]
     pay(world, s0, a, amount=90_000)
     d = replace_it(world, cut, 100_000, expect=422)["detail"]
-    assert d["code"] == "PAYMENT_EXCEEDS_DEBT" and d["debt"] == 10_000
+    assert d["code"] == "PAYMENT_EXCEEDS_DEBT" and d["unpaid"] == 10_000
     assert live_sum(world, a, s0) == 110_000 + 10_000 + 90_000 and account(world, membership(world, s0, a).id).advance == 0
     r = owner(world).get(f"{API}/org/memberships/{membership(world, s0, a).id}/payments/preview", params={"amount": 100_000, "replace_payment_id": cut["id"]})
     assert r.status_code == 200 and r.json()["suggested_amount"] == 10_000          # the hint of the window is the same ceiling

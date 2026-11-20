@@ -42,10 +42,12 @@ def test_3_the_statement_file_knows_the_recalc_row_and_its_tile():
                          details=StatementDetails(recalc=line))]
     (entry,) = st.build_entries(rows)
     # the title names the lesson, the quiet line carries the amount only (no repeat)
-    assert (entry.title, entry.sub, entry.paid, entry.charged, entry.balance) == ("Перерасчёт: урок 21.10 отменён центром", "\u221246 000 сум", 46_000, None, "Долг 554 000")
-    summary = StatementSummary(charged=600_000, paid=0, recalculated=46_000, debt=554_000)
+    assert (entry.title, entry.sub, entry.paid, entry.charged, entry.balance) == ("Перерасчёт: урок 21.10 отменён центром", "\u221246 000 сум", 46_000, None, "")                    # a recalc row is neither a charge nor a payment: nothing is open on the row itself (PAY-DUE 10.11)
+    summary = StatementSummary(charged=600_000, paid=0, recalculated=46_000, unpaid=554_000, debt_amount=554_000, debt_text="Долг 554\u00a0000\u00a0сум")
     assert ("Перерасчёт", 46_000) in st.total_lines(summary)
-    assert "Перерасчёт" not in [label for label, _ in st.total_lines(StatementSummary(charged=600_000, debt=600_000))]
+    assert ("Остаток", "Долг 554\u00a0000\u00a0сум") in st.total_lines(summary)         # the 554 000 stands in the tile of the file with the name of the server
+    assert st.balance_summary(summary) == "Долг 554\u00a0000\u00a0сум"
+    assert "Перерасчёт" not in [label for label, _ in st.total_lines(StatementSummary(charged=600_000, unpaid=600_000, debt_amount=600_000, debt_text="Долг 600\u00a0000\u00a0сум"))]
     assert st.STATEMENT_TYPE_LABEL["recalc"] == "Перерасчёт"
 
 
