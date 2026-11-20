@@ -1,0 +1,99 @@
+{
+  "as_of": "2026-10-21",
+  "mode": "calendar",
+  "price": {
+    "amount": 500000,
+    "source": "group",
+    "valid_from": "2026-01-01",
+    "group_amount": 500000,
+    "reason": null,
+    "set_by_name": null,
+    "scheduled": null
+  },
+  "due": {
+    "unpaid": 500000,
+    "debt_amount": 0,
+    "due_amount": 500000,
+    "due_until": "2026-10-24",
+    "overdue_days": null,
+    "debt_text": null,
+    "debt_sub": null,
+    "due_text": "К оплате 500 000 сум",
+    "due_sub": "до 24.10",
+    "advance": 0,
+    "segments": [
+      {
+        "id": "seg:0:2026-10-20",
+        "kind": "period",
+        "period_from": "2026-10-20",
+        "period_to": "2026-11-19",
+        "billable_days": 31,
+        "days_text": null,
+        "price": {
+          "amount": 500000,
+          "source": "group",
+          "valid_from": "2026-01-01",
+          "group_amount": 500000,
+          "reason": null,
+          "set_by_name": null,
+          "scheduled": null
+        },
+        "charge": 500000,
+        "basis": "full",
+        "lessons": null,
+        "paid": 0,
+        "written_off": 0,
+        "recalculated": 0,
+        "unpaid": 500000,
+        "remaining": 500000,
+        "covered_days": 0,
+        "covered_through": null,
+        "partial_credit": 0,
+        "state": "open",
+        "bucket": "current",
+        "parts": [
+          {
+            "name": "due",
+            "unpaid": 500000,
+            "due_until": "2026-10-24",
+            "lessons": null
+          }
+        ]
+      }
+    ],
+    "paid_until": null
+  },
+  "suggested_amount": 500000,
+  "amount": 200000,
+  "result": {
+    "allocations": [
+      {
+        "segment_id": "seg:0:2026-10-20",
+        "period_from": "2026-10-20",
+        "period_to": "2026-11-19",
+        "amount": 200000,
+        "days": 12,
+        "bucket": "current",
+        "closes": false,
+        "label": "На текущий период 20.10–19.11",
+        "price": 500000,
+        "segment_remaining_after": 300000
+      }
+    ],
+    "unpaid_after": 300000,
+    "debt_amount_after": 0,
+    "due_amount_after": 300000,
+    "due_until_after": "2026-10-24",
+    "overdue_days_after": null,
+    "advance_after": 0,
+    "paid_until_before": null,
+    "paid_until_after": "2026-10-31",
+    "status_after": "active",
+    "partial_credit_after": 6452,
+    "lessons": null,
+    "summary_text": "Закроет 200 000 сум из «К оплате» 500 000 сум → оплачено до 31.10 · останется 300 000 сум",
+    "price_ahead": []
+  },
+  "warnings": [],
+  "recalc": []
+}
