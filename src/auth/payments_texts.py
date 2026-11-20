@@ -192,12 +192,30 @@ def repeated_payment_text(moment: datetime, now: datetime) -> str:
     return f"Такая же оплата уже внесена {day} в {local.strftime('%H:%M')} — внести ещё одну?"
 
 
-def immediate_text(amount: int, lessons: int, *, total: bool = False, more: bool = False) -> str:
-    """Money-2 stage 10: what the student must pay right after adding, in plain words: ``К оплате сразу: 300 000 сум (за 14 уроков)``;
-    under a bulk adding ``Всего к оплате сразу: ...``. ``more`` (a student who comes BACK has charges already) gives the SAME text:
-    the word «ещё» confused the owner («это аванс? это тоже долг?»); the amount is already the difference. The parameter is kept so callers stay untouched."""
-    word = f" (за {lessons} {lessons_word(lessons)})" if lessons else ""
-    return f"{'Всего к оплате сразу' if total else 'К оплате сразу'}: {money(amount)}{word}"
+def _lessons_tail(lessons: int) -> str:
+    return f" (за {lessons} {lessons_word(lessons)})" if lessons else ""
+
+
+def immediate_lines(debt: int, due: int, due_until: Optional[date], *, debt_lessons: int = 0, due_lessons: int = 0, term_was: Optional[date] = None, total: bool = False) -> List[str]:
+    """PAY-DUE 10.4: what the new stay owes on the day of adding, by the NAME the function of the term gives it (the words of the money dictionary):
+    ``К оплате до 19.11: 300 000 сум (за 14 уроков)`` / ``Долг сразу: 300 000 сум · срок был 03.11``; a part of each - two lines ``Долг N сум`` and ``К оплате M сум до ДД.ММ``;
+    under a bulk adding ``Всего ...``.  ``debt_lessons`` / ``due_lessons`` of 0: the lessons are not said (the part is paid in part - the server is silent on what it cannot state, LESSONS 151)."""
+    was = f" · срок был {ddmm(term_was)}" if term_was else ""
+    until = f" до {ddmm(due_until)}" if due_until else ""
+    if debt > 0 and due > 0:
+        first = "Всего долг" if total else "Долг"
+        second = "Всего к оплате" if total else "К оплате"
+        return [f"{first} {money(debt)}{was}", f"{second} {money(due)}{until}"]
+    if debt > 0:
+        return [f"{'Всего долг сразу' if total else 'Долг сразу'}: {money(debt)}{_lessons_tail(debt_lessons)}{was}"]
+    if due > 0:
+        return [f"{'Всего к оплате' if total else 'К оплате'}{until}: {money(due)}{_lessons_tail(due_lessons)}"]
+    return []
+
+
+def immediate_text(lines: List[str]) -> str:
+    """The lines of ``immediate_lines`` as one text (one line per name; the screen shows ``lines`` when it wants two rows)."""
+    return "\n".join(lines)
 
 
 def pay_due_impact_texts(to_due: int, to_debt: int) -> List[str]:

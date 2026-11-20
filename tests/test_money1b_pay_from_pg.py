@@ -220,10 +220,11 @@ def test_b1_the_preview_of_a_bulk_adding_says_what_is_charged_at_once_per_studen
     lessons = got["students"][0]["billing"]["immediate"]["lessons"]
     assert lessons > 0 and [x["student_id"] for x in got["students"]] == [str(a.id), str(b.id)]
     word = "уроков" if lessons % 10 not in (2, 3, 4) or lessons // 10 == 1 else "урока"
-    one = f"К оплате сразу: 300\u00a0000\u00a0сум (за {lessons} {word})"
+    one = f"Долг сразу: 300\u00a0000\u00a0сум (за {lessons} {word}) · срок был 11.10"      # PAY-DUE: «Оплата с» 07.10, the term of 5 days (07..11.10) has passed on 21.10
     assert [x["billing"]["immediate"]["text"] for x in got["students"]] == [one, one]                      # the same phrase as the single adding
-    assert got["immediate_total"] == {"amount": 600_000, "lessons": 2 * lessons, "students": 2,
-                                      "text": f"Всего к оплате сразу: 600\u00a0000\u00a0сум (за {2 * lessons} {'уроков' if (2 * lessons) % 10 not in (2, 3, 4) or (2 * lessons) // 10 == 1 else 'урока'})"}
+    total_word = "уроков" if (2 * lessons) % 10 not in (2, 3, 4) or (2 * lessons) // 10 == 1 else "урока"
+    total_text = f"Всего долг сразу: 600\u00a0000\u00a0сум (за {2 * lessons} {total_word})"
+    assert got["immediate_total"] == {"amount": 600_000, "debt_amount": 600_000, "due_amount": 0, "due_until": None, "lessons": 2 * lessons, "students": 2, "text": total_text, "lines": [total_text]}
     assert w.db.query(StudentGroup).filter(StudentGroup.student_id.in_([a.id, b.id])).count() == 0          # a dry run writes nothing
     single = add(w, fresh_student(w, "Одиночный"), pay_from="2026-10-07", dry_run=True)
     assert single["billing"]["immediate"]["text"] == one                                                    # one dictionary for both windows
@@ -238,9 +239,9 @@ def test_b1_the_bulk_preview_has_no_sum_without_the_money_right_and_the_real_ans
     a, b, c = fresh_student(w, "Первый"), fresh_student(w, "Второй"), fresh_student(w, "Третий")
     admin = _bulk(w, [a], client=make_client(w, user=w.admin))                                              # an administrator without the money right: no pay_from, so the default day
     assert admin["immediate_total"] is None and all("immediate" not in (x["billing"] or {}) for x in admin["students"])
-    assert "К оплате сразу" not in str(admin)
+    assert "Долг сразу" not in str(admin) and "К оплате до" not in str(admin)
     real = _bulk(w, [b, c], dry_run=False, pay_from="2026-10-07")
-    assert real["immediate_total"] is None and all("immediate" not in x["billing"] for x in real["students"]) and "К оплате сразу" not in str(real)
+    assert real["immediate_total"] is None and all("immediate" not in x["billing"] for x in real["students"]) and "Долг сразу" not in str(real) and "К оплате до" not in str(real)
     empty = _bulk(w, [fresh_student(w, "Позже")], pay_from="2026-11-30")                                    # nothing is charged at once: no total line
     assert empty["immediate_total"] is None
 

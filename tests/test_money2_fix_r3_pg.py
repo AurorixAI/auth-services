@@ -483,21 +483,21 @@ def test_t12_a_leaver_whose_advance_cannot_be_returned_does_not_block_the_archiv
     # a debt 50 000 (kept), an advance 410 000 with 410 000 refundable (kept), an advance 120 000 with 0 refundable (dropped), an advance 300 000 with 100 000 refundable (kept as 100 000).
     from types import SimpleNamespace as NS
 
-    from src.auth import group_lifecycle, ledger_service
+    from src.auth import group_lifecycle, ledger_service, pay_due
 
     a, b, c = groups3(world, fixed_today)
 
     def entry(name, debt, advance, refundable):      # R3b: the ONE rule lives in leave_effects.open_balances; the ledger loader is stood in
-        return NS(student=NS(id=name, last_name=name, first_name="", ), membership=NS(id=name, left_at=None), ledger=NS(debt=debt, advance=advance, refundable=refundable))
+        return NS(student=NS(id=name, last_name=name, first_name="", ), membership=NS(id=name, left_at=None), ledger=NS(debt=debt, advance=advance, refundable=refundable), due=pay_due.DueResult(debt_amount=debt, name="debt" if debt else "none"))
 
     entries = [entry("d", 50_000, 0, 0), entry("a1", 0, 410_000, 410_000), entry("a2", 0, 120_000, 0), entry("a3", 0, 300_000, 100_000)]
-    monkeypatch.setattr(ledger_service, "LedgerLoader", lambda *args, **kw: NS(run=lambda ids: entries))
+    monkeypatch.setattr(ledger_service, "LedgerLoader", lambda *args, **kw: NS(run=lambda ids: entries, settings=NS(pay_due_days=5, pay_due_lessons=2)))
     monkeypatch.setattr(group_lifecycle, "_student_name", lambda student: student.last_name)
     out = group_lifecycle.GroupLifecycle.open_balances(NS(db=world.db), a, money=True)
     assert [(r["name"], r["kind"], r["amount"]) for r in out] == [("a1", "advance", 410_000), ("a3", "advance", 100_000), ("d", "debt", 50_000)]
     from src.auth import leave_effects
 
-    assert [(k, n) for _, k, n in leave_effects.open_balances(world.db, str(world.org.id), [world.students[0].id])] == [("debt", 50_000), ("advance", 410_000), ("advance", 100_000)]
+    assert [(k, n) for _, k, n, _due in leave_effects.open_balances(world.db, str(world.org.id), [world.students[0].id])] == [("debt", 50_000), ("advance", 410_000), ("advance", 100_000)]
 
 
 # ============================================================================================================ Т10: a lock lost in the middle of a bulk adding is the line of ONE student

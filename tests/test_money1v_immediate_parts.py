@@ -1,4 +1,4 @@
-"""Money-1 pack V0 (pure ledger, no database): «К оплате сразу» is told by the periods it is made of.
+"""Money-1 pack V0 (pure ledger, no database): what the new stay owes at once («к оплате до ДД.ММ» / «долг сразу», PAY-DUE 10.4) is told by the periods it is made of.
 
 The owner saw «489 000 сум (за 10 уроков)» at the price 400 000 and did not understand the sum: 89 000 for October (2 lessons of 9, from 27.10) + 400 000 for the whole of November.
 ``parts`` is read from the SAME segments of the same ledger (one number - one function, LESSONS 104): the amounts add up to ``amount``, the lessons to ``lessons``."""
@@ -6,6 +6,7 @@ from datetime import date
 
 from src.auth import billing_ledger as bl
 from src.auth import billing_start as bs
+from src.auth import pay_due
 from tests.pay2_ledger_helpers import D, flat, make, weekly
 
 TUE_FRI = weekly((1, 4))          # October 2026: Tue 6 13 20 27, Fri 2 9 16 23 30 = 9 lessons; November: Tue 3 10 17 24, Fri 6 13 20 27 = 8
@@ -15,17 +16,25 @@ NBSP_FREE = "–"
 
 def charge(stays, today, *, price=400_000, regime=FIRST_OF_MONTH):
     inp = make(today=today, stays=stays, price_at=flat(price, D(2026, 1, 1)), start=D(2026, 9, 1), regimes=[regime], lesson_days=TUE_FRI)
-    return bs.immediate_from_ledger(bl.run_ledger(inp), inp.lesson_days)
+    return named(inp)
+
+
+def named(inp, before=None, days=5):
+    """The account as the add window reads it: the ledger, the name of its unpaid sum by the term of ``days`` days (as a student IN the centre), the difference with ``before`` if the student comes back."""
+    ledger = bl.run_ledger(inp)
+    return bs.immediate_from_ledger(ledger, inp.lesson_days, pay_due.classify(ledger, inp.today, days, 2, True), before)
 
 
 def test_v0_27_10_at_400000_is_89000_for_2_of_9_lessons_and_the_whole_of_november():
     got = charge([bl.Stay(D(2026, 10, 27))], D(2026, 11, 2))
     assert got["parts"] == [
-        {"label": "октябрь", "period_start": "2026-10-01", "from": "2026-10-27", "amount": 89_000, "lessons": 2, "lessons_in_period": 9, "whole": False},
-        {"label": "ноябрь", "period_start": "2026-11-01", "from": None, "amount": 400_000, "lessons": 8, "lessons_in_period": None, "whole": True}]
+        {"label": "октябрь", "period_start": "2026-10-01", "from": "2026-10-27", "amount": 89_000, "lessons": 2, "lessons_in_period": 9, "whole": False, "name": "debt", "due_until": None},
+        {"label": "ноябрь", "period_start": "2026-11-01", "from": None, "amount": 400_000, "lessons": 8, "lessons_in_period": None, "whole": True, "name": "due", "due_until": "2026-11-05"}]
     assert got["amount"] == 489_000 and got["lessons"] == 10                              # the old fields mean what they meant
     assert sum(p["amount"] for p in got["parts"]) == got["amount"] and sum(p["lessons"] for p in got["parts"]) == got["lessons"]
-    assert got["text"] == "К оплате сразу: 489 000 сум (за 10 уроков)"
+    # PAY-DUE: October is a debt (from 27.10 the term of 5 days is 27, 28, 29, 30, 31.10: «срок был 31.10»), November is «к оплате»: the stay goes on from October, so the first charged day of November is 01.11 -> 01, 02, 03, 04, 05.11
+    assert (got["debt_amount"], got["due_amount"], got["due_until"], got["term_was"]) == (89_000, 400_000, D(2026, 11, 5), D(2026, 10, 31))
+    assert got["lines"] == ["Долг 89\u00a0000\u00a0сум · срок был 31.10", "К оплате 400\u00a0000\u00a0сум до 05.11"] and got["text"] == "\n".join(got["lines"])
 
 
 def test_v0_the_payment_day_the_6th_names_the_period_by_its_days_not_by_a_month():
@@ -34,12 +43,16 @@ def test_v0_the_payment_day_the_6th_names_the_period_by_its_days_not_by_a_month(
         ("06.10–05.11", 400_000, True, None), ("06.11–05.12", 400_000, True, None)]
     assert got["parts"][0]["lessons"] == 9 and sum(p["amount"] for p in got["parts"]) == got["amount"] == 800_000
     assert got["lessons"] == sum(p["lessons"] for p in got["parts"])
+    # PAY-DUE: the term of 5 days from 06.10 ended on 10.10 (a debt, «срок был 10.10»); the second period began 06.11, today is 10.11 = its last day of «к оплате» (06, 07, 08, 09, 10)
+    assert [(p["name"], p["due_until"]) for p in got["parts"]] == [("debt", None), ("due", "2026-11-10")]
+    assert got["lines"] == ["Долг 400\u00a0000\u00a0сум · срок был 10.10", "К оплате 400\u00a0000\u00a0сум до 10.11"]
 
 
 def test_v0_the_first_lesson_today_loses_nothing_so_the_period_is_whole():
     got = charge([bl.Stay(D(2026, 11, 3))], D(2026, 11, 3))                              # Tuesday 03.11 is the first lesson of November: 8 of 8
-    assert got["parts"] == [{"label": "ноябрь", "period_start": "2026-11-01", "from": None, "amount": 400_000, "lessons": 8, "lessons_in_period": 8, "whole": True}]
+    assert got["parts"] == [{"label": "ноябрь", "period_start": "2026-11-01", "from": None, "amount": 400_000, "lessons": 8, "lessons_in_period": 8, "whole": True, "name": "due", "due_until": "2026-11-07"}]
     assert got["amount"] == 400_000 and got["lessons"] == 8
+    assert got["text"] == "К оплате до 07.11: 400\u00a0000\u00a0сум (за 8 уроков)"          # the first lesson (03.11) is the first day of the term: 03, 04, 05, 06, 07
 
 
 def test_v0_a_package_has_no_immediate_charge():
@@ -96,7 +109,7 @@ def test_n1_the_example_through_the_ledger_two_versions_of_the_rules_in_one_mont
     kw = dict(price_at=flat(100_000, D(2026, 1, 1)), start=D(2026, 9, 1), regimes=regs, lesson_days=TUE_FRI)
     closed = make(today=D(2026, 11, 20), stays=[bl.Stay(D(2026, 10, 1), D(2026, 11, 10))], **kw)
     back = make(today=D(2026, 11, 20), stays=[bl.Stay(D(2026, 10, 1), D(2026, 11, 10)), bl.Stay(D(2026, 11, 20))], **kw)
-    before = bs.immediate_from_ledger(bl.run_ledger(closed), closed.lesson_days)
-    got = bs.immediate_from_ledger(bl.run_ledger(back), back.lesson_days, before)
+    before = named(closed)
+    got = named(back, before)
     assert got is not None and got["amount"] == 38_000                               # the second November cell
     assert [p["amount"] for p in got["parts"]] == [38_000] and sum(p["amount"] for p in got["parts"]) == got["amount"]

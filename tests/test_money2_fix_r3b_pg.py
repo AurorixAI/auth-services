@@ -304,7 +304,7 @@ def test_small_the_window_of_adding_and_the_archive_of_a_group_show_the_same_adv
     # one left stay: advance 300 000 of which 100 000 can be returned -> both places say 100 000; another with nothing to return is not listed at all
     from types import SimpleNamespace as NS
 
-    from src.auth import group_lifecycle, leave_effects, ledger_service
+    from src.auth import group_lifecycle, leave_effects, ledger_service, pay_due
     from src.models.auth import StudentGroup
 
     a, b, c = groups3(world, fixed_today)
@@ -313,9 +313,9 @@ def test_small_the_window_of_adding_and_the_archive_of_a_group_show_the_same_adv
     leave(world, a, s0)
     m = membership(world, s0, a)
     group = NS(id=a.id, name=a.name)
-    entries = [NS(student=NS(id="s", last_name="S", first_name=""), group=group, membership=NS(id=m.id, left_at=None), ledger=NS(debt=0, advance=300_000, refundable=100_000)),
-               NS(student=NS(id="z", last_name="Z", first_name=""), group=group, membership=NS(id=m.id, left_at=None), ledger=NS(debt=0, advance=120_000, refundable=0))]
-    monkeypatch.setattr(ledger_service, "LedgerLoader", lambda *args, **kw: NS(run=lambda ids: entries))
+    entries = [NS(student=NS(id="s", last_name="S", first_name=""), group=group, membership=NS(id=m.id, left_at=None), ledger=NS(debt=0, advance=300_000, refundable=100_000), due=pay_due.NOTHING),
+               NS(student=NS(id="z", last_name="Z", first_name=""), group=group, membership=NS(id=m.id, left_at=None), ledger=NS(debt=0, advance=120_000, refundable=0), due=pay_due.NOTHING)]
+    monkeypatch.setattr(ledger_service, "LedgerLoader", lambda *args, **kw: NS(run=lambda ids: entries, settings=NS(pay_due_days=5, pay_due_lessons=2)))
     monkeypatch.setattr(group_lifecycle, "_student_name", lambda student: student.last_name)
     past = leave_effects.past_balances(world.db, str(world.org.id), s0.id, b.id, money=True)
     archive = group_lifecycle.GroupLifecycle.open_balances(NS(db=world.db), a, money=True)

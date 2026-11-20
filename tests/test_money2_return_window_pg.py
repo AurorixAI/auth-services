@@ -3,7 +3,8 @@
 Calendar: Tuesday 17.11.2026, B = Tue/Thu/Sat, 450 000 a month, 12 lessons in November (Tue 3,10,17,24 + Thu 5,12,19,26 + Sat 7,14,21,28).
 The student is written into B on Tue 17.11, marked present, leaves the same day: the stay charges his one lesson = 450 000 x 1/12 = 37 500 -> 38 000 (whole thousands) = a debt of 38 000.
 He comes back on Wed 18.11: the lessons from 19.11 are Thu 19, Sat 21, Tue 24, Thu 26, Sat 28 = 5.  After the return the stay charges Tue 17 .. Sat 28 = 6 of 12 = 225 000.
-What THIS adding brings: 225 000 - 38 000 = 187 000 for 5 lessons («ещё»); the debt after = 38 000 + 187 000 = 225 000."""
+What THIS adding brings: 225 000 - 38 000 = 187 000 for 5 lessons («ещё»); the debt after = 38 000 + 187 000 = 225 000.
+PAY-DUE 10.4: the sum is named by the term (5 days, the first charged day 17.11 is the first: 17, 18, 19, 20, 21 -> «к оплате до 21.11»); the term of the old part does not move by the return."""
 from datetime import date
 
 from tests.money1b_helpers import add, fresh_student, hold_lessons
@@ -38,12 +39,13 @@ def test_the_returning_debtor_sees_his_old_debt_of_this_group_and_what_this_addi
     assert numbers(world, s, b)[3] == 38_000                       # the debt of the first stay
     dry = _window(world, b, s)
     (row,) = dry["past_balances"]
-    assert (row["group_id"], row["group_name"], row["kind"], row["amount"], row["left_on"]) == (str(b.id), b.name, "debt", 38_000, TUE.isoformat())
+    assert (row["group_id"], row["group_name"], row["kind"], row["amount"], row["left_on"]) == (str(b.id), b.name, "due", 38_000, TUE.isoformat())      # PAY-DUE: the 38 000 of the first stay are within the term (17.11 + 5 days = 21.11): «к оплате», not «долг»
     assert row["membership_id"] == str(membership(world, s, b).id)
-    assert row["text"] == "Уже был в этой группе, ушёл 17.11.2026 — остался долг 38\xa0000\xa0сум"
+    assert row["text"] == "Уже был в этой группе, ушёл 17.11.2026 — осталось к оплате 38\xa0000\xa0сум до 21.11" and row["due_until"] == "2026-11-21"
     imm = dry["billing"]["immediate"]
-    assert (imm["amount"], imm["lessons"]) == (187_000, 5) and imm["text"] == "К оплате сразу: 187\xa0000\xa0сум (за 5 уроков)"
+    assert (imm["amount"], imm["lessons"]) == (187_000, 5) and imm["text"] == "К оплате до 21.11: 187\xa0000\xa0сум (за 5 уроков)"
     assert sum(p["amount"] for p in imm["parts"]) == 187_000 and sum(p["lessons"] for p in imm["parts"]) == 5
+    assert (imm["due_amount"], imm["debt_amount"], imm["due_until"]) == (187_000, 0, "2026-11-21") and [p["name"] for p in imm["parts"]] == ["due"]      # the term of the first stay (from 17.11), not 5 days from the return
     assert "ещё" not in imm["text"] and "начислится" not in imm["text"] and imm["amount"] == 225_000 - 38_000      # stage 10: no «ещё»; the sum is the difference
     real = add(world, s, group=b, mode="add")
     assert real["past_balances"] == [row] and "immediate" not in real["billing"]      # the answer says the same row; no sum in the real answer (as before)
@@ -57,7 +59,8 @@ def test_the_forgiven_debt_of_the_first_stay_is_not_shown_and_the_adding_brings_
     dry = _window(world, b, s)
     assert dry["past_balances"] == []
     imm = dry["billing"]["immediate"]
-    assert (imm["amount"], imm["lessons"], imm["text"]) == (187_000, 5, "К оплате сразу: 187\xa0000\xa0сум (за 5 уроков)")
+    # the period is charged 225 000 and 38 000 of it is forgiven: the unpaid 187 000 is named «к оплате до 21.11»; the account does not say it is the price of 5 lessons (it is paid in part) - the server is silent on lessons (151)
+    assert (imm["amount"], imm["lessons"], imm["text"]) == (187_000, 0, "К оплате до 21.11: 187\xa0000\xa0сум")
     add(world, s, group=b, mode="add")
     assert numbers(world, s, b)[3] == 187_000                      # 225 000 charged - 38 000 forgiven
 
@@ -76,9 +79,9 @@ def test_personal_period_the_adding_brings_the_rest_of_the_period(world, fixed_t
     assert numbers(world, s, b)[0] == 15_000
     dry = _window(world, b, s)
     imm = dry["billing"]["immediate"]
-    assert imm["amount"] == 435_000 and imm["text"].startswith("К оплате сразу: 435\xa0000\xa0сум (за ")
+    assert imm["amount"] == 435_000 and imm["text"].startswith("К оплате до 21.11: 435\xa0000\xa0сум (за ")
     (row,) = dry["past_balances"]
-    assert (row["kind"], row["amount"]) == ("debt", 15_000)
+    assert (row["kind"], row["amount"]) == ("due", 15_000)          # the period 17.11-17.12 began on 17.11: the term is 21.11
     add(world, s, group=b, mode="add")
     assert numbers(world, s, b)[3] == 450_000
 
@@ -90,7 +93,7 @@ def test_without_the_money_right_the_row_has_no_sum_and_nothing_is_charged_at_on
     admin = make_client(world, user=world.admin, org_role="admin")
     dry = add(world, s, client=admin, group=b, mode="add", dry_run=True)
     (row,) = dry["past_balances"]
-    assert "amount" not in row and row["kind"] == "debt" and row["text"] == "Уже был в этой группе, ушёл 17.11.2026 — остался долг"
+    assert "amount" not in row and row["kind"] == "due" and row["text"] == "Уже был в этой группе, ушёл 17.11.2026 — осталась сумма к оплате"
     assert "immediate" not in dry["billing"]
 
 
@@ -100,7 +103,7 @@ def test_a_new_student_gets_the_answers_as_before(world, fixed_today):
     dry = add(world, s, group=b, mode="add", dry_run=True)
     assert dry["past_balances"] == []
     imm = dry["billing"]["immediate"]
-    assert (imm["amount"], imm["lessons"], imm["text"]) == (225_000, 6, "К оплате сразу: 225\xa0000\xa0сум (за 6 уроков)")
+    assert (imm["amount"], imm["lessons"], imm["text"]) == (225_000, 6, "К оплате до 21.11: 225\xa0000\xa0сум (за 6 уроков)")
     assert "ещё" not in imm["text"]
 
 
@@ -109,9 +112,9 @@ def test_the_bulk_window_says_the_same_for_the_returning_student(world, fixed_to
     r = owner(world).post(f"{API}/org/groups/{b.id}/students/bulk", params={"mode": "add", "dry_run": "true"}, json={"student_ids": [str(s.id)]})
     assert r.status_code == 200, r.text
     (item,) = r.json()["students"]
-    assert item["billing"]["immediate"]["text"] == "К оплате сразу: 187\xa0000\xa0сум (за 5 уроков)"
+    assert item["billing"]["immediate"]["text"] == "К оплате до 21.11: 187\xa0000\xa0сум (за 5 уроков)"
     (row,) = item["past_balances"]
-    assert (row["kind"], row["amount"]) == ("debt", 38_000)
+    assert (row["kind"], row["amount"]) == ("due", 38_000)
     assert r.json()["immediate_total"]["amount"] == 187_000
 
 
@@ -133,7 +136,17 @@ def test_n1_two_versions_of_the_rules_in_one_month_the_window_gives_one_part_tha
 def _seg(start, end, amount, days, *, basis="lessons", in_part=None, in_period=None):
     from types import SimpleNamespace
 
-    return SimpleNamespace(kind="period", begun=True, amount=amount, period_start=start, period_end=end, basis=basis, days=days, lessons_in_part=in_part, lessons_in_period=in_period)
+    _seg.n = getattr(_seg, "n", 0) + 1
+    return SimpleNamespace(id=f"seg:{_seg.n}", kind="period", begun=True, amount=amount, period_start=start, period_end=end, basis=basis, days=days, lessons_in_part=in_part, lessons_in_period=in_period)
+
+
+def _due(*segments, name="due"):
+    """What ``pay_due.classify`` says of the stand-in account: every period is wholly unpaid and named ``name`` (the stand-ins have no payments)."""
+    from datetime import date as _d
+    from src.auth import pay_due
+
+    parts = tuple(pay_due.DuePart(sg.id, "period", sg.amount, name, _d(2026, 12, 1) if name == "due" else None, term=_d(2026, 12, 1)) for sg in segments)
+    return pay_due.DueResult(debt_amount=sum(p.unpaid for p in parts if p.name == "debt"), due_amount=sum(p.unpaid for p in parts if p.name == "due"), name=name, parts=parts)
 
 
 def _days(first, last):
@@ -160,9 +173,9 @@ def test_the_stay_of_a_year_ago_with_the_same_month_name_is_not_taken_off_twice(
             self.segments = list(segments)
 
     lesson_days = _group_days
-    before = immediate_from_ledger(Ledger(nov25), lesson_days)
+    before = immediate_from_ledger(Ledger(nov25), lesson_days, _due(nov25))
     assert before["amount"] == 450_000 and before["parts"][0]["period_start"] == "2025-11-01"
-    after = immediate_from_ledger(Ledger(nov25, nov26), lesson_days, before)
+    after = immediate_from_ledger(Ledger(nov25, nov26), lesson_days, _due(nov25, nov26), before)
     assert (after["amount"], after["lessons"]) == (188_000, 5)
     assert [p["period_start"] for p in after["parts"]] == ["2026-11-01"]
     assert sum(p["amount"] for p in after["parts"]) == after["amount"] and sum(p["lessons"] for p in after["parts"]) == after["lessons"]
@@ -180,9 +193,9 @@ def test_the_part_of_a_period_reduced_by_the_return_has_no_from_and_is_not_whole
 
     before_seg = _seg(date(2026, 11, 1), date(2026, 11, 30), 262_500, _days(date(2026, 11, 17), date(2026, 11, 30)), in_part=7, in_period=12)
     after_seg = _seg(date(2026, 11, 1), date(2026, 11, 30), 450_000, _days(date(2026, 11, 17), date(2026, 11, 30)), in_part=12, in_period=12)
-    before = immediate_from_ledger(Ledger(before_seg), _group_days)
+    before = immediate_from_ledger(Ledger(before_seg), _group_days, _due(before_seg))
     assert before["parts"][0]["from"] == "2026-11-17"
-    after = immediate_from_ledger(Ledger(after_seg), _group_days, before)
+    after = immediate_from_ledger(Ledger(after_seg), _group_days, _due(after_seg), before)
     assert after["amount"] == 187_500 and len(after["parts"]) == 1
     assert (after["parts"][0]["from"], after["parts"][0]["whole"]) == (None, False)
 
@@ -200,8 +213,8 @@ def test_a_period_charged_less_after_the_return_keeps_the_parts_adding_up():
     old_before = _seg(date(2026, 10, 1), date(2026, 10, 31), 500_000, _days(date(2026, 10, 1), date(2026, 10, 31)), basis="full")
     old_after = _seg(date(2026, 10, 1), date(2026, 10, 31), 450_000, _days(date(2026, 10, 1), date(2026, 10, 31)), basis="full")
     new = _seg(date(2026, 11, 1), date(2026, 11, 30), 188_000, _days(date(2026, 11, 19), date(2026, 11, 30)), in_part=5, in_period=12)
-    before = immediate_from_ledger(Ledger(old_before), _group_days)
-    after = immediate_from_ledger(Ledger(old_after, new), _group_days, before)
+    before = immediate_from_ledger(Ledger(old_before), _group_days, _due(old_before))
+    after = immediate_from_ledger(Ledger(old_after, new), _group_days, _due(old_after, new), before)
     assert after["amount"] == 138_000
     assert after["parts"] == []         # stage 7 Н1 lock: a part of -50 000 is not a part - no breakdown, the sum and the text stay
     assert after["lessons"] >= 0

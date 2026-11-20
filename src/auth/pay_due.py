@@ -39,6 +39,7 @@ class DuePart:
     due_until: Optional[date] = None    # the last day of «к оплате» (the oldest lesson + 14 for a package); ``None`` for a debt
     overdue_days: int = 0               # K: the days the debt is overdue (0 for «к оплате»)
     lessons: Optional[int] = None       # package: how many lessons the part holds
+    term: Optional[date] = None         # period: the day ``D`` the term ended / ends (``None`` when the term is 0 days: a debt from the first day; the opening balance and packages have none)
 
 
 @dataclass(frozen=True)
@@ -132,9 +133,9 @@ def classify(ledger: bl.Ledger, today: date, pay_due_days: int, pay_due_lessons:
             continue
         term = term_day(_first_day(seg), pay_due_days, pauses)
         if in_centre and today <= term:
-            parts.append(DuePart(seg.id, "period", seg.unpaid, DUE, term))
+            parts.append(DuePart(seg.id, "period", seg.unpaid, DUE, term, term=term))
         else:
-            parts.append(DuePart(seg.id, "period", seg.unpaid, DEBT, None, bl.overdue_days(term, today, pauses) if today > term else 0))
+            parts.append(DuePart(seg.id, "period", seg.unpaid, DEBT, None, bl.overdue_days(term, today, pauses) if today > term else 0, term=term if pay_due_days > 0 else None))
     parts.extend(_package_parts(lessons, closed_pkg, today, pay_due_lessons, in_centre))
     parts = _fit(parts, ledger.debt)
     if not parts:
@@ -192,6 +193,6 @@ def _fit(parts: List[DuePart], debt: int) -> List[DuePart]:
             if p.name != name:
                 continue
             cut = min(excess, p.unpaid)
-            out[i] = DuePart(p.segment_id, p.kind, p.unpaid - cut, p.name, p.due_until, p.overdue_days, p.lessons)
+            out[i] = DuePart(p.segment_id, p.kind, p.unpaid - cut, p.name, p.due_until, p.overdue_days, p.lessons, p.term)
             excess -= cut
     return [p for p in out if p.unpaid > 0]

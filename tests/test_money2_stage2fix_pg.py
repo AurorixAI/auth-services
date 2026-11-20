@@ -147,7 +147,7 @@ def test_u3_a_mark_that_appears_the_day_after_the_closing_brings_the_charge_and_
     hold_lessons(world, s, [TUE], group=b)
     assert numbers(world, s, b)[0] == 38_000
     rows = past_balances(world.db, world.org.id, s.id, c.id, money=True)
-    assert [(r["group_name"], r["kind"], r["amount"]) for r in rows] == [("Бета", "debt", 38_000)], rows
+    assert [(r["group_name"], r["kind"], r["amount"]) for r in rows] == [("Бета", "due", 38_000)], rows      # PAY-DUE: within the term of 5 days from the lesson of 17.11
 
 
 def test_u3_payroll_a_marked_one_day_stay_is_a_lesson_covered_by_the_money_and_an_unmarked_one_is_no_lesson_at_all(world, fixed_today):

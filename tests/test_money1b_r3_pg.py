@@ -213,7 +213,7 @@ def test_r3_13_a_bulk_adding_reads_the_schedule_and_the_settings_once_for_the_wh
     assert len([g for g in calls if g == w.group.id]) <= 2                                  # one search of the first lesson for the group (before the round: one for each of the six students)
 
 
-# ---- lead 11: «к оплате сразу: N сум (K уроков)» in the add window --------------------------------------------------------------------------------------
+# ---- lead 11 + PAY-DUE 10.4: «к оплате до ДД.ММ / долг сразу: N сум (K уроков)» in the add window --------------------------------------------------------------------------------------
 
 
 def test_r3_lead11_the_dry_run_of_adding_with_a_past_pay_from_says_what_is_charged_at_once(world, fixed_today):
@@ -226,12 +226,17 @@ def test_r3_lead11_the_dry_run_of_adding_with_a_past_pay_from_says_what_is_charg
     lessons = sum(1 for k in range(31) if (D(2026, 10, 7).toordinal() + k - D(2026, 10, 5).toordinal()) % 7 in (0, 2, 4))      # 07.10 .. 06.11 by Mon / Wed / Fri (05.10 is a Monday)
     dry = add(w, s, pay_from="2026-10-07", dry_run=True)
     immediate = dry["billing"]["immediate"]
-    assert {k: immediate[k] for k in ("amount", "lessons", "text")} == {"amount": 300_000, "lessons": lessons, "text": f"К оплате сразу: 300 000 сум (за {lessons} уроков)"}
+    assert {k: immediate[k] for k in ("amount", "lessons", "text")} == {"amount": 300_000, "lessons": lessons, "text": f"Долг сразу: 300 000 сум (за {lessons} уроков) · срок был 11.10"}
     # V0: one begun period 07.10-06.11 (the pay day is the 7th), taken whole; the parts add up to the total
-    assert immediate["parts"] == [{"label": "07.10–06.11", "period_start": "2026-10-07", "from": None, "amount": 300_000, "lessons": lessons, "lessons_in_period": None, "whole": True}]
+    assert immediate["parts"] == [{"label": "07.10–06.11", "period_start": "2026-10-07", "from": None, "amount": 300_000, "lessons": lessons, "lessons_in_period": None, "whole": True, "name": "debt", "due_until": None}]
+    # PAY-DUE 10.4: «Оплата с» 07.10 is a lesson (Wed): the term of 5 days is 07, 08, 09, 10, 11.10 - it has passed on 21.10 -> a debt at once, «срок был 11.10»; nothing is «к оплате»
+    assert (immediate["debt_amount"], immediate["due_amount"], immediate["due_until"], immediate["term_was"]) == (300_000, 0, None, "2026-10-11")
     assert w.db.query(StudentGroup).filter_by(student_id=s.id).count() == 0                  # a dry run writes nothing
     today_lesson = add(w, fresh_student(w, "Урок сегодня"), dry_run=True)                    # the default: Wednesday 21.10 is a lesson - the period begins today, the charge is at once too
     assert today_lesson["billing"]["immediate"]["amount"] == 300_000
+    # the first charged day is today (Wed 21.10): 21, 22, 23, 24, 25 -> «к оплате до 25.10», no word of a debt
+    assert (today_lesson["billing"]["immediate"]["due_amount"], today_lesson["billing"]["immediate"]["debt_amount"], today_lesson["billing"]["immediate"]["due_until"]) == (300_000, 0, "2026-10-25")
+    assert today_lesson["billing"]["immediate"]["text"].startswith("К оплате до 25.10: 300")
     set_schedule(w, [slot("mon", 1, "2026-11-05"), slot("wed", 3, "2026-11-05"), slot("fri", 5, "2026-11-05")])
     future = add(w, fresh_student(w, "Придёт"), dry_run=True)                                # the first lesson is in the future (06.11) - nothing at once
     assert future["billing"]["immediate"] is None

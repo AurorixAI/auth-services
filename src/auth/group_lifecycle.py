@@ -50,7 +50,8 @@ logger = logging.getLogger(__name__)
 
 FUTURE_HORIZON_DAYS = 56
 CANCEL = "cancel"
-BALANCE_ACTIONS = {"debt": (("payment", "Принять оплату"), ("writeoff", "Простить долг")), "advance": (("refund", "Вернуть аванс"),)}      # Money-2 T12
+_UNPAID_ACTIONS = (("payment", "Принять оплату"), ("writeoff", "Простить долг"))
+BALANCE_ACTIONS = {"debt": _UNPAID_ACTIONS, "due": _UNPAID_ACTIONS, "advance": (("refund", "Вернуть аванс"),)}      # Money-2 T12
 
 
 def _blocker_reason(exam: Dict[str, Any]) -> str:
@@ -95,7 +96,7 @@ class GroupLifecycle:
         ``money`` False: the facts only (no ``amount``, no figures in ``text``, no actions - the owner / an administrator with the right decides)."""
         ids = [row[0] for row in self.db.query(StudentGroup.id).filter(StudentGroup.group_id == group.id).all()]
         out: List[Dict[str, Any]] = []
-        for entry, kind, amount in leave_effects.open_balances(self.db, group.org_id, ids):
+        for entry, kind, amount, due in leave_effects.open_balances(self.db, group.org_id, ids):
             name = _student_name(entry.student)
             left_on = ps.business_date(entry.membership.left_at).isoformat() if entry.membership.left_at else None
             row: Dict[str, Any] = {"student_id": str(entry.student.id), "membership_id": str(entry.membership.id), "name": name, "left_on": left_on, "kind": kind,
@@ -103,9 +104,11 @@ class GroupLifecycle:
             if money:
                 row["amount"] = amount
                 row["text"] = (f"{name}: долг {tx.money(amount)} — принять оплату или простить его можно в выписке группы" if kind == "debt"
+                               else f"{name}: к оплате {tx.money(amount)}{f' до {tx.ddmm(due.due_until)}' if due.due_until else ''} — принять оплату или простить сумму можно в выписке группы" if kind == "due"
                                else f"{name}: аванс {tx.money(amount)} — вернуть его можно в выписке группы")
             else:
                 row["text"] = (f"{name}: есть долг — принять оплату или простить его может владелец или администратор с доступом к деньгам" if kind == "debt"
+                               else f"{name}: есть сумма к оплате — принять оплату или простить её может владелец или администратор с доступом к деньгам" if kind == "due"
                                else f"{name}: есть аванс — вернуть его может владелец или администратор с доступом к деньгам")
             out.append(row)
         out.sort(key=lambda r: (r["name"], r["kind"]))

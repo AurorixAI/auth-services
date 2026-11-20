@@ -97,18 +97,24 @@ def after_settle(snaps: Sequence[Snap], settled: Sequence[Any]) -> List[Snap]:
     return list(snaps)
 
 
-def open_balances(db: Session, org_id: Any, membership_ids: Sequence[UUID]) -> List[Tuple[Any, str, int]]:
-    """Money-2 T12 / T13: the ONE rule of «what is still on the account of these memberships (the left ones too) today»: ``(ledger entry, "debt" | "advance", amount)``, a debt and an advance each as its own line.
+def open_balances(db: Session, org_id: Any, membership_ids: Sequence[UUID], *, in_centre: Optional[bool] = None) -> List[Tuple[Any, str, int, Any]]:
+    """Money-2 T12 / T13 + PAY-DUE 10.4: the ONE rule of «what is still on the account of these memberships (the left ones too) today»: ``(ledger entry, "debt" | "due" | "advance", amount, the named sum)``,
+    each as its own line - the unpaid sum is named by the function of the term (``pay_due.classify``: «долг» after the term, «к оплате» within it), a part of each is two lines.
+    ``in_centre``: ``None`` - the student as he is now (the window of an archive); ``True`` - as a student who IS in the centre (the window of adding: he is about to be in this group, the term of an old part does not move).
     R3b: an advance is the sum that CAN be returned (``refundable``); nothing to return = not listed - the archive of a group and the window of adding show the same number."""
     from . import ledger_service as ls  # lazy: ledger_service imports the pricing / status modules
+    from . import pay_due
 
     if not membership_ids:
         return []
-    out: List[Tuple[Any, str, int]] = []
-    for entry in ls.LedgerLoader(db, str(org_id), ps.business_today()).run(list(membership_ids)):
-        for kind, amount in (("debt", entry.ledger.debt), ("advance", min(entry.ledger.advance, entry.ledger.refundable))):
+    today = ps.business_today()
+    loader = ls.LedgerLoader(db, str(org_id), today)
+    out: List[Tuple[Any, str, int, Any]] = []
+    for entry in loader.run(list(membership_ids)):
+        due = entry.due if in_centre is None else pay_due.classify(entry.ledger, today, loader.settings.pay_due_days, loader.settings.pay_due_lessons, in_centre)
+        for kind, amount in (("debt", due.debt_amount), ("due", due.due_amount), ("advance", min(entry.ledger.advance, entry.ledger.refundable))):
             if amount > 0:
-                out.append((entry, kind, int(amount)))
+                out.append((entry, kind, int(amount), due))
     return out
 
 
@@ -129,19 +135,26 @@ def returned_balance(db: Session, org_id: Any, membership_id: Any, *, money: boo
 
 def _balance_rows(db: Session, org_id: Any, ids: Sequence[Any], money: bool, *, same_group: bool) -> List[Dict[str, Any]]:
     out: List[Dict[str, Any]] = []
-    for entry, kind, amount in open_balances(db, org_id, ids):
+    for entry, kind, amount, due in open_balances(db, org_id, ids, in_centre=True):      # the student is about to be in the centre again: the names are the ones of the account after the adding
         left_on = ps.business_date(entry.membership.left_at) if entry.membership.left_at else None
         name = entry.group.name
-        word = "долг" if kind == "debt" else "аванс"
         row: Dict[str, Any] = {"group_id": str(entry.group.id), "group_name": name, "membership_id": str(entry.membership.id), "left_on": left_on.isoformat() if left_on else None, "kind": kind}
+        until = f" до {_ddmm(due.due_until)}" if kind == "due" and money and due.due_until else ""
         sum_text = f" {tx.money(amount)}" if money else ""
+        left = f", ушёл {_dmy(left_on)}" if left_on else ""
+        if kind == "due":
+            what = f"осталось к оплате{sum_text}{until}" if money else "осталась сумма к оплате"
+        else:
+            what = f"остался {'долг' if kind == 'debt' else 'аванс'}{sum_text}"
         if same_group:
             row["same_group"] = True      # stage 7 М4: the row of THIS group (the window may say «в этой группе»); the rows of other groups have no such field
-            row["text"] = f"Уже был в этой группе{f', ушёл {_dmy(left_on)}' if left_on else ''} — остался {word}{sum_text}"
+            row["text"] = f"Уже был в этой группе{left} — {what}"
         else:
-            row["text"] = f"В группе «{name}»{f' (ушёл {_dmy(left_on)})' if left_on else ''} остался {word}{sum_text}: смотрите её выписку"
+            row["text"] = f"В группе «{name}»{f' (ушёл {_dmy(left_on)})' if left_on else ''} {what}: смотрите её выписку"
         if money:
             row["amount"] = amount
+            if kind == "due":
+                row["due_until"] = due.due_until.isoformat() if due.due_until else None
         out.append(row)
     out.sort(key=lambda r: (r["left_on"] or "", r["group_name"], r["kind"]))
     return out

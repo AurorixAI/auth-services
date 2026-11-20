@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session
 from src.models.auth import Group, GroupAttendance, StudentGroup, StudentGroupPeriod
 
 from . import ops_rules
+from . import pay_due
 from . import payment_status as ps
 from . import payments_texts as tx
 
@@ -131,32 +132,47 @@ def apply(db: Session, group: Group, period: StudentGroupPeriod, *, today: date,
 
 
 def immediate_charge(db: Session, org_id: Any, membership_id: Any, today: date, before: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
-    """Money-1 R3 (lead, 11): «к оплате сразу: N сум (K уроков)» - what the account of the new stay charges ON THE DAY of adding (a past «Оплата с», or a first lesson that is today): the sum of the periods that have
-    begun and the lessons of the group inside their days.  ``None``: nothing is charged at once (a start in the future, a package, no price).  Read from the account the add has just made (flushed, not
-    committed: a dry run rolls it back).
-    Stage 6 (М11Б): ``before`` = the same read taken BEFORE a returning student is written into his old membership (``immediate_charge`` of the closed stay, ``None`` = nothing charged yet): the answer is then what THIS
-    adding adds, the account after minus the account before (``immediate_from_ledger``)."""
+    """Money-1 R3 (lead, 11) + PAY-DUE 10.4: what the account of the new stay owes ON THE DAY of adding (a past «Оплата с», or a first lesson that is today), told by the name the function of the term gives it
+    (``К оплате до ДД.ММ`` / ``Долг сразу``): the unpaid sum of the periods that have begun and the lessons of the group inside their days.  ``None``: nothing is owed at once (a start in the future, a package, no price,
+    the advance covers it).  Read from the account the add has just made (flushed, not committed: a dry run rolls it back).
+    Stage 6 (М11Б): ``before`` = the same read taken BEFORE a returning student is written into his old membership (``immediate_charge`` of the closed stay, ``None`` = nothing yet): the answer is then what THIS
+    adding adds, the account after minus the account before (``immediate_from_ledger``).  Both reads name the sum as a student IN the centre (``in_centre=True``): the term of the old part does not move because he was away."""
     from .payments_service import PaymentService  # lazy: pulls in the status maths
 
     db.flush()
-    (entry,) = PaymentService(db)._loader(str(org_id), today).run([membership_id])
-    return immediate_from_ledger(entry.ledger, entry.inp.lesson_days, before)
+    loader = PaymentService(db)._loader(str(org_id), today)
+    (entry,) = loader.run([membership_id])
+    due = pay_due.classify(entry.ledger, today, loader.settings.pay_due_days, loader.settings.pay_due_lessons, True)
+    return immediate_from_ledger(entry.ledger, entry.inp.lesson_days, due, before)
 
 
-def immediate_from_ledger(ledger: Any, lesson_days: Any, before: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
-    """The pure part of ``immediate_charge`` (no database): the begun periods with a charge of an account -> ``{amount, lessons, text, parts}`` or ``None``.
-    ``before`` (stage 6): the same answer of the account before the return -> only the difference is said (``more`` in the text); a difference of nothing or less = ``None``."""
-    begun = [s for s in ledger.segments if s.kind == "period" and s.begun and s.amount > 0]
-    amount = sum(s.amount for s in begun)
+def immediate_from_ledger(ledger: Any, lesson_days: Any, due: pay_due.DueResult, before: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
+    """The pure part of ``immediate_charge`` (no database): the begun periods of an account with the part of their charge that is still unpaid, named by ``due`` (the answer of ``pay_due.classify`` for this account)
+    -> ``{amount, debt_amount, due_amount, due_until, term_was, lessons, text, lines, parts}`` or ``None``.  ``amount`` = ``debt_amount + due_amount``.
+    ``before`` (stage 6): the same answer of the account before the return -> only the difference is said, by name; a difference of nothing or less = ``None``."""
+    begun = [s for s in ledger.segments if s.kind == "period" and s.begun and s.amount > 0 and due.parts_of(s.id)]
+    amount = sum(p.unpaid for s in begun for p in due.parts_of(s.id))
     if amount <= 0:
         return None
-    parts = immediate_parts(begun, lesson_days)
+    parts = immediate_parts(begun, lesson_days, due)
     lessons = sum(p["lessons"] for p in parts)
+    debt = sum(p["amount"] for p in parts if p["name"] == pay_due.DEBT)
+    owed = amount - debt
     if before is not None:
         amount, lessons, parts = _minus_before(amount, lessons, parts, before)
-        if amount <= 0:
+        debt, owed = max(0, debt - before["debt_amount"]), max(0, owed - before["due_amount"])
+        if amount <= 0 or debt + owed <= 0:
             return None
-    return {"amount": amount, "lessons": lessons, "text": tx.immediate_text(amount, lessons, more=before is not None), "parts": parts}
+        if debt + owed != amount:
+            amount, parts = debt + owed, []      # the names went by their own sums: no breakdown that would not add up
+    until = min((p.due_until for s in begun for p in due.parts_of(s.id) if p.name == pay_due.DUE and p.due_until), default=None)
+    terms = [p.term for s in begun for p in due.parts_of(s.id) if p.name == pay_due.DEBT]
+    term_was = min(terms) if terms and all(terms) else None
+    shown = {n: [p for p in parts if p["name"] == n] for n in (pay_due.DEBT, pay_due.DUE)}
+    said = {n: sum(p["lessons"] for p in ps_) if ps_ and all(p["lessons"] > 0 for p in ps_) else 0 for n, ps_ in shown.items()}
+    lines = tx.immediate_lines(debt, owed, until, debt_lessons=said[pay_due.DEBT], due_lessons=said[pay_due.DUE], term_was=term_was)
+    return {"amount": amount, "debt_amount": debt, "due_amount": owed, "due_until": until, "term_was": term_was, "lessons": lessons,
+            "text": tx.immediate_text(lines), "lines": lines, "parts": parts}
 
 
 def _minus_before(amount: int, lessons: int, parts: list, before: Dict[str, Any]) -> tuple:
@@ -190,26 +206,32 @@ def immediate_label(seg: Any) -> str:
     return f"{tx.ddmm(seg.period_start)}\u2013{tx.ddmm(seg.period_end)}"
 
 
-def immediate_parts(begun: Any, lesson_days: Any) -> list:
-    """Money-1 V0: the sum of ``immediate_charge`` by the periods it is made of - one element per begun period with a charge, read from the SAME segments of the ledger (no second formula):
-    ``{label, period_start, from, amount, lessons, lessons_in_period, whole}`` (``period_start``: ISO first day of the period, the key that matches a part before and after a return).  ``from`` is the first charged day when the period is taken not in full (else ``None``); ``lessons_in_period`` is the lessons
-    of the group in the whole period (the ledger knows it for a period charged by lessons, «2 из 9»), else ``None``.  The amounts add up to ``amount``, the lessons to ``lessons``."""
+def immediate_parts(begun: Any, lesson_days: Any, due: pay_due.DueResult) -> list:
+    """Money-1 V0 + PAY-DUE 10.4: the sum of ``immediate_charge`` by the periods it is made of - one element per begun period with an unpaid sum, read from the SAME segments of the same ledger and named by ``due`` (no second formula):
+    ``{label, period_start, from, amount, lessons, lessons_in_period, whole, name, due_until}`` (``period_start``: ISO first day of the period, the key that matches a part before and after a return).  ``amount`` is the UNPAID
+    part of the period's charge, ``name`` is ``due`` / ``debt``, ``due_until`` the last day of «к оплате» (``None`` for a debt).  ``from`` is the first charged day when the period is taken not in full (else ``None``);
+    ``lessons_in_period`` is the lessons of the group in the whole period (the ledger knows it for a period charged by lessons, «2 из 9»), else ``None``.  A period paid in part says no lessons (0): the sum is no longer
+    the price of those lessons.  The amounts add up to ``amount``, the lessons to ``lessons``."""
     parts = []
     for seg in begun:
+        (named,) = due.parts_of(seg.id)
         inside = set(seg.days)
         whole = seg.basis == "full" or (seg.basis == "lessons" and seg.lessons_in_part is not None and seg.lessons_in_part == seg.lessons_in_period)       # nothing of the period is lost
         parts.append({
-            "label": immediate_label(seg), "period_start": seg.period_start.isoformat(), "from": None if whole or not seg.days else min(inside).isoformat(), "amount": int(seg.amount),
-            "lessons": sum(1 for d in lesson_days(min(inside), max(inside)) if d in inside) if inside else 0,
-            "lessons_in_period": seg.lessons_in_period, "whole": whole})
+            "label": immediate_label(seg), "period_start": seg.period_start.isoformat(), "from": None if whole or not seg.days else min(inside).isoformat(), "amount": int(named.unpaid),
+            "lessons": sum(1 for d in lesson_days(min(inside), max(inside)) if d in inside) if inside and named.unpaid >= seg.amount else 0,
+            "lessons_in_period": seg.lessons_in_period, "whole": whole, "name": named.name, "due_until": named.due_until.isoformat() if named.due_until else None})
     return parts
 
 
 def immediate_total(items: list) -> Dict[str, Any]:
-    """The line under a bulk adding: what is charged at once for all the students (``items``: the ``immediate`` of the students that have one)."""
+    """The lines under a bulk adding: what is owed at once for all the students (``items``: the ``immediate`` of the students that have one): the sums by name and the NEAREST last day of «к оплате» (each student has his own in his line)."""
     amount = sum(i["amount"] for i in items)
     lessons = sum(i["lessons"] for i in items)
-    return {"amount": amount, "lessons": lessons, "students": len(items), "text": tx.immediate_text(amount, lessons, total=True)}
+    debt, owed = sum(i["debt_amount"] for i in items), sum(i["due_amount"] for i in items)
+    until = min((i["due_until"] for i in items if i["due_until"]), default=None)
+    lines = tx.immediate_lines(debt, owed, until, debt_lessons=lessons if owed == 0 else 0, due_lessons=lessons if debt == 0 else 0, total=True)
+    return {"amount": amount, "debt_amount": debt, "due_amount": owed, "due_until": until, "lessons": lessons, "students": len(items), "text": tx.immediate_text(lines), "lines": lines}
 
 
 def text_of(chosen: date, today: date, explicit: bool, first_lesson: Optional[date]) -> str:
