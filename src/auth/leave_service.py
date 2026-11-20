@@ -244,7 +244,7 @@ class LeaveService:
             if item.membership_id in seen:
                 raise PaymentInvalid("Одно членство указано дважды")
             seen.add(item.membership_id)
-        today = ps.business_today()
+        today = bc.utc_to_business_date(at) if at is not None else ps.business_today()      # TIME-TESTS: the day of the action's own moment, not a new reading of the clock
         ids = [by_id[i.membership_id].id for i in todo]
         after, loader = self._after_closed(org_id, ids, today)
         # 1. every choice is checked against the numbers of NOW; any difference answers with ALL the fresh numbers
@@ -339,8 +339,8 @@ class LeaveService:
             self.require_money_right_for_balance(org_id, [sg.id], money)
             svc._lock_groups_for_membership_change(org_id, [group.id])
             svc._assert_no_open_attendance_for_groups(org_id, [group.id])
-            before_close = leave_effects.snapshot(self.db, org_id, [sg], ps.business_today())      # Money-2 T3: read before the stay is closed
-            moment = bc.utc_now()   # DM-005: the one clock; TIME-TESTS: this ONE moment stamps the closed stay, the settlement rows and the journal line of the leave
+            moment = bc.utc_now()   # DM-005: the one clock; TIME-TESTS: this ONE moment stamps the closed stay, the settlement rows, the day of the snapshot and the journal line of the leave
+            before_close = leave_effects.snapshot(self.db, org_id, [sg], bc.utc_to_business_date(moment))      # Money-2 T3: read before the stay is closed
             now = moment.replace(tzinfo=timezone.utc)
             close_stay(self.db, sg, now, actor_id, "leave")
             if str(student.group_id or "") == str(group.id):

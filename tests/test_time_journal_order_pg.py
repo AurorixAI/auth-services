@@ -95,3 +95,32 @@ def test_a_leave_writes_its_own_line_before_the_settlement_line(world, fixed_tod
         wo = world.db.query(StudentWriteoff).filter_by(org_id=world.org.id).one()
         assert raw[0].created_at == wo.created_at == membership(world, s0, a).left_at                  # one moment: the stay, the data row, the leave line
         assert raw[1].created_at == raw[0].created_at + timedelta(microseconds=1)
+
+
+def test_a_leave_across_midnight_is_one_business_day_everywhere(world, fixed_today, monkeypatch):
+    """The clock reads 23:59:59.9 (Tashkent) when the leave takes its moment and 00:00:00.1 of the next day right after the stay is closed (a slow request):
+    the day of the forgiveness, of its journal line and of the stay is still the day of the moment."""
+    from src.auth import leave_service
+
+    a, b, s0 = _two_debts_and_an_advance(world, fixed_today)
+    row = window(world, s0, a)
+    late = datetime(DAY.year, DAY.month, DAY.day, 23, 59, 59, 900_000, tzinfo=bc.BUSINESS_TIMEZONE)
+    state = {"now": late}
+    monkeypatch.setattr(ps, "business_today", lambda tz=None: bc.business_today())          # the day is read from the clock (``fixed_today`` pinned it)
+    bc.set_clock(lambda: state["now"])
+    original = leave_service.close_stay
+
+    def close_then_the_clock_moves(*args, **kwargs):
+        out = original(*args, **kwargs)
+        state["now"] = late + timedelta(seconds=1)                                          # 00:00:00.9 of the next day
+        return out
+
+    monkeypatch.setattr(leave_service, "close_stay", close_then_the_clock_moves)
+    leave(world, s0, a, {"settle": [{"membership_id": row["membership_id"], "action": "writeoff", "expected_debt": row["money"]["debt"], "reason": "договорённость"}]})
+    assert bc.business_today() == DAY + timedelta(days=1)                                   # the clock really crossed midnight
+    world.db.expire_all()
+    wo = world.db.query(StudentWriteoff).filter_by(org_id=world.org.id).one()
+    line = world.db.query(GroupAudit).filter(GroupAudit.org_id == world.org.id, GroupAudit.action == "payment_writeoff").one()
+    left_day = bc.utc_to_business_date(membership(world, s0, a).left_at)
+    assert wo.effective_on == DAY and line.snapshot["effective_on"] == DAY.isoformat() and left_day == DAY
+    assert bc.utc_to_business_date(wo.created_at) == bc.utc_to_business_date(line.created_at) == DAY
