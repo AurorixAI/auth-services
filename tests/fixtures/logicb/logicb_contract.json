@@ -168,6 +168,20 @@
               }
             ],
             "title": "Students"
+          },
+          "texts": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Texts"
           }
         },
         "required": [

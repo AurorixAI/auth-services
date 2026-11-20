@@ -1141,12 +1141,24 @@
               }
             ],
             "title": "Refundable"
+          },
+          "unpaid": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unpaid"
           }
         },
         "required": [
           "code",
           "message",
           "debt",
+          "unpaid",
           "refundable",
           "payment_id",
           "membership_ids",

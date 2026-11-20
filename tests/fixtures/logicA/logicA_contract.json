@@ -207,16 +207,6 @@
             "title": "Advance After",
             "type": "integer"
           },
-          "debt_after": {
-            "default": 0,
-            "title": "Debt After",
-            "type": "integer"
-          },
-          "debt_before": {
-            "default": 0,
-            "title": "Debt Before",
-            "type": "integer"
-          },
           "items": {
             "items": {
               "$ref": "#/components/schemas/Allocation"
@@ -247,12 +237,22 @@
               }
             ],
             "title": "Paid Until Before"
+          },
+          "unpaid_after": {
+            "default": 0,
+            "title": "Unpaid After",
+            "type": "integer"
+          },
+          "unpaid_before": {
+            "default": 0,
+            "title": "Unpaid Before",
+            "type": "integer"
           }
         },
         "required": [
           "items",
-          "debt_before",
-          "debt_after",
+          "unpaid_before",
+          "unpaid_after",
           "advance_after",
           "paid_until_before",
           "paid_until_after"
@@ -1688,6 +1688,11 @@
             "title": "Advance",
             "type": "integer"
           },
+          "becomes_debt": {
+            "default": 0,
+            "title": "Becomes Debt",
+            "type": "integer"
+          },
           "charged_after_leave": {
             "default": 0,
             "title": "Charged After Leave",
@@ -1697,6 +1702,28 @@
             "default": 0,
             "title": "Debt",
             "type": "integer"
+          },
+          "debt_amount": {
+            "default": 0,
+            "title": "Debt Amount",
+            "type": "integer"
+          },
+          "due_amount": {
+            "default": 0,
+            "title": "Due Amount",
+            "type": "integer"
+          },
+          "due_until": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Due Until"
           },
           "individual_price_ends": {
             "default": false,
@@ -1723,6 +1750,10 @@
         },
         "required": [
           "debt",
+          "debt_amount",
+          "due_amount",
+          "due_until",
+          "becomes_debt",
           "advance",
           "refundable",
           "paid_until",
@@ -2236,7 +2267,7 @@
         "type": "object"
       },
       "LogicAErrorDetail": {
-        "description": "Error body of the LOGIC-A endpoints: ``PayErrorDetail`` + the lists some codes carry.\n\nCodes: ``OPENING_RANGE`` / ``PAUSE_RANGE`` / ``PAUSE_LOCKED`` / ``NOTHING_TO_PAY`` / ``PAYMENT_EXCEEDS_DEBT`` (``debt``) /\n``LESSON_TYPE_RANGE`` / ``METHOD_REQUIRED`` / ``REASON_REQUIRED`` (422); ``OPENING_NOT_ALLOWED`` / ``PAUSE_OVERLAP`` /\n``PAUSE_OVERLAPS_ATTENDED`` (``dates``) / ``PAUSE_BREAKS_REFUND`` / ``MEMBERSHIP_CLOSED`` / ``BALANCE_CHANGED`` (``fresh``) /\n``PRICE_BACKDATE_WITH_PAYMENTS`` (``students``) / ``PRICE_MARKER`` / ``PRICE_CONFLICT`` / ``VOID_BREAKS_REFUND`` (409).",
+        "description": "Error body of the LOGIC-A endpoints: ``PayErrorDetail`` + the lists some codes carry.\n\nCodes: ``OPENING_RANGE`` / ``PAUSE_RANGE`` / ``PAUSE_LOCKED`` / ``NOTHING_TO_PAY`` / ``PAYMENT_EXCEEDS_DEBT`` (``unpaid``) /\n``LESSON_TYPE_RANGE`` / ``METHOD_REQUIRED`` / ``REASON_REQUIRED`` (422); ``OPENING_NOT_ALLOWED`` / ``PAUSE_OVERLAP`` /\n``PAUSE_OVERLAPS_ATTENDED`` (``dates``) / ``PAUSE_BREAKS_REFUND`` / ``MEMBERSHIP_CLOSED`` / ``BALANCE_CHANGED`` (``fresh``) /\n``PRICE_BACKDATE_WITH_PAYMENTS`` (``students``) / ``PRICE_MARKER`` / ``PRICE_CONFLICT`` / ``VOID_BREAKS_REFUND`` (409).",
         "properties": {
           "code": {
             "anyOf": [
@@ -2328,12 +2359,24 @@
               }
             ],
             "title": "Students"
+          },
+          "unpaid": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unpaid"
           }
         },
         "required": [
           "code",
           "message",
           "debt",
+          "unpaid",
           "refundable",
           "payment_id",
           "dates",
@@ -4154,12 +4197,24 @@
               }
             ],
             "title": "Refundable"
+          },
+          "unpaid": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unpaid"
           }
         },
         "required": [
           "code",
           "message",
           "debt",
+          "unpaid",
           "refundable",
           "payment_id"
         ],

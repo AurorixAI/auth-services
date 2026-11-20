@@ -658,7 +658,7 @@ def errors(store):
         return LogicAError(detail=dict(code=code, message=message, **kw))
 
     e = {
-        "PAYMENT_EXCEEDS_DEBT": (422, err("PAYMENT_EXCEEDS_DEBT", "Ученик ушёл: принять можно не больше долга 347 000 сум", debt=347_000)),
+        "PAYMENT_EXCEEDS_DEBT": (422, err("PAYMENT_EXCEEDS_DEBT", "Ученик ушёл: принять можно не больше долга 347 000 сум", unpaid=347_000)),
         "NOTHING_TO_PAY": (422, err("NOTHING_TO_PAY", "Ученик ушёл, долга нет: принимать нечего")),
         "BALANCE_CHANGED": (409, err("BALANCE_CHANGED", "Данные оплат изменились — проверьте суммы",
                                      fresh=[FreshBalance(membership_id=uid(102), debt=0, advance=135_000, refundable=135_000)])),

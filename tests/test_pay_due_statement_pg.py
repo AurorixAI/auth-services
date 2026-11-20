@@ -84,3 +84,31 @@ def test_a_refund_of_an_advance_leaves_the_rest_of_the_advance_on_the_payment_ro
     refund = [x for x in s["rows"] if x["type"] == "refund"][0]
     assert (payment["open_name"], payment["open_amount"]) == ("advance", 60_000) and refund["open_name"] is None
     check_equalities(s)
+
+
+def test_the_money_that_came_by_a_transfer_into_the_group_is_an_advance_on_its_own_row_until_it_is_laid_on_a_charge(pg_session, clock):
+    """Decision 2 of the lead (20.11): a row that brought money - a payment AND a «перенос в группу» - says «Аванс N» on the part not yet laid on a charge; the transfer OUT, a refund and a forgiveness stay empty."""
+    from tests.money1b_helpers import add
+    from tests.test_pay2_api_pg import membership
+
+    w, g, st, ms = world(pg_session, clock, joins=(D(2026, 10, 1),))
+    from tests.ops_helpers import new_group
+    from tests.payf_helpers import slots
+    from tests.pg_world import give_group_price
+
+    other = new_group(w.db, w.org, w.ids, "G1", "Вторая", w.A, slots())
+    give_group_price(w.db, other, 600_000, valid_from=D(2026, 1, 1))
+    w.db.commit()
+    pay(w, ms[0], 2_400_000, D(2026, 10, 12))                       # far ahead: 4 months of 600 000 on the account of the first group
+    r = client(w, "owner").post(f"{API}/org/groups/{other.id}/students/bulk", params={"mode": "transfer"}, json={"student_ids": [str(st[0].id)], "from_group_id": str(g.id)})
+    assert r.status_code == 200, r.text
+    moved = membership(w, st[0], other)
+    s = statement(w, moved)
+    rows = {x["type"]: x for x in s["rows"]}
+    assert "transfer_in" in rows, [x["type"] for x in s["rows"]]
+    came = rows["transfer_in"]
+    assert came["open_name"] == "advance" and came["open_amount"] == s["summary"]["advance"] > 0
+    check_equalities(s)
+    old = statement(w, membership(w, st[0], g))
+    out = [x for x in old["rows"] if x["type"] == "transfer_out"]
+    assert out and all(x["open_name"] is None and x["open_amount"] is None for x in out)

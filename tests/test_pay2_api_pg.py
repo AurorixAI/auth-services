@@ -303,7 +303,7 @@ def test_archived_student_pays_the_debt_only_and_can_be_refunded_and_written_off
     world.students[0].status = "archived"
     world.db.commit()
     r = owner(world).post(f"{API}/org/memberships/{m.id}/payments", json={"amount": 800_000, "paid_on": TODAY.isoformat(), "method": "cash"})
-    assert r.status_code == 422 and r.json()["detail"]["code"] == "PAYMENT_EXCEEDS_DEBT" and r.json()["detail"]["debt"] == 769_000
+    assert r.status_code == 422 and r.json()["detail"]["code"] == "PAYMENT_EXCEEDS_DEBT" and r.json()["detail"]["unpaid"] == 769_000
     r = owner(world).post(f"{API}/org/memberships/{m.id}/payments", json={"amount": 1000, "paid_on": TODAY.isoformat(), "method": "cash"})
     assert r.status_code == 201
     r = owner(world).post(f"{API}/org/memberships/{m.id}/writeoffs", json={"amount": 1000, "reason": "льгота"})
@@ -355,7 +355,7 @@ def test_e6_writeoff_flow(world, fixed_today):
                                                                "effective_on": TODAY.isoformat()})
     assert r.status_code == 201, r.text
     body, want = r.json(), fx("e6_writeoff_40000")
-    assert (body["debt_before"], body["debt_after"]) == (100_000, 60_000)
+    assert (body["unpaid_before"], body["unpaid_after"]) == (100_000, 60_000)
     assert body["row"]["paid_until"] == want["row"]["paid_until"] and body["row"]["partial_credit"] == want["row"]["partial_credit"]
     assert body["writeoff"]["reason"] == "болезнь, договорённость с родителем" and body["writeoff"]["amount"] == 40_000
     # limits and codes
@@ -384,7 +384,7 @@ def test_e6_writeoff_flow(world, fixed_today):
     m2 = membership(world, world.students[2])
     stay(world, m2, D(2026, 10, 15))
     r = c.post(f"{API}/org/memberships/{m2.id}/writeoffs", json={"all": True, "reason": "льгота"})
-    assert r.status_code == 201 and r.json()["debt_after"] == 0 and r.json()["writeoff"]["amount"] == 500_000
+    assert r.status_code == 201 and r.json()["unpaid_after"] == 0 and r.json()["writeoff"]["amount"] == 500_000
 
 
 def test_e7_refund_flow(world, fixed_today):

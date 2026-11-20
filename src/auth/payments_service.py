@@ -1352,7 +1352,7 @@ class PaymentService:
         if debt <= 0:
             raise NothingToPay("Ученик ушёл, долга нет: принимать нечего")
         if amount > debt:
-            raise PaymentExceedsDebt(f"Ученик ушёл: принять можно не больше долга {_sum(debt)}", debt=debt)
+            raise PaymentExceedsDebt(f"Ученик ушёл: принять можно не больше долга {_sum(debt)}", unpaid=debt)
 
     def _correction_ceiling(self, org_id: Any, debt_without: int, old: Optional[StudentPayment]) -> int:
         """Money-1 С1/С8 (the ONE ceiling of the correction of a payment of a student who left, the preview and the write): a correction accepts no new money, so the new sum may be as big as
@@ -1437,7 +1437,7 @@ class PaymentService:
     def _check_left_correction(self, org_id: Any, amount: int, debt_without: int, old: StudentPayment) -> None:
         ceiling = self._correction_ceiling(org_id, debt_without, old)
         if amount > ceiling:
-            raise PaymentExceedsDebt(f"Ученик ушёл из группы: при исправлении сумма не может быть больше {_sum(ceiling)}", debt=ceiling)
+            raise PaymentExceedsDebt(f"Ученик ушёл из группы: при исправлении сумма не может быть больше {_sum(ceiling)}", unpaid=ceiling)
 
     @staticmethod
     def _check_amount(amount: int) -> int:
@@ -2085,7 +2085,7 @@ class PaymentService:
         invalidate_summary(org_id)
         logger.info("writeoff created id=%s membership=%s actor=%s", row.id, membership_id, actor_id)
         entry = self._entry_of(org_id, membership_id, today)
-        return WriteoffCreated(writeoff=self._writeoff_out(row), debt_before=before.debt, debt_after=after.debt, closes=self._closes(before, after),
+        return WriteoffCreated(writeoff=self._writeoff_out(row), unpaid_before=before.debt, unpaid_after=after.debt, closes=self._closes(before, after),
                                row=self._rows([entry])[0])
 
     @deadlock_guard

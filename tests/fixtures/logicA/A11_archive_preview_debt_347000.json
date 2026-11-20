@@ -7,6 +7,10 @@
       "group_name": "A-1",
       "money": {
         "debt": 347000,
+        "debt_amount": 0,
+        "due_amount": 0,
+        "due_until": null,
+        "becomes_debt": 0,
         "advance": 0,
         "refundable": 0,
         "paid_until": null,

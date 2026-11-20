@@ -396,6 +396,7 @@ class ArchiveBlocker(BaseModel):
     lessons: Optional[List[Dict[str, Any]]] = None
     exams: Optional[List[Dict[str, Any]]] = None
     balances: Optional[List[Dict[str, Any]]] = None       # Money-2 T12: OPEN_BALANCES - who still has a debt / an advance in the group and what can be done (sums only with the money right)
+    texts: Optional[List[str]] = None             # PAY-DUE: OPEN_BALANCES - what the archive does to the unpaid sums (leavers with a debt; students for whom it is the last group), by the facts of the window
     cancelConsequence: Optional[str] = None       # Money-1 A6 (П8): MISSED_LESSONS - what «Отменить их при архивации» does to money (said before the confirmation)
 
 

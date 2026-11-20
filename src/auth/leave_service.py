@@ -183,10 +183,11 @@ class LeaveService:
         if any(ledger.advance > 0 or ledger.debt > 0 for ledger, _refundable in after.values()):
             raise PaymentForbidden(BALANCE_NEEDS_MONEY_RIGHT)
 
-    def _money(self, ledger: bl.Ledger, refundable: int, loader: ls.LedgerLoader, membership: StudentGroup, today: date) -> LeaveMoney:
+    def _money(self, ledger: bl.Ledger, refundable: int, loader: ls.LedgerLoader, membership: StudentGroup, today: date, snap: Optional[leave_effects.Snap] = None) -> LeaveMoney:
         price = loader.books.price(membership.id, membership.group_id, today)
+        named = {"debt_amount": snap.named_debt, "due_amount": snap.named_due, "due_until": snap.due_until, "becomes_debt": snap.turns} if snap is not None else {}
         return LeaveMoney(
-            debt=ledger.debt, advance=ledger.advance, refundable=refundable, paid_until=ledger.covered_through,
+            **named, debt=ledger.debt, advance=ledger.advance, refundable=refundable, paid_until=ledger.covered_through,
             charged_after_leave=ledger.charged, individual_price_ends=price.source == pricing.SOURCE_OVERRIDE and price.amount is not None)
 
     def _preview(self, org_id: str, memberships: Sequence[StudentGroup], groups: Dict[UUID, Group], money: bool, kind: str) -> LeavePreview:
@@ -199,7 +200,7 @@ class LeaveService:
             allowed = ["keep"] + (["writeoff"] if ledger.debt > 0 else []) + (["refund"] if refundable > 0 else [])
             items.append(LeaveMembership(
                 membership_id=str(m.id), group_id=str(m.group_id), group_name=groups[m.group_id].name,
-                money=self._money(ledger, refundable, loader, m, today) if money else None,
+                money=self._money(ledger, refundable, loader, m, today, snaps[m.id]) if money else None,
                 has_open_balance=ledger.debt > 0 or ledger.advance > 0, allowed=allowed if money else ["keep"],
                 effects=leave_effects.build([snaps[m.id]], kind=kind, money=money)))
         return LeavePreview(as_of=today, memberships=items)

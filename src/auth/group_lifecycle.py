@@ -116,7 +116,32 @@ class GroupLifecycle:
 
     def _open_balances_blocker(self, group: Group, money: bool) -> Optional[Dict[str, Any]]:
         rows = self.open_balances(group, money=money)
-        return {"code": "OPEN_BALANCES", "count": len(rows), "balances": rows} if rows else None
+        if not rows:
+            return None
+        return {"code": "OPEN_BALANCES", "count": len(rows), "balances": rows, "texts": self._balance_texts(group, rows, money)}
+
+    def _balance_texts(self, group: Group, rows: List[Dict[str, Any]], money: bool) -> List[str]:
+        """PAY-DUE решение 3: what the archive does to the unpaid sums, by the facts of the window (each line only when its number is not zero): the students who already LEFT the group with a debt (it is a debt), and the students
+        still in the group for whom it is the LAST group of the centre (after the archive they are out of the centre: the whole unpaid sum becomes a debt)."""
+        def summed(item: Dict[str, Any]) -> int:
+            return int(item.get("amount") or 0)
+
+        unpaid = [r for r in rows if r["kind"] in ("debt", "due")]
+        gone = [r for r in unpaid if r["left_on"] and r["kind"] == "debt"]
+        staying = [r for r in unpaid if not r["left_on"]]
+        elsewhere = {str(x[0]) for x in self.db.query(StudentGroup.student_id).filter(
+            StudentGroup.student_id.in_([r["student_id"] for r in staying]), StudentGroup.is_active.is_(True), StudentGroup.group_id != group.id).all()} if staying else set()
+        last = [r for r in staying if r["student_id"] not in elsewhere]
+        out: List[str] = []
+        left_students = {r["student_id"] for r in gone}
+        if left_students:
+            n = len(left_students)
+            out.append(f"У {n} {tx.plural(n, 'ученика', 'учеников', 'учеников')} осталась неоплаченная сумма{f' {tx.money(sum(summed(r) for r in gone))}' if money else ''} — это долг")
+        last_students = {r["student_id"] for r in last}
+        if last_students:
+            n = len(last_students)
+            out.append(f"У {n} {tx.plural(n, 'ученика', 'учеников', 'учеников')} это последняя группа: неоплаченная сумма{f' {tx.money(sum(summed(r) for r in last))}' if money else ''} станет долгом")
+        return out
 
     def _open_actions(self, group: Group):
         items = self.svc.get_open_attendance_actions(

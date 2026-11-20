@@ -93,6 +93,7 @@ class PayErrorDetail(PayModel):
     code: Optional[str] = None
     message: str
     debt: Optional[int] = None  # WRITEOFF_EXCEEDS_DEBT: the debt that can be written off
+    unpaid: Optional[int] = None  # PAYMENT_EXCEEDS_DEBT: the most that can be accepted from a student who left (everything he owes)
     refundable: Optional[int] = None  # REFUND_EXCEEDS_ADVANCE: the most that can be returned
     payment_id: Optional[str] = None  # DUPLICATE_PAYMENT: the payment the same Idempotency-Key created first
 
@@ -179,8 +180,8 @@ class AllocationSummary(PayModel):
     """What a just entered payment did (``PaymentCreated.allocation``)."""
 
     items: List[Allocation] = Field(default_factory=list)
-    debt_before: int = 0
-    debt_after: int = 0
+    unpaid_before: int = 0      # everything unpaid (a debt and the sum «к оплате»), before / after the payment
+    unpaid_after: int = 0
     advance_after: int = 0
     paid_until_before: Optional[date_type] = None
     paid_until_after: Optional[date_type] = None
@@ -960,8 +961,8 @@ class WriteoffOut(PayModel):
 
 class WriteoffCreated(PayModel):
     writeoff: WriteoffOut
-    debt_before: int = 0
-    debt_after: int = 0
+    unpaid_before: int = 0      # everything unpaid before / after the forgiveness
+    unpaid_after: int = 0
     closes: Optional[Dict[str, str]] = None  # Money-1 V9: the period the forgiveness closes: {"from", "to", "label"}; null - it closes nothing
     row: MembershipPaymentRow
     money_effects: Optional[Dict[str, Any]] = None  # Money-1 A3: the saved payroll sheets whose pay the operation moves (``money_effects.run_with_effects``)
@@ -1344,7 +1345,7 @@ class PayDueImpact(PayModel):
 class LogicAErrorDetail(PayErrorDetail):
     """Error body of the LOGIC-A endpoints: ``PayErrorDetail`` + the lists some codes carry.
 
-    Codes: ``OPENING_RANGE`` / ``PAUSE_RANGE`` / ``PAUSE_LOCKED`` / ``NOTHING_TO_PAY`` / ``PAYMENT_EXCEEDS_DEBT`` (``debt``) /
+    Codes: ``OPENING_RANGE`` / ``PAUSE_RANGE`` / ``PAUSE_LOCKED`` / ``NOTHING_TO_PAY`` / ``PAYMENT_EXCEEDS_DEBT`` (``unpaid``) /
     ``LESSON_TYPE_RANGE`` / ``METHOD_REQUIRED`` / ``REASON_REQUIRED`` (422); ``OPENING_NOT_ALLOWED`` / ``PAUSE_OVERLAP`` /
     ``PAUSE_OVERLAPS_ATTENDED`` (``dates``) / ``PAUSE_BREAKS_REFUND`` / ``MEMBERSHIP_CLOSED`` / ``BALANCE_CHANGED`` (``fresh``) /
     ``PRICE_BACKDATE_WITH_PAYMENTS`` (``students``) / ``PRICE_MARKER`` / ``PRICE_CONFLICT`` / ``VOID_BREAKS_REFUND`` (409).
@@ -1527,7 +1528,11 @@ SettleAction = Literal["keep", "writeoff", "refund"]
 
 
 class LeaveMoney(PayModel):
-    debt: int = 0
+    debt: int = 0                              # everything unpaid after the action (a debt and the sum «к оплате»; the name is kept for ``expected_debt`` of the settlement)
+    debt_amount: int = 0                       # PAY-DUE 10.5: the part that is a DEBT after the action (the state AFTER it: the student in the centre or not)
+    due_amount: int = 0                        # the part that stays «к оплате» (the student is still in the centre, the term goes on)
+    due_until: Optional[date_type] = None
+    becomes_debt: int = 0                      # the part that is «к оплате» now and the action turns into a debt
     advance: int = 0
     refundable: int = 0
     paid_until: Optional[date_type] = None

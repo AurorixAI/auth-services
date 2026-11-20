@@ -13,8 +13,8 @@
     "voided_by_name": null,
     "void_reason": null
   },
-  "debt_before": 100000,
-  "debt_after": 60000,
+  "unpaid_before": 100000,
+  "unpaid_after": 60000,
   "closes": null,
   "row": {
     "debt_amount": 60000,

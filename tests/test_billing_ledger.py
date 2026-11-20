@@ -105,7 +105,7 @@ def test_e8_replace_is_void_plus_insert():
     with_300 = bl.run_ledger(e1([credit("p18", TODAY, 300_000, minutes=1)]))
     replaced = bl.run_ledger(e1([credit("p19", TODAY, 250_000, minutes=2)]))
     fx = fixture("e8_replace_300000_by_250000")
-    assert replaced.debt == fx["allocation"]["debt_after"] == 519_000 and with_300.debt == 469_000
+    assert replaced.debt == fx["allocation"]["unpaid_after"] == 519_000 and with_300.debt == 469_000
     assert replaced.status.paid_until.isoformat() == fx["allocation"]["paid_until_after"]
     assert [alloc_tuple(a) for a in replaced.allocations if a.credit_id == "p19"] == [
         fixture_alloc_tuple(a) for a in fx["allocation"]["items"]]
@@ -194,7 +194,7 @@ def test_e6_writeoff():
     inp = replace(inp, credits=inp.credits + (credit("w1", D(2026, 10, 21), 40_000, bl.WRITEOFF),))
     l = bl.run_ledger(inp)
     fx = fixture("e6_writeoff_40000")
-    assert (l.debt, l.written_off) == (60_000, 40_000) == (fx["debt_after"], fx["writeoff"]["amount"])
+    assert (l.debt, l.written_off) == (60_000, 40_000) == (fx["unpaid_after"], fx["writeoff"]["amount"])
     assert l.status.paid_until.isoformat() == fx["row"]["paid_until"] and l.partial_credit == fx["row"]["partial_credit"]
     # the student pays the rest: debt 0, I2 holds
     inp = replace(inp, credits=inp.credits + (credit("p32", D(2026, 10, 21), 60_000, minutes=3),))

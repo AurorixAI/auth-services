@@ -545,7 +545,7 @@ def test_c1_only_the_date_is_corrected_the_sums_stay(two, monkeypatch):
 def test_c1_a_bigger_sum_is_refused_with_the_ceiling_in_the_text(two, monkeypatch):
     p = _c1_world(two, monkeypatch)
     d = _c1_replace(two, p, 700_000, dry=True, expect=422)
-    assert d["code"] == "PAYMENT_EXCEEDS_DEBT" and d["debt"] == 600_000
+    assert d["code"] == "PAYMENT_EXCEEDS_DEBT" and d["unpaid"] == 600_000
     assert d["message"] == f"Ученик ушёл из группы: при исправлении сумма не может быть больше 600{NBSP}000{NBSP}сум"
     assert _c1_live_sum(two, two.group) == 600_000
 
@@ -582,7 +582,7 @@ def test_c8_a_sum_above_the_biggest_of_the_chain_is_refused(two, monkeypatch):
     p = _c1_world(two, monkeypatch)
     cut = _c1_replace(two, p, 200_000)["payment"]
     d = _c1_replace(two, cut, 700_000, expect=422)
-    assert d["code"] == "PAYMENT_EXCEEDS_DEBT" and d["debt"] == 600_000
+    assert d["code"] == "PAYMENT_EXCEEDS_DEBT" and d["unpaid"] == 600_000
     assert d["message"] == f"Ученик ушёл из группы: при исправлении сумма не может быть больше 600{NBSP}000{NBSP}сум"
 
 
@@ -635,7 +635,7 @@ def test_c1_a_student_who_left_without_a_transfer_corrects_an_advance_down_but_n
     (p2,) = _c1_live(two, two.group)
     assert int(p2["amount"]) == 450_000
     d = _c1_replace(two, p2, 600_000, expect=422)
-    assert d["code"] == "PAYMENT_EXCEEDS_DEBT" and d["debt"] == 500_000                   # С8: the biggest sum of the chain (the first 500 000 can be put back, not more)
+    assert d["code"] == "PAYMENT_EXCEEDS_DEBT" and d["unpaid"] == 500_000                   # С8: the biggest sum of the chain (the first 500 000 can be put back, not more)
 
 
 # ---- С3: the money taken away from another group of the student leaves no debt there yet (its charge begins tomorrow) - the sentence still says the advance falls ----

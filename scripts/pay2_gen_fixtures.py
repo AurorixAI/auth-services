@@ -601,7 +601,7 @@ def e1_create_replace_void(store):
                     unpaid=469_000, advance=0, partial=14_871, writeoff_allowed=True)
     write("e1_create_300000.json", PaymentCreated(
         payment=p18,
-        allocation=AllocationSummary(items=allocs, debt_before=769_000, debt_after=469_000, advance_after=0,
+        allocation=AllocationSummary(items=allocs, unpaid_before=769_000, unpaid_after=469_000, advance_after=0,
                                      paid_until_before=t0["through"], paid_until_after=t["through"]),
         warnings=[], row=row), store)
 
@@ -637,7 +637,7 @@ def e1_create_replace_void(store):
                      unpaid=519_000, advance=0, partial=14_334, writeoff_allowed=True)
     write("e8_replace_300000_by_250000.json", PaymentCreated(
         payment=p19,
-        allocation=AllocationSummary(items=allocs2, debt_before=769_000, debt_after=519_000, advance_after=0,
+        allocation=AllocationSummary(items=allocs2, unpaid_before=769_000, unpaid_after=519_000, advance_after=0,
                                      paid_until_before=t0["through"], paid_until_after=t2["through"]),
         warnings=[], row=row2), store)
 
@@ -1135,7 +1135,7 @@ def e6_e7(store):
     wo = WriteoffOut(id=uid(41), membership_id=uid(3), amount=40_000, reason="болезнь, договорённость с родителем",
                      effective_on=today, created_by=uid(901), created_by_name="Рустам Каримов",
                      created_at="2026-10-21T11:00:00")
-    write("e6_writeoff_40000.json", WriteoffCreated(writeoff=wo, debt_before=100_000, debt_after=60_000, row=row), store)
+    write("e6_writeoff_40000.json", WriteoffCreated(writeoff=wo, unpaid_before=100_000, unpaid_after=60_000, row=row), store)
 
     # E7: the E1 student (790 000 paid) leaves on 25.10: P2 is cut to 15.10-25.10 (11 days of 31 = 177 000)
     today = D(2026, 10, 25)

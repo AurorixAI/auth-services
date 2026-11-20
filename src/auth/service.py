@@ -2804,7 +2804,7 @@ class AuthService:
             closing_prices = self._closing_individual_prices(closing, group, ps.business_date(now_dt))
         from .logica_service import PauseService  # lazy: pulls in the payments modules
 
-        before_close = leave_effects.snapshot(self.db, org_id, closing, ps.business_date(now_dt)) if closing else []      # Money-2 T3: what the closing ends / moves / leaves behind, read BEFORE it is done
+        before_close = leave_effects.snapshot(self.db, org_id, closing, ps.business_date(now_dt), in_centre=True) if closing else []      # Money-2 T3: what the closing ends / moves / leaves behind, read BEFORE it is done
         carry_plan: list = []
         for om in closing:
             carry_plan += PauseService(self.db).plan_carry(om.id, ps.business_date(now_dt))      # Money-2 T2: read BEFORE the stay ends and the hook cuts / cancels the pauses of the old group

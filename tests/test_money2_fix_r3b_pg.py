@@ -78,7 +78,7 @@ def test_v2_a_correction_through_a_method_only_version_does_not_bring_the_old_bi
     pay(world, s0, a, amount=90_000)
     same = change_method(world, cut, "card")["payment"]
     d = replace_it(world, same, 100_000, expect=422)["detail"]
-    assert d["code"] == "PAYMENT_EXCEEDS_DEBT" and d["debt"] == 10_000
+    assert d["code"] == "PAYMENT_EXCEEDS_DEBT" and d["unpaid"] == 10_000
     assert live_sum(world, a, s0) == 110_000 + 10_000 + 90_000 and account(world, membership(world, s0, a).id).advance == 0
     r = owner(world).get(f"{API}/org/memberships/{membership(world, s0, a).id}/payments/preview", params={"amount": 100_000, "replace_payment_id": same["id"]})
     assert r.status_code == 200 and r.json()["suggested_amount"] == 10_000
@@ -93,7 +93,7 @@ def test_v2_a_correction_through_a_cancelled_and_restored_version_does_not_bring
     void_it(world, cut)
     back = restore_it(world, cut)["payment"]
     d = replace_it(world, back, 100_000, expect=422)["detail"]
-    assert d["code"] == "PAYMENT_EXCEEDS_DEBT" and d["debt"] == 10_000
+    assert d["code"] == "PAYMENT_EXCEEDS_DEBT" and d["unpaid"] == 10_000
     assert live_sum(world, a, s0) == 110_000 + 10_000 + 90_000 and account(world, membership(world, s0, a).id).advance == 0
 
 

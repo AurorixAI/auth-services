@@ -72,7 +72,7 @@ def payment_allocation(ledger: bl.Ledger, payment_id: str) -> PaymentAllocationO
 
 def allocation_summary(before: bl.Ledger, after: bl.Ledger, credit_id: str) -> AllocationSummary:
     return AllocationSummary(
-        items=allocations_of(after, credit_id), debt_before=before.debt, debt_after=after.debt,
+        items=allocations_of(after, credit_id), unpaid_before=before.debt, unpaid_after=after.debt,
         advance_after=after.advance, paid_until_before=before.status.paid_until, paid_until_after=after.status.paid_until,
     )
 
@@ -233,7 +233,7 @@ def open_of_row(kind: str, ref_id: str, ledger: bl.Ledger, due, segments: dict) 
             out = [{"name": "paid", "amount": 0, "text": "Оплачено"}]
         text = tx.open_both_text(out[0]["text"], out[1]["text"]) if len(out) == 2 else out[0]["text"]
         return {"open_amount": sum(p["amount"] for p in out), "open_name": out[0]["name"], "open_text": text, "open_parts": out}
-    if kind == bl.PAYMENT:
+    if kind in (bl.PAYMENT, bl.TRANSFER_IN):      # the money that came (a payment, a transfer into the group) - the part not laid on a charge yet is «Аванс»; a transfer OUT, a refund, a forgiveness stay empty
         left = sum(a.amount for a in ledger.allocations if a.credit_id == ref_id and a.bucket == bl.ADVANCE)       # money laid on a period that has not begun, or on no period yet
         if left > 0:
             text = tx.advance_text(left)

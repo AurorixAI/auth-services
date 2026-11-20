@@ -139,6 +139,7 @@ def test_t12_the_archive_of_a_group_is_refused_while_a_leaver_has_a_debt_or_an_a
     assert [x["code"] for x in rows[str(s1.id)]["actions"]] == ["refund"]
     assert rows[str(s1.id)]["membership_id"] == str(membership(world, s1, a).id)
     assert tx.money(410_000) in rows[str(s1.id)]["text"]
+    assert blocker["texts"] == [f"У 1 ученика осталась неоплаченная сумма {tx.money(190_000)} — это долг"]      # decision 3: s0 left with an unpaid sum (a debt); s1 has an advance - no line; nobody is still in the group
     assert owner(world).get(f"{API}/org/groups/{a.id}/archive-impact").json()["blockers"][-1]["code"] == "OPEN_BALANCES"      # the preview says the same
     world.db.expire_all()
     assert world.db.get(type(a), a.id).status == "active"
@@ -162,6 +163,7 @@ def test_t12_an_administrator_without_the_money_right_gets_the_list_without_sums
         assert "amount" not in row and not any(ch.isdigit() for ch in row["text"]), row
         assert row["kind"] in ("debt", "advance")
         assert row["actions"] == []                                                    # without the right: nothing to offer, the owner decides
+    assert blocker["texts"] == ["У 1 ученика осталась неоплаченная сумма — это долг"]      # the same line without the sum
 
 
 # ---------------------------------------------------------------------------------------------------- T13 the window of adding sees the balances of the past groups
@@ -414,3 +416,21 @@ def test_t10b_a_coded_refusal_in_the_middle_of_a_batch_the_others_are_written_an
     assert membership(world, s2, b).is_active is False and snap(world, s2, b) == left        # the refused student is untouched
     for s in (s0, s1, s3):
         assert membership(world, s, b).is_active is True
+
+
+def test_t12_decision_3_the_archive_of_a_group_says_which_unpaid_sums_become_a_debt_by_the_students_who_stay_in_it(world, fixed_today, exams):
+    # A: 10 000 a lesson, in A since 02.11, today 20.11 = 19 lessons = 190 000 unpaid each (the term of 5 days from 02.11 has passed: a debt).  s0 and s1 are still in A; s1 is in B too (B is his second group): after the archive
+    # of A s0 is out of the centre (this is his LAST group), s1 is not.  s2 left A with 190 000 unpaid (a debt already).  s0 is still in A: his month goes on to the 30th = 29 lessons = 290 000.
+    # The lines: 1 leaver with 190 000; 1 student for whom it is the last group, 290 000.
+    from tests.money1b_helpers import add
+
+    a, b, c = groups3(world, fixed_today)
+    s0, s1, s2 = world.students
+    for s in (s0, s1, s2):
+        stay(world, membership(world, s, a), date(2026, 11, 2))
+    add(world, s1, group=b, mode="add")
+    assert owner(world).post(f"{API}/org/groups/{a.id}/students/{s2.id}/leave", json={}).status_code == 200
+    detail = owner(world).get(f"{API}/org/groups/{a.id}/archive-impact").json()
+    (blocker,) = [x for x in detail["blockers"] if x["code"] == "OPEN_BALANCES"]
+    assert blocker["texts"] == [f"У 1 ученика осталась неоплаченная сумма {tx.money(190_000)} — это долг",
+                                f"У 1 ученика это последняя группа: неоплаченная сумма {tx.money(290_000)} станет долгом"]

@@ -87,8 +87,8 @@
         "segment_remaining_after": 469000
       }
     ],
-    "debt_before": 769000,
-    "debt_after": 469000,
+    "unpaid_before": 769000,
+    "unpaid_after": 469000,
     "advance_after": 0,
     "paid_until_before": "2026-09-27",
     "paid_until_after": "2026-10-15"
