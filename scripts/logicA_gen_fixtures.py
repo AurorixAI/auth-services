@@ -427,7 +427,7 @@ def chain1(store):
     assert 120_000 + 45_000 + 135_000 == 300_000
     write("A09_leave_preview_refund_135000.json", LeavePreview(as_of=D(2026, 10, 29), memberships=[LeaveMembership(
         membership_id=uid(102), group_id=uid(302), group_name="B-1", has_open_balance=True, allowed=["keep", "refund"],
-        money=LeaveMoney(debt=0, advance=135_000, refundable=135_000, paid_until=D(2026, 10, 29), charged_after_leave=45_000,
+        money=LeaveMoney(unpaid=0, advance=135_000, refundable=135_000, paid_until=D(2026, 10, 29), charged_after_leave=45_000,
                          individual_price_ends=False))]), store)
     write("A10_leave_result_refund.json", LeaveResult(message="Ученик убран из группы", settled=[SettledOut(
         membership_id=uid(102), action="refund", amount=135_000, refund_id=uid(61))]), store)
@@ -441,7 +441,7 @@ def chain4_6(store):
     assert arch["debt"] == 347_000 and arch["charged"] == 347_000
     write("A11_archive_preview_debt_347000.json", LeavePreview(as_of=D(2026, 10, 25), memberships=[LeaveMembership(
         membership_id=uid(101), group_id=uid(301), group_name="A-1", has_open_balance=True, allowed=["keep", "writeoff"],
-        money=LeaveMoney(debt=347_000, advance=0, refundable=0, paid_until=None, charged_after_leave=347_000,
+        money=LeaveMoney(unpaid=347_000, debt_amount=347_000, advance=0, refundable=0, paid_until=None, charged_after_leave=347_000,
                          individual_price_ends=False))]), store)
     # chain 6: individual 400 000 since 01.09, left 10.10 -> debt 129 000 for 01-10.10, Sep paid
     p6 = price_flat(400_000)
@@ -450,7 +450,7 @@ def chain4_6(store):
     assert (left["debt"], left["charged"]) == (129_000, 529_000)
     write("A12_leave_preview_individual_price_ends.json", LeavePreview(as_of=D(2026, 10, 10), memberships=[LeaveMembership(
         membership_id=uid(103), group_id=uid(303), group_name="C-1", has_open_balance=True, allowed=["keep", "writeoff"],
-        money=LeaveMoney(debt=129_000, advance=0, refundable=0, paid_until=D(2026, 9, 30), charged_after_leave=529_000,
+        money=LeaveMoney(unpaid=129_000, debt_amount=129_000, advance=0, refundable=0, paid_until=D(2026, 9, 30), charged_after_leave=529_000,
                          individual_price_ends=True))]), store)
     back = Hand(today=D(2026, 11, 30), accounting_start=D(2026, 9, 1), stays=[(D(2026, 11, 20), None)], price=price_flat(600_000)).run()
     assert back["segs"][0].amount == 220_000  # 11 of 30 days at the group price 600 000
