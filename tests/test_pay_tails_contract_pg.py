@@ -12,6 +12,7 @@ from tests.pg_world import needs_pg, pg_session, world  # noqa: F401  (fixtures)
 from tests.test_pay_tails_money_pg import D, API, fixed_today, forgive, leave, lp, membership, owner, pay, refund, statement  # noqa: F401
 
 pytestmark = needs_pg
+WORDS = tx.forgiven_used_text(94_000, 220_000).replace("\u00a0", " ")           # in a FILE the non-breaking space of a sum is a plain space (export_safety)
 
 
 def c2(world, fixed_today):
@@ -104,6 +105,16 @@ def test_the_excel_of_the_statement_shows_the_used_sum_in_the_forgiven_column(wo
     ws = load_workbook(io.BytesIO(r.content)).active
     cells = [c.value for row in ws.iter_rows() for c in row if c.value is not None]
     assert 94_000 in cells and 126_000 not in cells and not any(v == 220_000 for v in cells)       # the entered sum is only in the words of the title, never in a sum column
+    assert any(isinstance(v, str) and WORDS in v for v in cells)         # А7.6: the server's words stand next to the entered sum (the «Подробности» cell of the row)
+
+
+def test_the_csv_of_the_statement_has_the_words_about_the_used_part_in_the_details(world, fixed_today):
+    g, s, made = c2(world, fixed_today)
+    r = owner(world).get(f"{API}/org/memberships/{membership(world, s, g).id}/statement/export", params={"format": "csv"})
+    assert r.status_code == 200, r.text
+    (line,) = [x for x in r.content.decode("utf-8-sig").splitlines() if x.split(";")[2:3] and "Прощено" in x.split(";")[2]]
+    cells = line.split(";")
+    assert cells[4] == "94000" and WORDS in cells[-1], cells            # the sum column: used; the details: the server's words
 
 
 def test_the_refusal_of_a_refund_says_there_is_no_paid_money_over_the_charge(world, fixed_today):

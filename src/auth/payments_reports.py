@@ -285,6 +285,8 @@ class PaymentsReports:
                 parts.append("; ".join(f"{a.label}: {tx.num(a.amount)}" for a in d.allocations))
             if d.reason:
                 parts.append(f"причина: {d.reason}")
+            if r.type == "writeoff" and d.text:                                 # PAY-TAILS А7.6: the server's words about the part that covered a charge
+                parts.append(d.text)
             if r.voided_at:
                 parts.append(f"ОТМЕНЕНО: {r.void_reason}")
             return " | ".join(parts)

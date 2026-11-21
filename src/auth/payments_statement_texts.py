@@ -263,7 +263,7 @@ def build_entries(rows: Sequence, upcoming: Iterable = ()) -> List[Entry]:
         elif row.type == "writeoff":
             writeoff_seen = True
             title = f"Прощено {tx.money(int(row.credit))}{f' — причина: {d.reason}' if d.reason else ''}{f' · {d.created_by_name}' if d.created_by_name else ''}"
-            out.append(Entry(title=title, sub=None, charged=None, paid=int(row.credit), **base))
+            out.append(Entry(title=title, sub=getattr(d, "text", None) or None, charged=None, paid=int(row.credit), **base))      # PAY-TAILS А7.6: «использовано N сум» next to the sum that was entered
         elif row.type == "refund":
             title = f"Возврат аванса — {lower_method(d.method)}{f' · {d.created_by_name}' if d.created_by_name else ''}"
             out.append(Entry(title=title, sub=f"причина: {d.reason}" if d.reason else None, charged=None,
