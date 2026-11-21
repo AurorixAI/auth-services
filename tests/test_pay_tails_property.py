@@ -215,3 +215,37 @@ def test_b7_named_world_a_payment_dated_before_two_forgivenesses_does_not_turn_t
     assert (before.debt, before.advance, before.written_off) == (0, 0, 840_000)
     assert (after.debt, after.advance, after.written_off, after.written_off_granted) == (0, 0, 420_000, 840_000)
     assert after.reconciles and not after.flags
+
+
+# ---------------------------------------------------------------------------------------------------------------------------- PAY-TAILS Б7.8 step 5 (R4): the same properties WITH a lesson cancelled by the centre
+# The cancel is an event of the chain with its own moment (before / after the lesson, before / after the credits, the setting of the deductions sometimes switched on later); P3k = a cancel entered NOW.
+# The full measure: B7_CANCELS=with B7_MODE=common python tests/pay_tails_b7_tools.py count 1 20000 5   (5 seeds)
+
+_WITH_CANCELS = {}
+
+
+def _with_cancels(mode):
+    if mode not in _WITH_CANCELS:
+        _WITH_CANCELS[mode] = tools.run_counts(1, WORLDS, tools.Cfg(mode, "with"))[0]
+    return _WITH_CANCELS[mode]
+
+
+ALL_KEYS = ("P1 debt", "P1 used", "P1 advance", "P1 advance<=money", "P1 identity", "P2 debt", "P2 advance<=money", "P2 advance today", "P2 advance back", "P3 used", "P3 debt", "P3 advance",
+            "P3 advance<=money", "P3k used", "P3k debt", "P3k advance", "P3k advance<=money", "P3e used", "P3e debt", "P3e advance", "P3e advance<=money", "P4 early", "P4 today", "P5 probe", "flags")
+
+
+def test_b7_r4_the_common_month_with_cancelled_lessons_has_no_counterexample_of_p1_p5_and_p3k():
+    counts = _with_cancels("common")
+    assert {k: counts[k] for k in ALL_KEYS} == {k: 0 for k in ALL_KEYS}, counts
+    assert counts["P4 nomatch"] == 0
+
+
+def test_b7_r4_the_personal_period_with_cancelled_lessons_keeps_p1_p2_p4_p5_p3k_at_zero():
+    # The deductions DO exist in a personal period (PAY-F: the setting is for the calendar modes; only the packages have none).  What a payment / a forgiveness / a cancel does is as in the common month.  The rest of P3 / P3e
+    # (a pause entered now) is NOT zero here and is not a matter of the order of entering: a lesson on a pause is not charged, so a pause over a cancelled lesson removes its deduction while a personal period is shifted,
+    # not cheapened (counted apart: «personal: pause over a cancelled lesson»); and a pause that shifts the chain moves the cancelled lesson to another period whose deduction is price / its lessons (35 000 -> 30 000).
+    # The names of these are in the report of step 5 (LEDGER-FREEZE / PAY-F): the rule of the unit of a deduction is not changed here.
+    keys = tuple(k for k in ALL_KEYS if not k.startswith(("P3 ", "P3e ")))
+    counts = _with_cancels("personal")
+    assert {k: counts[k] for k in keys} == {k: 0 for k in keys}, counts
+    assert counts["P3 advance"] == 0 and counts["P3e advance"] == 0 and counts["P3 advance<=money"] == 0

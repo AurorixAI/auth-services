@@ -177,7 +177,7 @@ def _any_day(rng, lo, hi):
 def _with_cancel(rng, inp, cfg):
     """R4: a lesson of October (or the first of November) cancelled by the centre, entered at a moment of the chain (before or after the lesson, before or after the credits); sometimes the setting of the
     deductions is switched on LATER than the cancel (a version made on a day, its moment is the start of that day)."""
-    if inp.regimes[0].anchor != ps.FIXED_DAY or inp.regimes[0].mode == bl.LESSONS or cfg.cancels == "none":
+    if inp.regimes[0].mode == bl.LESSONS or cfg.cancels == "none":                  # a package has no deduction (the lessons mode); a common month and a personal period have
         return inp
     if cfg.cancels != "with" and rng.random() >= 0.3:
         return inp
@@ -241,7 +241,7 @@ def new_pause(rng, inp):
 
 def new_cancel(rng, inp):
     """R4 P3k: a lesson cancelled by the centre NOW (today): a lesson of the October days or the first of November, one that is not cancelled yet; the setting must be on."""
-    if not inp.recalc_versions or inp.regimes[0].anchor != ps.FIXED_DAY or inp.regimes[0].mode == bl.LESSONS:
+    if not inp.recalc_versions or inp.regimes[0].mode == bl.LESSONS:
         return None
     taken = {c.day for c in inp.centre_cancels}
     free = [d for d in (D(2026, 10, 13) + timedelta(days=7 * k) for k in range(4)) if d not in taken and d >= max(v.effective_from for v in inp.recalc_versions)]
@@ -532,6 +532,18 @@ def apply_x(inp, x):
     return replace(inp, credits=(*inp.credits, x))
 
 
+def _pause_over_cancel(inp, x):
+    """R4 (personal period only): the pause entered now covers the day of a lesson the centre cancelled.  A lesson on a pause is not charged, so its deduction goes (the rule of PAY-F, test_11), while a PERSONAL period is
+    not cheapened by a pause - it is shifted: the student pays the period in full and loses the deduction.  Not a matter of the order of entering: counted apart so that it does not hide the rest."""
+    if isinstance(x, bl.Pause):
+        covers = [(x.first, x.last)]
+    elif isinstance(x, PauseEdit):
+        covers = [(x.first, x.last)]
+    else:
+        return False
+    return any(a <= c.day <= b for c in inp.centre_cancels for a, b in covers)
+
+
 def run_counts(seed, n, cfg=Cfg()):
     rng = random.Random(seed)
     counts = {p: 0 for p in PROPERTIES}
@@ -550,8 +562,10 @@ def run_counts(seed, n, cfg=Cfg()):
             pays += kind == bl.PAYMENT
             forgs += kind == bl.WRITEOFF
             names = violations(inp, x)
+            if inp.regimes[0].anchor != ps.FIXED_DAY and _pause_over_cancel(inp, x):
+                names = [f"{n} [personal: pause over a cancelled lesson]" if n.startswith(("P3 ", "P3e ")) and "advance<=money" not in n else n for n in names]
             for name in names:
-                counts[name] += 1
+                counts[name] = counts.get(name, 0) + 1
                 found.setdefault(name, []).append((inp, x))
             counts["P4 nomatch"] += oracle_p4(apply_x(inp, x))[1]
     return counts, found, (worlds, pays, forgs)
