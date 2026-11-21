@@ -108,14 +108,13 @@ NO_PRICE = PriceInfo(None)
 
 @dataclass(frozen=True)
 class Credit:
+    """A payment, a transfer in or a forgiveness.  ``created_at`` is the MOMENT it was entered (a time stamp, naive UTC; ``datetime.min`` = no stamp: known always) - see ``entered_at``."""
+
     id: str
     kind: str  # payment | transfer_in | writeoff
     on: date
     created_at: datetime
     amount: int
-    # PAY-TAILS А6.1: the business day the credit was ENTERED (``created_at``), None = unknown (an old row): ``on`` is taken.  A forgiveness lies only on the periods that
-    # had begun by that day, never on a future one; every credit is tied to a period by the capacity the period had that day (А7.1: the pauses entered by then are out of it).
-    entered_on: Optional[date] = None
 
 
 @dataclass(frozen=True)
@@ -141,8 +140,25 @@ class Pause:
 
     first: date
     last: date
-    # PAY-TAILS А7.1: the business day the pause was entered (``None`` = unknown: the pause is then not taken out of the nominal sum of a period, as before)
-    created_on: Optional[date] = None
+    # PAY-TAILS Б7.7: the forms of the pause in time, ``(moment, first, last)`` ascending: the first is the moment it was entered; a later one is an edit.  ``first`` / ``last`` above are the LAST form.
+    # Empty = no stamp: the pause is known always (see ``entered_at``).
+    forms: Tuple[Tuple[datetime, date, date], ...] = ()
+
+
+PROBE_MOMENT = datetime(9999, 1, 1)       # the stand-in credit of a window «what will happen» is entered at the end of time: after everything that is known now
+
+
+def entered_at(item) -> datetime:
+    """Б7.7 п. 4: THE moment a fact was entered - one function for all.  A payment, a transfer in and a forgiveness: ``created_at`` (the probe of a window: ``PROBE_MOMENT``, i.e. NOW); a pause: the moment of its
+    first form.  A record without a stamp (``datetime.min`` / no form) is known always."""
+    if isinstance(item, Pause):
+        return item.forms[0][0] if item.forms else datetime.min
+    return item.created_at
+
+
+def entered_day(credit: "Credit") -> date:
+    """The business day a credit was entered (a record without a stamp: the day it is dated)."""
+    return credit.on if credit.created_at == datetime.min else ps.business_date(credit.created_at)
 
 
 @dataclass(frozen=True)
@@ -237,18 +253,21 @@ class Segment:
     # PAY-TAILS А6.1: what the period would cost WITHOUT the cut of a leaving, a transfer, an archive of the student or a pause (``None`` = the same as ``amount``).  Credits are tied
     # to periods by their order on the NOMINAL line, so that "which period is this payment / forgiveness for" never depends on what happened to the stay afterwards.
     nominal_amount: Optional[int] = field(default=None, repr=False)
-    # PAY-TAILS А7.1: ``(day, sum)`` ascending: what the period would cost without the cut of a leaving but WITHOUT the days of the pauses entered on or before ``day``
-    pause_capacity: Tuple[Tuple[date, int], ...] = field(default=(), repr=False)
+    # PAY-TAILS А7.1 / Б7.7: ``(moment, sum)`` ascending: what the period would cost without the cut of a leaving but WITHOUT the days of the pauses entered at or before ``moment``
+    pause_capacity: Tuple[Tuple[datetime, int], ...] = field(default=(), repr=False)
+    # PAY-TAILS Б7.7: the PLACE of the period among the periods of the account, the same in every world (see ``_worlds``): a cell of the fixed billing day - ``("c", start of the cell)``;
+    # a period of a personal chain - ``("p", first day of the piece of the stay, number in the chain)``; ``None`` (a package, the opening debt) = the period has no other world
+    slot: Optional[tuple] = field(default=None, repr=False)
 
     @property
     def nominal(self) -> int:
         return self.amount if self.nominal_amount is None else max(self.nominal_amount, self.amount)
 
-    def capacity(self, entered: date) -> int:
-        """How much a credit entered on ``entered`` may take of the period: the nominal sum minus the pauses that were already entered (a pause entered LATER does not shrink it)."""
+    def capacity(self, known_at: datetime) -> int:
+        """How much may be tied to the period by the pauses KNOWN at ``known_at``: the nominal sum minus the pauses entered at or before that moment (a pause entered LATER does not shrink it)."""
         cap = self.nominal
-        for day, value in self.pause_capacity:
-            if day <= entered:
+        for moment, value in self.pause_capacity:
+            if moment <= known_at:
                 cap = value
         return max(min(cap, self.nominal), self.amount)
 
@@ -622,7 +641,7 @@ class _Gen:
 
     def segment(
         self, chain: int, start: date, end: date, days: List[date], nominal: int, *, by_lessons: bool, cell: Optional[tuple],
-        nominal_days: Optional[List[date]] = None,
+        nominal_days: Optional[List[date]] = None, slot: Optional[tuple] = None,
     ) -> Segment:
         """The charge of one period; ``nominal`` = days of the whole period, ``by_lessons`` = fixed billing day.  ``nominal_days`` (PAY-TAILS А6.1): the days the student WOULD have in
         the period without the cut of a leaving / a transfer / a pause - the same formula over them gives ``nominal_amount``."""
@@ -664,23 +683,23 @@ class _Gen:
         nominal_amount = value if nominal_days is None else charge(nominal_days)[0]
         capacity: List[Tuple[date, int]] = []
         if nominal_days is not None:
-            for day in sorted({p.created_on for p in self.inp.pauses if p.created_on is not None}):
-                gone = _merge_pauses([p for p in self.inp.pauses if p.created_on is not None and p.created_on <= day])
+            for moment in sorted({entered_at(p) for p in self.inp.pauses}):
+                gone = _merge_pauses([p for p in self.inp.pauses if entered_at(p) <= moment])
                 kept = [d for d in nominal_days if not _is_paused(gone, d)]
                 if len(kept) < len(nominal_days):
-                    capacity.append((day, charge(kept)[0] if kept else 0))
+                    capacity.append((moment, charge(kept)[0] if kept else 0))
         return Segment(amount=value, basis=basis, lessons_in_part=in_part, lessons_in_period=whole_n, first_lesson=first_lesson,
-                       nominal_amount=nominal_amount, pause_capacity=tuple(capacity), **common)
+                       nominal_amount=nominal_amount, pause_capacity=tuple(capacity), slot=slot, **common)
 
     # ---------------------------------------------------------------- calendar: payment date
 
-    def payment_date_chain(self, lo: date, hi: Optional[date], so_far: int, pauses: Optional[List[Tuple[date, date]]] = None) -> List[Segment]:
+    def payment_date_chain(self, lo: date, hi: Optional[date], so_far: int, pauses: Optional[List[Tuple[date, date]]] = None, piece: Optional[date] = None) -> List[Segment]:
         chain = self.chain
         self.chain += 1
         out: List[Segment] = []
         cum = so_far
         future = 0
-        for start, end, length, days in _chain_periods(lo, pauses or []):
+        for k, (start, end, length, days) in enumerate(_chain_periods(lo, pauses or [])):
             if hi is not None and start > hi:
                 break
             whole_days = days                     # PAY-TAILS: the days of the whole period, before the leaving cuts it
@@ -698,7 +717,7 @@ class _Gen:
                             self.flags.add(F_HORIZON)
                         break
                 future += 1
-            seg = self.segment(chain, start, end, days, length, by_lessons=False, cell=None, nominal_days=whole_days)
+            seg = self.segment(chain, start, end, days, length, by_lessons=False, cell=None, nominal_days=whole_days, slot=("p", piece or lo, k))
             if seg.unpriced:  # nothing is charged for it, it neither covers nor blocks; the next period is tried
                 self.unpriced_from = self.unpriced_from or start
                 if seg.begun:
@@ -740,7 +759,7 @@ class _Gen:
             begins = [max(lo, cell_start) for lo, hi in spans if lo <= end and (hi is None or hi >= cell_start)]
             nominal_first = min([own[0], *begins]) if own else cell_start
             seg = self.segment(chain, cell_start, end, own, (end - cell_start).days + 1,
-                               by_lessons=True, cell=(cell_start, end), nominal_days=_day_range(nominal_first, end))
+                               by_lessons=True, cell=(cell_start, end), nominal_days=_day_range(nominal_first, end), slot=("c", cell_start))
             if seg.unpriced:
                 self.unpriced_from = self.unpriced_from or cell_start
                 if seg.begun:
@@ -1178,7 +1197,7 @@ def _tie(segments: Sequence[Segment], credits: Sequence[Credit], amounts: Dict[s
         for s in segments:
             if rest <= 0:
                 break
-            if c.kind == WRITEOFF and not _begun_by(s, c.entered_on or c.on):
+            if c.kind == WRITEOFF and not _begun_by(s, entered_day(c)):
                 continue
             part = min(rest, max(0, capacity(s) - filled[s.id]))
             if part:
@@ -1190,20 +1209,20 @@ def _tie(segments: Sequence[Segment], credits: Sequence[Credit], amounts: Dict[s
 
 
 def _alive_forgiveness(segments: Sequence[Segment], credits: Sequence[Credit], net: Dict[str, int]) -> Dict[str, int]:
-    """Б7.5: the part of every forgiveness that is still ALIVE after the pauses, found by REPLAYING the days the pauses were entered in their order.  On each day ``T``: the credits entered BEFORE ``T``
+    """Б7.5: the part of every forgiveness that is still ALIVE after the pauses, found by REPLAYING the moments the pauses were entered in their order.  At each moment ``T``: the credits entered BEFORE ``T``
     are tied with the room the periods had before the pauses of ``T`` (the nominal sum minus the pauses entered earlier); what lies above the room AFTER the pauses entered up to ``T`` is cut off the
     forgivenesses of that period, the last one first (money first - А6.1); the money is not touched here.  It depends only on the credits entered before a pause and on the pauses: a payment or a
     forgiveness entered later never changes it; a pause that was taken off is not among the facts, so the forgiveness comes back (С5)."""
     alive = {c.id: net[c.id] for c in credits}
-    days = sorted({day for s in segments for day, _ in s.pause_capacity})
-    for day in days:
-        before = [c for c in credits if (c.entered_on or c.on) < day]
+    moments = sorted({moment for s in segments for moment, _ in s.pause_capacity})
+    for moment in moments:
+        before = [c for c in credits if entered_at(c) < moment]
         if not any(c.kind == WRITEOFF and alive[c.id] > 0 for c in before):
             continue
         amounts = {c.id: (alive[c.id] if c.kind == WRITEOFF else net[c.id]) for c in before}
-        tied, _ = _tie(segments, before, amounts, lambda s: s.capacity(day - timedelta(days=1)))
+        tied, _ = _tie(segments, before, amounts, lambda s: s.capacity(moment - timedelta(microseconds=1)))
         for s in segments:
-            over = sum(a for _, a in tied[s.id]) - s.capacity(day)
+            over = sum(a for _, a in tied[s.id]) - s.capacity(moment)
             for c, a in reversed(tied[s.id]):
                 if over <= 0:
                     break
@@ -1226,7 +1245,7 @@ def _place_credits(segments: Sequence[Segment], credits: Sequence[Credit], net: 
     It keeps the debt of the periods and the totals one picture (pinned by tests with numbers)."""
     alive = _alive_forgiveness(segments, credits, net)
     amounts = {c.id: (alive[c.id] if c.kind == WRITEOFF else net[c.id]) for c in credits}
-    tied, tied_total = _tie(segments, credits, amounts, lambda s: s.capacity(date.max))
+    tied, tied_total = _tie(segments, credits, amounts, lambda s: s.capacity(datetime.max))
     out = _Placed(money={s.id: 0 for s in segments}, forgiven={s.id: 0 for s in segments}, recalculated={s.id: 0 for s in segments})
     by_segment: Dict[str, List[RecalcLine]] = {}
     for line in recalcs:
@@ -1327,16 +1346,33 @@ def run_ledger(inp: LedgerInput) -> Ledger:
     return _run_ledger(inp, ledger.recalculated) if ledger.recalculated else ledger
 
 
-def _run_ledger(inp: LedgerInput, horizon_extra: int) -> Ledger:
+@dataclass
+class _Built:
+    """The periods of ONE world: the generation of the segments for the facts it is given (the facts as they are now, or as they were known at a moment - see ``_worlds``)."""
+
+    segments: List[Segment]
+    gen: "_Gen"
+    opening: Optional[Opening]
+    runs: List[Tuple[date, Optional[date]]]
+    pause_days: List[Tuple[date, date]]
+    gaps: List[Tuple[date, date]]
+    windows: list
+    cur_index: Optional[int]
+    cal_windows: list
+    les_windows: list
+    lesson_costs_all: List[int]
+    package_regime: Optional[Regime]
+    held_all: List[CountedLesson]
+    lesson_priced: List[bool]
+    lesson_owner: List[Optional[str]]
+    first_billable: Optional[date]
+
+
+def _build_segments(inp: LedgerInput, total: int, flags: set) -> _Built:
+    """The segments of the account (no credit is laid yet); ``total`` = the sum of the credits that the future periods are generated for."""
     today = inp.today
-    flags: set = set()
     opening, floor, runs, pause_days, spans_of_stay, gaps = _pieces_of(inp)
-    credits = sorted(inp.credits, key=_credit_key)
-    net, refunded_from, transferred_from, exceeds = apply_outflows(credits, inp.outflows)
-    if exceeds:
-        flags.add(F_OUTFLOW_EXCEEDS)
-    total_credit = sum(net.values())
-    gen = _Gen(inp, total_credit + horizon_extra, flags)
+    gen = _Gen(inp, total, flags)
     windows = regime_windows(inp.regimes)
     deferred = any(w[0].defer for w in windows[1:])
     priced_days = sorted(c.day for c in inp.counted_lessons if lesson_price(inp, c.day).amount is not None) if deferred else []
@@ -1419,9 +1455,25 @@ def _run_ledger(inp: LedgerInput, horizon_extra: int) -> Ledger:
         else:
             for lo, hi in span_ivs:
                 so_far = sum(s.amount for s in segments)
-                segments.extend(gen.payment_date_chain(_first_unpaused(pause_days, lo), hi, so_far, pause_days))
+                segments.extend(gen.payment_date_chain(_first_unpaused(pause_days, lo), hi, so_far, pause_days, piece=lo))
 
     segments.sort(key=lambda s: (s.kind != "opening", (s.days[0] if s.days else s.period_start), s.period_start, s.id))
+    return _Built(segments, gen, opening, runs, pause_days, gaps, windows, cur_index, cal_windows, les_windows, lesson_costs_all, package_regime, held_all, lesson_priced, lesson_owner, first_billable)
+
+
+def _run_ledger(inp: LedgerInput, horizon_extra: int) -> Ledger:
+    today = inp.today
+    flags: set = set()
+    credits = sorted(inp.credits, key=_credit_key)
+    net, refunded_from, transferred_from, exceeds = apply_outflows(credits, inp.outflows)
+    if exceeds:
+        flags.add(F_OUTFLOW_EXCEEDS)
+    total_credit = sum(net.values())
+    horizon = total_credit + horizon_extra
+    built = _build_segments(inp, horizon, flags)
+    segments, gen, opening, runs, pause_days, gaps, windows, cur_index = built.segments, built.gen, built.opening, built.runs, built.pause_days, built.gaps, built.windows, built.cur_index
+    cal_windows, les_windows, lesson_costs_all, package_regime = built.cal_windows, built.les_windows, built.lesson_costs_all, built.package_regime
+    held_all, lesson_priced, lesson_owner, first_billable = built.held_all, built.lesson_priced, built.lesson_owner, built.first_billable
 
     # ---- PAY-F: the recalculation for the lessons the centre cancelled is one more credit (derived here, never stored): it belongs to ITS period
     recalcs = _recalc_lines(inp, gen, segments)

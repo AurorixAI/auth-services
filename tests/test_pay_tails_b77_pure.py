@@ -7,10 +7,10 @@ from datetime import date
 
 from src.auth import billing_ledger as bl
 from tests import pay_tails_b7_tools as tools
-from tests.pay2_ledger_helpers import D, flat, make
+from tests.pay2_ledger_helpers import D, edit_pause, flat, make, pause
 
 PAY, WO = bl.PAYMENT, bl.WRITEOFF
-credit, pause, edit = tools.mk_credit, tools.mk_pause, tools.edit_pause
+credit, edit = tools.mk_credit, edit_pause
 
 
 def common(today, stay=D(2026, 10, 1), pauses=(), **kw):

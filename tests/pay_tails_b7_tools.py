@@ -24,7 +24,7 @@ sys.path.insert(0, _TREE)
 
 from src.auth import billing_ledger as bl  # noqa: E402
 from src.auth import payment_status as ps  # noqa: E402
-from tests.pay2_ledger_helpers import D, T0, flat, make, weekly  # noqa: E402
+from tests.pay2_ledger_helpers import D, at, edit_pause, flat, make, pause, weekly  # noqa: E402
 
 TTF = weekly((1, 3, 4))
 FIXED1 = bl.Regime(anchor=ps.FIXED_DAY, billing_day=1)
@@ -48,51 +48,27 @@ def cfg_from_env():
 
 # ------------------------------------------------------------------------------------------------------------------------------ the moments (Б7.7 п. 4)
 # A fact is entered at a MOMENT (a time stamp), not on a day: the credit ``created_at``, the pause its first form.  The generator gives every fact the moment ``at(day, minute)``; the minutes inside one
-# day decide who was first (class C: a pause entered the same day AFTER the forgiveness).  Before step 3.1 the head knows only days (``entered_on`` / ``created_on``): the constructors below write both.
-BY_MOMENT = "forms" in bl.Pause.__dataclass_fields__
-
-
-def at(day, minute=0):
-    return datetime(day.year, day.month, day.day, 3, 0) + timedelta(minutes=minute)
-
-
+# day decide who was first (class C: a pause entered the same day AFTER the forgiveness).
 def mk_credit(cid, kind, on, entered, minute, amount):
-    if "entered_on" in bl.Credit.__dataclass_fields__:
-        return bl.Credit(cid, kind, on, at(entered, minute), amount, entered_on=entered)
     return bl.Credit(cid, kind, on, at(entered, minute), amount)
 
 
 def mk_pause(first, last, entered, minute=0):
-    if BY_MOMENT:
-        return bl.Pause(first, last, forms=((at(entered, minute), first, last),))
-    return bl.Pause(first, last, created_on=entered)
-
-
-def edit_pause(p, first, last, entered, minute=0):
-    """The pause ``p`` edited to the days ``first .. last`` at a moment (the ``PATCH`` of the product).  Before step 3.4 the edit is lost in time: the pause keeps the day it was created."""
-    if BY_MOMENT:
-        return replace(p, first=first, last=last, forms=(*p.forms, (at(entered, minute), first, last)))
-    return replace(p, first=first, last=last)
+    return pause(first, last, entered, minute)
 
 
 def pause_moment(p):
-    if BY_MOMENT:
-        return p.forms[0][0] if p.forms else datetime.min
-    return at(p.created_on, 0) if p.created_on is not None else datetime.min
+    return bl.entered_at(p)
 
 
 def entered_day(c):
-    return c.entered_on or c.on if "entered_on" in bl.Credit.__dataclass_fields__ else (c.created_at.date() if c.created_at > datetime.min else c.on)
+    return bl.entered_day(c)
 
 
 def known_pauses(inp, moment):
-    """The pauses as they were known at ``moment`` (a pause entered later is not there; an edited one has the form of that moment; on the old head - by the day)."""
+    """The pauses as they were known at ``moment`` (a pause entered later is not there; an edited one has the form of that moment).  Written here on its own - the oracle does not read the money code."""
     out = []
     for p in inp.pauses:
-        if not BY_MOMENT:
-            if p.created_on is None or p.created_on <= moment.date():
-                out.append(p)
-            continue
         if not p.forms:
             out.append(p)
             continue
@@ -251,8 +227,8 @@ def apply_edit(inp, e):
 
 
 def probe_credit(x):
-    """The probe of the payment window as the product builds it (``payments_service.py:2452`` ``preview``: a stand-in credit with a moment far in the future and no day of entry)."""
-    return bl.Credit("preview", x.kind, x.on, datetime(9999, 1, 1), x.amount)
+    """The probe of the payment window as the product builds it (``payments_service.py`` ``preview``: a stand-in credit entered at ``PROBE_MOMENT`` - NOW)."""
+    return bl.Credit("preview", x.kind, x.on, bl.PROBE_MOMENT, x.amount)
 
 
 def money_of(inp):
@@ -393,7 +369,7 @@ def explain(inp):
             cells.append(f"| cap {s.capacity(date.max)} tied {tied[c.id][s.id]} placed {got}".ljust(46))
         gone = net[c.id] - sum(placed.parts.get((s.id, c.id), 0) for s in segments) - sum(a for cid, a in placed.leftover if cid == c.id)
         left = sum(a for cid, a in placed.leftover if cid == c.id)
-        lines.append(f"  {c.id:5s} {c.kind[:3]} {c.on} {entered_day(c)} {net[c.id]}{' alive ' + str(alive[c.id]) if c.kind == bl.WRITEOFF and alive[c.id] != net[c.id] else ''}".ljust(52) + "".join(cells) + f"| burned {gone}, leftover {left}")
+        lines.append(f"  {c.id:5s} {c.kind[:3]} {c.on} {c.created_at:%d.%m %H:%M} {net[c.id]}{' alive ' + str(alive[c.id]) if c.kind == bl.WRITEOFF and alive[c.id] != net[c.id] else ''}".ljust(52) + "".join(cells) + f"| burned {gone}, leftover {left}")
     for what, key in (("money", placed.money), ("forgiven", placed.forgiven), ("recalc", placed.recalculated)):
         lines.append(f"  {what:9s}".ljust(52) + "".join(f"| {key[s.id]}".ljust(46) for s in segments))
     lines.append("  unpaid".ljust(52) + "".join(f"| {s.amount - placed.money[s.id] - placed.forgiven[s.id] - placed.recalculated[s.id]}".ljust(46) for s in segments))

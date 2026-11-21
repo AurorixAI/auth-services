@@ -152,7 +152,7 @@ def test_logicA_d2_a_a_pause_before_the_floor_of_an_opening_balance_has_no_effec
 
 
 def writeoff(amount, on=D(2026, 10, 31)):
-    return bl.Credit("w", bl.WRITEOFF, on, bl.datetime(2026, 1, 1), amount)
+    return credit("w", on, amount, bl.WRITEOFF)
 
 
 def test_logicA_d5_p_a_partial_writeoff_covers_days_in_proportion():

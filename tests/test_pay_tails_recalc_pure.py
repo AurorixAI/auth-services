@@ -4,7 +4,7 @@ from datetime import date
 
 from src.auth import billing_ledger as bl
 from src.auth import payment_status as ps
-from tests.pay2_ledger_helpers import D, T0, credit, flat, make, weekly
+from tests.pay2_ledger_helpers import D, credit, flat, make, pause, weekly
 
 FIXED1 = bl.Regime(anchor=ps.FIXED_DAY, billing_day=1)
 TTF = weekly((1, 3, 4))                      # Tue Thu Fri: November 2026 has 12 lessons, 600 000 / 12 = 50 000 a lesson
@@ -17,9 +17,7 @@ def nov(credits, *, cancels=(D(2026, 11, 12),), today=D(2026, 11, 20)):
 
 
 def entered(cid, on, amount, minutes=0):
-    from datetime import timedelta
-
-    return bl.Credit(cid, bl.WRITEOFF, on, T0 + timedelta(minutes=minutes), amount, entered_on=on)
+    return credit(cid, on, amount, bl.WRITEOFF, minutes=minutes)
 
 
 def test_c6_paid_300_forgiven_300_and_the_centre_cancels_a_lesson():
@@ -76,7 +74,7 @@ def test_a_forgiveness_that_money_had_pushed_out_covers_the_donor_period_after_t
     # Debt 300 000 (October's rest); without the laying-again November would also stay unpaid and the debt would be 600 000 although 300 000 were forgiven for it.  Granted 900 000, used 300 000.
     inp = make(today=D(2026, 11, 25), stays=[bl.Stay(D(2026, 10, 1))], price_at=flat(600_000), regimes=[FIXED1], start=D(2026, 9, 1), lesson_days=TTF,
                credits=[entered("w0", D(2026, 9, 25), 600_000, 0), credit("p", D(2026, 11, 5), 300_000, minutes=1), entered("w2", D(2026, 11, 6), 300_000, 2)])
-    L = bl.run_ledger(replace(inp, pauses=(bl.Pause(D(2026, 11, 17), D(2026, 11, 30), created_on=D(2026, 11, 20)),)))
+    L = bl.run_ledger(replace(inp, pauses=(pause(D(2026, 11, 17), D(2026, 11, 30), D(2026, 11, 20)),)))
     octo, nov = [s for s in L.segments if s.kind == "period"][:2]
     assert (nov.amount, nov.money, nov.forgiven, nov.unpaid) == (300_000, 0, 300_000, 0)
     assert (octo.amount, octo.money, octo.forgiven, octo.unpaid) == (600_000, 300_000, 0, 300_000)

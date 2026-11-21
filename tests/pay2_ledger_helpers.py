@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import List, Optional
@@ -37,12 +38,28 @@ def flat(amount: Optional[int], since: date = D(2026, 1, 1), changes: Optional[d
     return price_at
 
 
+def at(day: date, minute: int = 0) -> datetime:
+    """The MOMENT a fact of the tests is entered (Б7.7: facts have a time stamp, not a day): 03:00 UTC (08:00 in Tashkent) of the day plus ``minute`` minutes - the same business day."""
+    return datetime(day.year, day.month, day.day, 3, 0) + timedelta(minutes=minute)
+
+
 def credit(cid: str, on: date, amount: int, kind: str = bl.PAYMENT, minutes: int = 0) -> bl.Credit:
-    return bl.Credit(cid, kind, on, T0 + timedelta(minutes=minutes), amount)
+    """A credit entered the day it is dated (``minutes`` tells the order of the same day)."""
+    return bl.Credit(cid, kind, on, at(on, minutes), amount)
+
+
+def pause(first: date, last: date, entered: date, minute: int = 0) -> bl.Pause:
+    """A pause entered on the day ``entered`` (its first form is the moment ``at(entered, minute)``)."""
+    return bl.Pause(first, last, forms=((at(entered, minute), first, last),))
+
+
+def edit_pause(p: bl.Pause, first: date, last: date, entered: date, minute: int = 0) -> bl.Pause:
+    """The pause edited to the days ``first .. last`` at the moment ``at(entered, minute)`` (the form that holds from then on)."""
+    return replace(p, first=first, last=last, forms=(*p.forms, (at(entered, minute), first, last)))
 
 
 def outflow(oid: str, on: date, amount: int, kind: str = bl.REFUND, minutes: int = 0) -> bl.Outflow:
-    return bl.Outflow(oid, kind, on, T0 + timedelta(minutes=minutes), amount)
+    return bl.Outflow(oid, kind, on, at(on, minutes), amount)
 
 
 def make(*, today: date, stays, price_at, credits=(), outflows=(), regimes=None, start: date = D(2026, 9, 1),

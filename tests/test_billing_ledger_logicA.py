@@ -277,7 +277,7 @@ def test_lesson_cover_prices_sources_and_before_start():
 def test_lesson_cover_writeoff_source():
     lg = bl.run_ledger(bl.LedgerInput(
         today=D(2026, 10, 31), accounting_start=AS, stays=(bl.Stay(D(2026, 10, 1)),), regimes=(FIXED1,), price_at=flat(620_000),
-        credits=(credit("p1", D(2026, 10, 1), 500_000), bl.Credit("w1", bl.WRITEOFF, D(2026, 10, 31), D(2026, 10, 31), 120_000))))
+        credits=(credit("p1", D(2026, 10, 1), 500_000), credit("w1", D(2026, 10, 31), 120_000, bl.WRITEOFF))))
     assert lg.covered_through == D(2026, 10, 31)
     assert lg.lesson_cover(D(2026, 10, 10)).source == "money"
     assert lg.lesson_cover(D(2026, 10, 28)).source == "writeoff" and lg.lesson_cover(D(2026, 10, 28)).paid

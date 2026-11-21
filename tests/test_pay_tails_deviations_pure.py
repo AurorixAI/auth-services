@@ -4,11 +4,11 @@ from datetime import date, timedelta
 
 from src.auth import billing_ledger as bl
 from src.auth import payment_status as ps
-from tests.pay2_ledger_helpers import D, T0, credit, flat, make, weekly
+from tests.pay2_ledger_helpers import D, T0, credit, flat, make, pause, weekly
 
 
 def entered(cid, on, amount, minutes=0):
-    return bl.Credit(cid, bl.WRITEOFF, on, T0 + timedelta(minutes=minutes), amount, entered_on=on)
+    return credit(cid, on, amount, bl.WRITEOFF, minutes=minutes)
 
 
 def test_o1_a_pause_planned_before_the_forgiveness_then_a_prepayment_of_the_next_month():
@@ -19,14 +19,14 @@ def test_o1_a_pause_planned_before_the_forgiveness_then_a_prepayment_of_the_next
     fixed = bl.Regime(anchor=ps.FIXED_DAY, billing_day=1)
     inp = make(today=D(2026, 11, 20), stays=[bl.Stay(D(2026, 11, 1))], price_at=flat(600_000), regimes=[fixed], start=D(2026, 10, 1), lesson_days=weekly((1, 3, 4)),
                credits=[entered("w", D(2026, 11, 10), 300_000), credit("p", D(2026, 11, 11), 600_000, minutes=1)])
-    L = bl.run_ledger(replace(inp, pauses=(bl.Pause(D(2026, 11, 17), D(2026, 11, 30), created_on=D(2026, 11, 9)),)))
+    L = bl.run_ledger(replace(inp, pauses=(pause(D(2026, 11, 17), D(2026, 11, 30), D(2026, 11, 9)),)))
     nov, dec = [s for s in L.segments if s.kind == "period"][:2]
     assert (nov.amount, nov.money, nov.forgiven) == (300_000, 0, 300_000)
     assert (dec.money, dec.forgiven, dec.unpaid) == (600_000, 0, 0)
     assert (L.written_off, L.written_off_granted, L.debt, L.advance) == (300_000, 300_000, 0, 600_000)
     # the same account when the pause is entered AFTER both records (С5: a later pause is not in the capacity): the order of the line decides as before - November takes 300 000 of the 600 000 of the nominal sum,
     # money first: money 300 000 (the forgiveness is not needed, it burns), December gets the other 300 000
-    L = bl.run_ledger(replace(inp, pauses=(bl.Pause(D(2026, 11, 17), D(2026, 11, 30), created_on=D(2026, 11, 12)),)))
+    L = bl.run_ledger(replace(inp, pauses=(pause(D(2026, 11, 17), D(2026, 11, 30), D(2026, 11, 12)),)))
     nov, dec = [s for s in L.segments if s.kind == "period"][:2]
     assert (nov.money, nov.forgiven, dec.money, dec.forgiven) == (300_000, 0, 300_000, 0)
     assert (L.written_off, L.written_off_granted, L.debt, L.advance) == (0, 300_000, 0, 300_000)

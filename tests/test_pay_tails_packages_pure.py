@@ -7,7 +7,7 @@ from tests.pay2_ledger_helpers import D, credit, flat, make
 
 
 def entered(cid, on, amount):
-    return bl.Credit(cid, bl.WRITEOFF, on, credit("x", on, 1).created_at, amount, entered_on=on)
+    return credit(cid, on, amount, bl.WRITEOFF)
 
 
 def test_c11_a_package_with_a_forgiveness_that_the_certificate_made_unneeded():

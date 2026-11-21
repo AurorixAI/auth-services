@@ -855,11 +855,9 @@ class LedgerLoader:
         credits: List[bl.Credit] = []
         for p in self.payments.get(mid, []):
             if p.amount and p.amount > 0 and p.id != exclude_payment:
-                credits.append(bl.Credit(str(p.id), bl.PAYMENT, p.paid_on, p.created_at or datetime.min, int(p.amount),
-                                     entered_on=ps.business_date(p.created_at) if p.created_at else None))      # PAY-TAILS А7.1: the pauses entered by this day are out of the capacity of a period
+                credits.append(bl.Credit(str(p.id), bl.PAYMENT, p.paid_on, p.created_at or datetime.min, int(p.amount)))
         for w in self.writeoffs.get(mid, []):
-            credits.append(bl.Credit(str(w.id), bl.WRITEOFF, w.effective_on, w.created_at or datetime.min, int(w.amount),
-                                     entered_on=ps.business_date(w.created_at) if w.created_at else None))      # PAY-TAILS: a forgiveness lies only on the periods that had begun by the day it was entered
+            credits.append(bl.Credit(str(w.id), bl.WRITEOFF, w.effective_on, w.created_at or datetime.min, int(w.amount)))
         outflows: List[bl.Outflow] = []
         for r in self.refunds.get(mid, []):
             outflows.append(bl.Outflow(str(r.id), bl.REFUND, r.effective_on, r.created_at or datetime.min, int(r.amount)))
@@ -904,7 +902,7 @@ class LedgerLoader:
             counted_lessons=tuple(self.counted.get(mid, [])),
             expiring_days=self.settings.expiring_days,
             expiring_lessons=self.settings.expiring_lessons,
-            pauses=tuple(bl.Pause(p.first_day, p.last_day, ps.business_date(p.created_at) if p.created_at else None) for p in self.pauses.get(mid, [])),
+            pauses=tuple(bl.Pause(p.first_day, p.last_day, ((p.created_at, p.first_day, p.last_day),) if p.created_at else ()) for p in self.pauses.get(mid, [])),
             opening=self._opening_of(mid, as_of=as_of, before_transfer=before_transfer),
             centre_cancels=self._cancels_for(mid, group, membership.student_id),
             recalc_versions=self.recalc_versions,
