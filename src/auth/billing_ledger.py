@@ -1210,18 +1210,61 @@ def _pauses_known_at(pauses: Sequence[Pause], moment: datetime) -> Tuple[Pause, 
     return tuple(out)
 
 
-def _slots_of(segments: Sequence[Segment]) -> Dict[tuple, Tuple[date, int]]:
-    return {s.slot: (s.days[0] if s.days else s.period_start, s.capacity) for s in segments if s.slot is not None}
+def cancel_entered(versions: Sequence[RecalcVersion], cancel: CentreCancel) -> datetime:
+    """R4 (Б7.8 шаг 5): the moment a cancel of a lesson is KNOWN to the account: the later of the moment it was entered and the moment the setting that asks for the deduction (the version in force on the day
+    of the lesson) was made - a deduction does not exist before the setting does.  ``datetime.min`` = known always."""
+    moment = cancel.entered
+    version = None
+    for v in sorted(versions, key=lambda x: x.effective_from):
+        if v.effective_from <= cancel.day:
+            version = v
+    return max(moment, version.entered) if version is not None and version.on else moment
 
 
-def _worlds(inp: LedgerInput, segments: Sequence[Segment], total: int) -> List[_World]:
-    """Б7.7: the worlds of the account in the order of time: the one with the pauses that have no stamp, then one after each moment a pause was entered or edited; the last is the account as it is
-    (``segments``).  Only the generation of the periods is repeated (no credit is laid), once per moment: an account without a stamped pause has one world."""
-    moments = sorted({m for p in inp.pauses for m, _, _ in p.forms})
+def _line_cut(recalcs: Sequence[RecalcLine]) -> Dict[str, int]:
+    """Per period: the sum of its deductions for the lessons the centre cancelled."""
+    cut: Dict[str, int] = {}
+    for line in recalcs:
+        cut[line.segment_id] = cut.get(line.segment_id, 0) + line.amount
+    return cut
+
+
+def _line_room(recalcs: Sequence[RecalcLine]) -> Callable[[Segment], int]:
+    """R4: THE room of a period on the line of the tying: what the pauses of the world leave of the nominal sum, MINUS the deductions of the period (a deduction cheapens the period like a pause: the money and
+    the forgiveness tied to it are not more than ``room - deductions``; the deduction itself takes its place inside the period)."""
+    cut = _line_cut(recalcs)
+    return lambda s: s.capacity - cut.get(s.id, 0)
+
+
+def _slots_of(segments: Sequence[Segment], recalcs: Sequence[RecalcLine] = ()) -> Dict[tuple, Tuple[date, int]]:
+    room = _line_room(recalcs)
+    return {s.slot: (s.days[0] if s.days else s.period_start, room(s)) for s in segments if s.slot is not None}
+
+
+def _worlds(inp: LedgerInput, segments: Sequence[Segment], recalcs: Sequence[RecalcLine], gen: "_Gen", total: int) -> List[_World]:
+    """Б7.7 / R4: the worlds of the account in the order of time: the one with the facts that have no stamp, then one after each moment a pause was entered or edited or a cancel of a lesson became known; the last is
+    the account as it is (``segments``, ``recalcs``).  A world is the periods with the pauses AND the deductions known at its moment.  Only the generation of the periods (and of the deductions) is repeated
+    (no credit is laid), the periods once per set of known pauses: an account without a stamped fact has one world."""
+    cancel_moments = {m for m in (cancel_entered(inp.recalc_versions, c) for c in inp.centre_cancels) if m != datetime.min}
+    moments = sorted({m for p in inp.pauses for m, _, _ in p.forms} | cancel_moments)
     if not moments:
-        return [_World(datetime.min, _slots_of(segments))]
-    out = [_World(m, _slots_of(_build_segments(replace(inp, pauses=_pauses_known_at(inp.pauses, m)), total, set()).segments)) for m in [datetime.min, *moments[:-1]]]
-    out.append(_World(moments[-1], _slots_of(segments)))
+        return [_World(datetime.min, _slots_of(segments, recalcs))]
+    built: Dict[tuple, Tuple[Sequence[Segment], "_Gen"]] = {}
+
+    def known_at(moment: datetime) -> Dict[tuple, Tuple[date, int]]:
+        pauses = _pauses_known_at(inp.pauses, moment)
+        if pauses not in built:
+            if pauses == tuple(inp.pauses):                        # every pause is known: the account as it is
+                built[pauses] = (segments, gen)
+            else:
+                b = _build_segments(replace(inp, pauses=pauses), total, set())
+                built[pauses] = (b.segments, b.gen)
+        world_segments, world_gen = built[pauses]
+        cancels = tuple(c for c in inp.centre_cancels if cancel_entered(inp.recalc_versions, c) <= moment)
+        return _slots_of(world_segments, _recalc_lines(replace(inp, centre_cancels=cancels), world_gen, world_segments))
+
+    out = [_World(m, known_at(m)) for m in [datetime.min, *moments[:-1]]]
+    out.append(_World(moments[-1], _slots_of(segments, recalcs)))
     return out
 
 
@@ -1310,7 +1353,7 @@ def _alive_forgiveness(worlds: Sequence[_World], credits: Sequence[Credit], net:
 
 def _place_credits(segments: Sequence[Segment], credits: Sequence[Credit], net: Dict[str, int], recalcs: Sequence[RecalcLine], worlds: Sequence[_World]) -> _Placed:
     """PAY-TAILS А6.1-А6.2, Б7.7.  1) Every credit (payment, transfer in, forgiveness) is tied to a period by its ORDER ``(on, created_at, id)`` on ONE line: the room of a period is the nominal sum
-    (what it would cost without the cut of a leaving, a transfer or an archive of the student) minus ALL the pauses; a forgiveness goes by its ALIVE sum (``_alive_forgiveness``: what the pauses entered after
+    (what it would cost without the cut of a leaving, a transfer or an archive of the student) minus ALL the pauses AND the deductions for the lessons the centre cancelled (R4: ``_line_room``); a forgiveness goes by its ALIVE sum (``_alive_forgiveness``: what the pauses entered after
     it cut off) and only on a period that had begun in the world known at the moment it was entered and has begun today (``_may_lie``): «which period is this credit for» never depends on what
     happened to the stay afterwards.  2) Inside a period of the actual sum ``A``: the money first (``m = min(tied money, A)``), then the deductions for cancelled lessons, then the forgiveness
     (``f = min(tied forgiveness, A - m - r)``): a forgiveness never covers a charge money has already paid, and what no charge needs is thrown away - it is not an advance, not a refund, not a
@@ -1319,7 +1362,7 @@ def _place_credits(segments: Sequence[Segment], credits: Sequence[Credit], net: 
     may = _may_lie(worlds)
     alive = _alive_forgiveness(worlds, credits, net)
     amounts = {c.id: (alive[c.id] if c.kind == WRITEOFF else net[c.id]) for c in credits}
-    tied, tied_total = _tie(segments, credits, amounts, lambda s: s.capacity, may)
+    tied, tied_total = _tie(segments, credits, amounts, _line_room(recalcs), may)
     out = _Placed(money={s.id: 0 for s in segments}, forgiven={s.id: 0 for s in segments}, recalculated={s.id: 0 for s in segments})
     by_segment: Dict[str, List[RecalcLine]] = {}
     for line in recalcs:
@@ -1529,7 +1572,7 @@ def _run_ledger(inp: LedgerInput, horizon_extra: int) -> Ledger:
         total_credit = sum(net.values())
 
     # ---- where the credits went (PAY-TAILS: tied to the periods by the nominal line, money before forgiveness inside a period)
-    placed = _place_credits(segments, stored, net, recalcs, _worlds(inp, segments, horizon))
+    placed = _place_credits(segments, stored, net, recalcs, _worlds(inp, segments, recalcs, gen, horizon))
     # package costs per segment (for coverage)
     cost_cursor = 0
     seg_costs: Dict[str, List[int]] = {}

@@ -363,7 +363,10 @@ def violations(inp, x):
             bad.append(f"{tag} used")
         if after.debt > before.debt:
             bad.append(f"{tag} debt")
-        after_cost = {period_key(s): s.amount for s in after.segments if s.begun}       # what a period costs NOW (by the KEY of the model): a period that has not begun costs nothing
+        cut = {}
+        for line in after.recalcs:                                                         # R4: a deduction of a period takes its place INSIDE the period: the money room is the charge minus the deductions
+            cut[line.segment_id] = cut.get(line.segment_id, 0) + line.amount
+        after_cost = {period_key(s): s.amount - cut.get(s.id, 0) for s in after.segments if s.begun}       # what the money of a period can be NOW (by the KEY of the model): a period that has not begun costs nothing
         freed = sum(max(0, s.money - after_cost.get(period_key(s), 0)) for s in before.segments)
         if after.advance - before.advance > freed:
             bad.append(f"{tag} advance")
