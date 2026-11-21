@@ -185,11 +185,12 @@ class PaymentsReports:
         voided: List[StatementRow] = []
         if include_voided:
             voided = self._voided_rows(org_id, membership_id)
+        info = pv.starts_info(entry)               # PAY-TAILS Б6.8: the forecast of a charge that has not begun is read ONCE for the summary, its words and the grey row
         summary = StatementSummary(
             charged=ledger.charged, paid=ledger.paid, transferred_in=ledger.transferred_in, written_off=ledger.written_off,
             recalculated=ledger.recalculated, refunded=ledger.refunded, transferred_out=ledger.transferred_out, unpaid=ledger.debt, advance=ledger.advance,
             paid_until=ledger.status.paid_until, status=pv.unpaid_status(entry), reconciles=ledger.reconciles,
-            **self._summary_words(entry, today))
+            **self._summary_words(entry, today, info))
         return StatementOut(
             membership=StatementMembership(
                 membership_id=str(entry.membership.id), student_id=str(entry.student.id),
@@ -198,22 +199,22 @@ class PaymentsReports:
                 teacher_name=_person(entry.teacher), is_active=bool(entry.membership.is_active)),
             as_of=today, mode=ledger.mode, accounting_start=loader.settings.accounting_start, summary=summary, rows=rows,
             voided=voided, upcoming=[pv.segment_out(s, entry.due) for s in ledger.segments if not s.begun and (s.money or s.forgiven or s.recalculated)],
-            forecast=self._forecast_of(entry))
+            forecast=self._forecast_of(info))
 
     @staticmethod
-    def _summary_words(entry, today: date) -> dict:
+    def _summary_words(entry, today: date, info) -> dict:
         """The words of the state in the summary of a statement; a charge that has not begun says its TERM on the right («платить до 28.11»), not the forecast sum (the grey row says that)."""
-        fields = pv.unpaid_fields(entry, today)
+        fields = pv.unpaid_fields(entry, today, info)
         if fields["state"] == pv.STATE_STARTS:
-            up, _wait = pv.starts_info(entry)
+            up, _wait = info
             if up is not None:
                 fields["state_sub"] = up.sub or None
         return fields
 
     @staticmethod
-    def _forecast_of(entry) -> Optional[StatementForecast]:
+    def _forecast_of(info) -> Optional[StatementForecast]:
         """PAY-TAILS Б1.4: the grey row of a charge that has not begun (the same reading as the list: ``pv.starts_info``); never in ``rows``, never in a total."""
-        up, _wait = pv.starts_info(entry)
+        up, _wait = info
         return StatementForecast(date=up.begin, title=up.row_title, sub=up.row_sub) if up is not None else None
 
     def _correction_chain(self, org_id: str, payments) -> Tuple[Dict[Any, tuple], Dict[Any, Optional[int]]]:

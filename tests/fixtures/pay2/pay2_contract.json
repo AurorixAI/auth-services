@@ -32,7 +32,7 @@
           "refundable_delta": {
             "default": 0,
             "deprecated": true,
-            "description": "Устарело: равно advance (снимается в пакете Б)",
+            "description": "Устарело: равно advance; экраны читают advance",
             "title": "Refundable Delta",
             "type": "integer"
           }
@@ -387,7 +387,7 @@
           "refundable": {
             "default": 0,
             "deprecated": true,
-            "description": "Устарело: равно advance (снимается в пакете Б)",
+            "description": "Устарело: равно advance; экраны читают advance",
             "title": "Refundable",
             "type": "integer"
           },
@@ -1066,7 +1066,7 @@
           "refundable": {
             "default": 0,
             "deprecated": true,
-            "description": "Устарело: равно advance (снимается в пакете Б)",
+            "description": "Устарело: равно advance; экраны читают advance",
             "title": "Refundable",
             "type": "integer"
           },

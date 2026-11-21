@@ -432,7 +432,7 @@ class StudentArchiveService:
             settled=settled,
             effects=[leave_effects.build([snap], kind="archive", money=money, done=True) for snap in leave_effects.after_settle(before_close, settled)],
             recalc=leave_effects.recalc_of(before_close, done=True) if money else None,
-            others=[x for sn in before_close for x in sn.others] if money else [],
+            others=leave_effects.others_of(before_close, money),
         )
 
     def _cancel_open_invites(self, org_id: str, student_id: UUID, now: datetime) -> tuple:

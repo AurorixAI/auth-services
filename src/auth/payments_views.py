@@ -211,7 +211,7 @@ def upcoming_payload(up: pay_upcoming.Upcoming, today: date, left_names, money: 
     """The forecast as the answer says it (the keys of ``UpcomingOut``); without the right to money only the date.  ``left_names``: the groups the student left TODAY with the day charged there - the reason a forecast that
     begins tomorrow was moved («сегодня ученик ещё числился в «Математике 7»»)."""
     names = sorted(left_names or ())
-    note = f"сегодня ученик ещё числился в «{', '.join(names)}»" if names and up.begin == today + timedelta(days=1) else None
+    note = tx.terms_note_text(names) if names and up.begin == today + timedelta(days=1) else None
     if not money:
         return {"from": up.begin, "amount": None, "lessons_text": None, "due_until": None, "text": None, "sub": None, "terms_note": None}
     return {"from": up.begin, "amount": up.amount, "lessons_text": up.lessons_text, "due_until": up.due_until, "text": up.text, "sub": up.sub or None, "terms_note": note}
@@ -263,7 +263,7 @@ def debt_age_basket(days: int) -> str:
     return "to_30" if days <= 30 else "31_60" if days <= 60 else "61_90" if days <= 90 else "over_90"
 
 
-def unpaid_fields(e, today: date) -> dict:
+def unpaid_fields(e, today: date, info: Optional[Tuple[Optional[pay_upcoming.Upcoming], Optional[dict]]] = None) -> dict:
     """The words and numbers of the unpaid sum of a row, ALL from ``pay_due`` and the sentences of ``payments_texts``: ``debt_amount`` / ``due_amount`` / ``due_until`` / ``overdue_days`` / ``due_lessons`` /
     ``debt_lessons`` and the texts of both names (which of the two is the main one is the choice of the tab: a view, not a rule), ``state`` / ``state_text`` of the worst state."""
     d, l = e.due, e.ledger
@@ -282,7 +282,7 @@ def unpaid_fields(e, today: date) -> dict:
         "debt_also_text": tx.debt_also_text(d.debt_amount, debt_n, d.overdue_days) if d.debt_amount > 0 and d.due_amount > 0 else None,
         "due_also_text": tx.due_also_text(d.due_amount, due_n, d.due_until, tx.package_term_words(d.due_until, today, due_n, (d.due_lessons or {}).get("limit")) if due_n else None) if d.debt_amount > 0 and d.due_amount > 0 else None,
     }
-    info = starts_info(e)
+    info = starts_info(e) if info is None else info       # PAY-TAILS Б6.8: a caller that needs the reading again (the statement) reads it once and passes it
     state = state_of(e, info)
     out["state"] = state
     out["state_text"] = state_text(e, state, out, today, info)

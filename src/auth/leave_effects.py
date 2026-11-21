@@ -27,10 +27,10 @@ from src.models.auth import Group, MembershipPriceOverride, StudentGroup
 from . import leave_recalc
 from . import payment_status as ps
 from . import payments_texts as tx
+from .pay_upcoming import PROBE_DAYS
 from . import pricing
 
 
-PROBE_DAYS = 93          # the common month that holds today is read on a later day (a stay that begins tomorrow has not begun today)
 
 
 @dataclass
@@ -54,6 +54,7 @@ class Snap:
     before_debt: int = 0                                                      # the part that is already a debt before the action
     centre: bool = True                                                       # the student stays in the centre after the action (he has another group / it is a transfer)
     recalc: List[leave_recalc.RecalcItem] = field(default_factory=list)     # PAY-TAILS Б1.3: what the closing does to the charges (before = the list of the centre, after = the account with the stay closed)
+    others_free: List[str] = field(default_factory=list)                      # PAY-TAILS Б6.7: the same sentences WITHOUT any sum - the words for a caller who has no right to money
     others: List[str] = field(default_factory=list)                           # PAY-TAILS Б5.2: what the closing does to the OTHER groups of the student (the day is not paid twice); filled by ``others_of``
 
 
@@ -91,7 +92,8 @@ def snapshot(db: Session, org_id: Any, memberships: Sequence[StudentGroup], day:
             snap.billing_from = period.billing_from
         out.append(snap)
     if in_centre is None and out:           # a leaving / an archive: the other groups of the student that began TODAY are moved by the day this closing keeps (Б5.2)
-        out[0].others = second_groups(db, org_id, memberships, day, loader)
+        pairs = second_groups(db, org_id, memberships, day, loader)
+        out[0].others, out[0].others_free = [full for full, _ in pairs], [free for _, free in pairs]
     return out
 
 
@@ -111,8 +113,13 @@ def ordinary_ledgers(db: Session, org_id: Any, ids: Sequence[UUID], day: date) -
     return out
 
 
-def second_groups(db: Session, org_id: Any, closing: Sequence[StudentGroup], day: date, loader: Any) -> List[str]:
-    """PAY-TAILS Б5.2 (the rule «a day is not paid twice»): the closing of A keeps ``day`` for A, so another open group B of the same student that BEGAN today starts a day later.  ONE sentence per such group, with the
+def others_of(snaps: Sequence[Snap], money: bool) -> List[str]:
+    """The sentences about the OTHER groups of the student for an answer: with the sums for a caller with the right to money, without any sum for one without it (Б6.7)."""
+    return [x for sn in snaps for x in (sn.others if money else sn.others_free)]
+
+
+def second_groups(db: Session, org_id: Any, closing: Sequence[StudentGroup], day: date, loader: Any) -> List[Tuple[str, str]]:
+    """PAY-TAILS Б5.2 (the rule «a day is not paid twice»): the closing of A keeps ``day`` for A, so another open group B of the same student that BEGAN today starts a day later.  ONE sentence per such group, as ``(with the sums, without any sum)``, with the
     money: before = the ordinary loader (what the list says), after = the loader with ``closing`` (the very account of the write).  Three modes: the common month - the sum falls; the personal period - the
     period begins the next day (the sum is the same); a package - today's lesson is not paid.  Nothing when B does not move (it began earlier, or the day is not a day of B)."""
     from . import billing_ledger as bl
@@ -138,7 +145,7 @@ def second_groups(db: Session, org_id: Any, closing: Sequence[StudentGroup], day
     loader.load_facts(ids)
     holders = sorted({loader.members[mid][2].name for mid in closing_ids if mid in loader.members and day in loader.left_days.get(loader.members[mid][1].id, {}).get(mid, set())})
     where = ", ".join(f"«{n}»" for n in holders) or "другой группе"
-    out: List[str] = []
+    out: List[Tuple[str, str]] = []
 
     def period_of_today(ledger: Any) -> Optional[Any]:
         return next((x for x in ledger.segments if x.kind == "period" and x.period_start <= day <= x.period_end), None)
@@ -150,15 +157,15 @@ def second_groups(db: Session, org_id: Any, closing: Sequence[StudentGroup], day
         was, now = bl.run_ledger(was_inp), bl.run_ledger(now_inp)
         if now.mode == bl.LESSONS:
             if any(c.day == day for c in was.counted) and not any(c.day == day for c in now.counted):
-                out.append(f"Сегодняшний урок в группе «{g.name}» не оплачивается: день оплачен в группе {where}")
+                out.append(tx.second_group_texts(g.name, where, "lesson"))
             continue
         if any(s.by_cell for s in now.segments):          # the common month: the sum of the month that holds today (read when it has begun: the shifted stay may begin tomorrow)
             later = day + timedelta(days=PROBE_DAYS)
             was_seg, now_seg = period_of_today(bl.run_ledger(_replace(was_inp, today=later))), period_of_today(bl.run_ledger(_replace(now_inp, today=later)))
             if was_seg is not None and now_seg is not None and was_seg.amount != now_seg.amount:
-                out.append(f"В группе «{g.name}»: {tx.num(was_seg.amount)} → {tx.money(now_seg.amount)} — сегодняшний урок оплачен в группе {where}")
+                out.append(tx.second_group_texts(g.name, where, "month", was_seg.amount, now_seg.amount))
         elif now.first_billable is not None and was.first_billable is not None and now.first_billable != was.first_billable:
-            out.append(f"В группе «{g.name}» период начнётся с {_ddmm(now.first_billable)}: сегодняшний день оплачен в группе {where}")
+            out.append(tx.second_group_texts(g.name, where, "period", first_billable=now.first_billable))
     return out
 
 

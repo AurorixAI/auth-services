@@ -32,7 +32,7 @@
           "refundable_delta": {
             "default": 0,
             "deprecated": true,
-            "description": "Устарело: равно advance (снимается в пакете Б)",
+            "description": "Устарело: равно advance; экраны читают advance",
             "title": "Refundable Delta",
             "type": "integer"
           }
@@ -959,7 +959,7 @@
           "refundable": {
             "default": 0,
             "deprecated": true,
-            "description": "Устарело: равно advance (снимается в пакете Б)",
+            "description": "Устарело: равно advance; экраны читают advance",
             "title": "Refundable",
             "type": "integer"
           }
@@ -1627,14 +1627,14 @@
           "refundable_after": {
             "default": 0,
             "deprecated": true,
-            "description": "Устарело: равно advance (снимается в пакете Б)",
+            "description": "Устарело: равно advance; экраны читают advance",
             "title": "Refundable After",
             "type": "integer"
           },
           "refundable_before": {
             "default": 0,
             "deprecated": true,
-            "description": "Устарело: равно advance (снимается в пакете Б)",
+            "description": "Устарело: равно advance; экраны читают advance",
             "title": "Refundable Before",
             "type": "integer"
           }
@@ -1797,7 +1797,7 @@
           "refundable": {
             "default": 0,
             "deprecated": true,
-            "description": "Устарело: равно advance (снимается в пакете Б)",
+            "description": "Устарело: равно advance; экраны читают advance",
             "title": "Refundable",
             "type": "integer"
           },
@@ -2916,7 +2916,7 @@
           "refundable": {
             "default": 0,
             "deprecated": true,
-            "description": "Устарело: равно advance (снимается в пакете Б)",
+            "description": "Устарело: равно advance; экраны читают advance",
             "title": "Refundable",
             "type": "integer"
           },

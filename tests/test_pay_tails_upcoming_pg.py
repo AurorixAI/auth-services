@@ -160,3 +160,20 @@ def test_a_new_price_and_a_pause_before_the_start_move_the_forecast(world, fixed
     r = owner(world).post(f"{API}/org/memberships/{membership(world, s, g).id}/pauses", json={"first_day": "2026-11-27", "last_day": "2026-11-27", "reason": "Болезнь"})
     assert r.status_code == 201, r.text
     assert row(world, s, g, "all")["upcoming"]["amount"] == 150_000                           # the pause takes the lesson of 27.11: 24, 26 = 2 of 12 -> 900 000 x 2 / 12 (a student with a pause entry is on the tab by the old status, which package B does not touch)
+
+
+def test_b6_8_the_statement_reads_the_forecast_once_and_the_horizon_is_one_constant(world, fixed_today, monkeypatch):
+    # one request of a statement of a student whose charge has not begun = ONE reading of the forecast (was: three - the summary, its words, the grey row); the same words as before.  The horizon of the
+    # forecasts is ONE number: the second groups of a leaving and the window «what if» read the one of the forecast
+    from src.auth import leave_effects, money_whatif, pay_upcoming
+    from src.auth import payments_views as pv
+
+    assert leave_effects.PROBE_DAYS is pay_upcoming.PROBE_DAYS and money_whatif.PROBE_DAYS is pay_upcoming.PROBE_DAYS == 93
+    g = world_om(world, fixed_today)
+    s = fresh_student(world, "Одна проба")
+    add(world, s, group=g, mode="add")
+    calls = []
+    real = pv.starts_info
+    monkeypatch.setattr(pv, "starts_info", lambda e: (calls.append(1), real(e))[1])
+    st = get(world, f"/org/memberships/{membership(world, s, g).id}/statement")
+    assert len(calls) == 1 and st["forecast"]["date"] == "2026-11-24" and st["summary"]["state_sub"] == "платить до 28.11"

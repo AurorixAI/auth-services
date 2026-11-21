@@ -390,7 +390,7 @@ class MembershipPaymentRow(UnpaidFields):
     partial_credit: int = 0
     price_missing: bool = False
     lessons_unpaid: int = 0
-    refundable: int = Field(0, description="Устарело: равно advance (снимается в пакете Б)", json_schema_extra={"deprecated": True})
+    refundable: int = Field(0, description="Устарело: равно advance; экраны читают advance", json_schema_extra={"deprecated": True})
     writeoff_allowed: bool = False
     # LOGIC-A.  ``paused``: today lies inside a live pause (status ``paused``); ``opening``: the live "opening balance" of
     # the membership; ``price_ends_on_leave``: the individual price of the membership was ended by a departure.
@@ -1333,7 +1333,7 @@ class BalanceRow(UnpaidFields, PayModel):
     paid_until: Optional[date_type] = None
     unpaid: int = 0               # everything unpaid (``debt_amount + due_amount``)
     advance: int = 0
-    refundable: int = Field(0, description="Устарело: равно advance (снимается в пакете Б)", json_schema_extra={"deprecated": True})
+    refundable: int = Field(0, description="Устарело: равно advance; экраны читают advance", json_schema_extra={"deprecated": True})
 
 
 class BalancesPage(PayModel):
@@ -1376,7 +1376,7 @@ class AccountingStartImpact(PayModel):
     debt_delta: int = 0
     memberships_with_changed_advance: int = 0
     advance_delta: int = 0
-    refundable_delta: int = Field(0, description="Устарело: равно advance (снимается в пакете Б)", json_schema_extra={"deprecated": True})
+    refundable_delta: int = Field(0, description="Устарело: равно advance; экраны читают advance", json_schema_extra={"deprecated": True})
     openings_to_review: int = 0  # OPENING-BULK: openings whose «оплачено до» is before the day preceding the new start (kept as they are; review them)
 
 
@@ -1429,7 +1429,7 @@ class FreshBalance(PayModel):
     membership_id: str
     debt: int = 0
     advance: int = 0
-    refundable: int = Field(0, description="Устарело: равно advance (снимается в пакете Б)", json_schema_extra={"deprecated": True})
+    refundable: int = Field(0, description="Устарело: равно advance; экраны читают advance", json_schema_extra={"deprecated": True})
 
 
 class PriceBlockedStudent(PayModel):
@@ -1447,8 +1447,8 @@ class ImpactMoney(PayModel):
     paid_until_before: Optional[date_type] = None
     paid_until_after: Optional[date_type] = None
     charged_delta: int = 0
-    refundable_before: int = Field(0, description="Устарело: равно advance (снимается в пакете Б)", json_schema_extra={"deprecated": True})
-    refundable_after: int = Field(0, description="Устарело: равно advance (снимается в пакете Б)", json_schema_extra={"deprecated": True})
+    refundable_before: int = Field(0, description="Устарело: равно advance; экраны читают advance", json_schema_extra={"deprecated": True})
+    refundable_after: int = Field(0, description="Устарело: равно advance; экраны читают advance", json_schema_extra={"deprecated": True})
 
 
 class PausedRange(BaseModel):
@@ -1599,7 +1599,7 @@ class LeaveMoney(PayModel):
     due_until: Optional[date_type] = None
     becomes_debt: int = 0                      # the part that is «к оплате» now and the action turns into a debt
     advance: int = 0
-    refundable: int = Field(0, description="Устарело: равно advance (снимается в пакете Б)", json_schema_extra={"deprecated": True})
+    refundable: int = Field(0, description="Устарело: равно advance; экраны читают advance", json_schema_extra={"deprecated": True})
     paid_until: Optional[date_type] = None
     charged_after_leave: int = 0
     individual_price_ends: bool = False

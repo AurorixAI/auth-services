@@ -8,7 +8,7 @@ printed statement and the receipt can never disagree.  The golden fixtures (``te
 from __future__ import annotations
 
 from datetime import date, datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 PAST_DEBT = "past_debt"
 CURRENT = "current"
@@ -354,6 +354,41 @@ def forgiven_inside_text(amount: int) -> str:
 def paid_ahead_text(amount: int) -> str:
     """The quiet line of a membership whose charge has not begun and that already paid: ``оплачено 120 000 сум``."""
     return f"оплачено {money(amount)}"
+
+
+def upcoming_text(begin: date, amount: int) -> str:
+    """PAY-TAILS Б6.8: the forecast of a charge that has not begun: ``Начисление с 24.11: 150 000 сум``."""
+    return f"Начисление с {ddmm(begin)}: {money(amount)}"
+
+
+def pay_until_text(due: date) -> str:
+    return f"платить до {ddmm(due)}"
+
+
+DEBT_FROM_FIRST_DAY_TEXT = "долг с первого дня"
+
+
+def terms_note_text(names) -> str:
+    """The note under a forecast that begins tomorrow: the student still counted in the group he left today."""
+    return f"сегодня ученик ещё числился в «{', '.join(names)}»"
+
+
+def charge_begins_text(group_name: str, day: date) -> str:
+    """The sentence about the NEW group of a transfer."""
+    return f"Начисление в группе «{group_name}» начнётся с {ddmm(day)}"
+
+
+def second_group_texts(group_name: str, where: str, kind: str, was: int = 0, now: int = 0, first_billable: Optional[date] = None) -> Tuple[str, str]:
+    """PAY-TAILS Б5.2 / Б6.7: ``(full, free)`` - the sentence about a SECOND group that began today and moves when the first one is closed, with the sums and WITHOUT any sum (the words for a caller who has no right to
+    money).  ``kind``: ``lesson`` (a package: today's lesson is not paid), ``month`` (the common month: the sum falls), ``period`` (the personal period begins on ``first_billable``)."""
+    if kind == "lesson":
+        text = f"Сегодняшний урок в группе «{group_name}» не оплачивается: день оплачен в группе {where}"
+        return text, text
+    if kind == "month":
+        return (f"В группе «{group_name}»: {num(was)} → {money(now)} — сегодняшний урок оплачен в группе {where}",
+                f"В группе «{group_name}» сумма месяца станет меньше: сегодняшний урок оплачен в группе {where}")
+    text = f"В группе «{group_name}» период начнётся с {ddmm(first_billable)}: сегодняшний день оплачен в группе {where}"
+    return text, text
 
 
 def paid_forward_text(amount: int) -> str:

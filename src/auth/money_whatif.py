@@ -11,6 +11,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from . import billing_ledger as bl
 from . import payments_texts as tx
+from .pay_upcoming import PROBE_DAYS
 
 
 def _ddmm(day: Optional[date]) -> str:
@@ -56,14 +57,11 @@ def parts_of(before: Dict[str, Any], after: Dict[str, Any]) -> List[str]:
     return parts
 
 
-NEXT_PERIOD_PROBE_DAYS = 93         # the next period of a student begins within a month; three months is enough even with pauses
-
-
 def next_period(inp_old: bl.LedgerInput, inp_new: bl.LedgerInput, reach: date) -> Optional[Dict[str, Any]]:
     """Money-1 R3 №4: the FIRST period (cell) of the student that begins on or after ``reach`` and is priced differently, when it begins AFTER ``reach`` (one that begins on it is already in the account of that day) - the first one the change prices differently - as ``{period_from, period_to, amount_before,
     amount_after, difference}``, or ``None`` (no such period, a package, the same sum).  The ledgers are read at a later day so that the period has BEGUN and is generated even for a student
     who has paid exactly up to ``reach`` (a period that is not yet begun and not paid for is not built)."""
-    probe = reach + timedelta(days=NEXT_PERIOD_PROBE_DAYS)
+    probe = reach + timedelta(days=PROBE_DAYS)
     led_old, led_new = bl.run_ledger(replace(inp_old, today=probe)), bl.run_ledger(replace(inp_new, today=probe))
     if led_new.mode == bl.LESSONS:
         return None

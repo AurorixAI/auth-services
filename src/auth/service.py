@@ -3026,14 +3026,15 @@ class AuthService:
         until = [u["due_until"] for u in found if u.get("due_until")]
         due = min(until) if until else None
         return {"from": begin, "amount": total, "lessons_text": None, "due_until": due,
-                "text": f"Начисление с {tx.ddmm(begin)}: {tx.money(total)}" if total is not None else None,
-                "sub": f"платить до {tx.ddmm(due)}" if due else None, "terms_note": None}
+                "text": tx.upcoming_text(begin, total) if total is not None else None,
+                "sub": tx.pay_until_text(due) if due else None, "terms_note": None}
 
     def _transfer_others(self, org_id: str, target: Group, membership: StudentGroup, before_close: list, day: date) -> list:
         """PAY-TAILS Б5.2 / Б1.3: the sentence about the NEW group of a transfer - the date its charge begins, read from the first billable day of ITS account inside this very probe / write (the transfer is real
         up to the rollback of a dry run: the rule «a day is not paid twice» is already applied, no second calculation) - and the sentences about the other groups of the student that the closing moved."""
         from . import billing_ledger as bl
         from . import ledger_service as ls
+        from . import payments_texts as tx
 
         lines = [x for sn in before_close for x in sn.others]
         loader = ls.LedgerLoader(self.db, str(org_id), day)
@@ -3041,7 +3042,7 @@ class AuthService:
         inp = loader.build_input(membership.id)
         ledger = bl.run_ledger(inp) if inp is not None else None
         if ledger is not None and ledger.first_billable is not None:
-            lines.append(f"Начисление в группе «{target.name}» начнётся с {ledger.first_billable.strftime('%d.%m')}")
+            lines.append(tx.charge_begins_text(target.name, ledger.first_billable))
         return lines
 
     def _transfer_effects(self, org_id: str, target: Group, before_close: list, carried: list, carry_after: Optional[dict], moved_pauses: list, day: date, money: bool) -> dict:

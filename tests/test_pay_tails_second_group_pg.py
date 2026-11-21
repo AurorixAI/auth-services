@@ -123,3 +123,35 @@ def test_the_forecast_of_the_second_group_says_why_it_begins_tomorrow(world, fix
     (row,) = [x for x in page["items"] if x["group_id"] == str(b.id)]
     assert (row["state"], row["state_text"], row["upcoming"]["from"], row["upcoming"]["amount"]) == ("starts", "Начнётся 21.11", "2026-11-21", 420_000)
     assert row["upcoming"]["terms_note"] == "сегодня ученик ещё числился в «Личная А»"
+
+
+def test_b6_7_a_caller_without_the_right_to_money_gets_the_words_about_the_second_group_without_a_sum(world, fixed_today):
+    # the same worlds as above, read by an administrator without the right to money: the sentence of the personal period has no sum in it and is given as it is; the sentence of the common month says the sum
+    # falls but not how much (it had 500 000 -> 400 000 for the owner); (a student who owes cannot be removed by him at all: 403, so the window is the place of the words); the block of the sums (``recalc``, ``money``) stays null
+    from tests.pg_world import make_client
+
+    admin = make_client(world, user=world.admin)
+    a, b, s = om_pair(world, fixed_today)
+    r = admin.get(f"{API}/org/groups/{a.id}/students/{s.id}/leave-preview")
+    assert r.status_code == 200, r.text
+    (m,) = r.json()["memberships"]
+    free = ["В группе «Английский 7» сумма месяца станет меньше: сегодняшний урок оплачен в группе «Математика 7»"]
+    assert m["others"] == free and m["recalc"] is None and m["money"] is None
+    assert "000" not in str(m["others"]) and probe(world, a, s)["others"] != free          # the owner still gets the sums
+
+
+def test_b6_7_the_personal_period_sentence_is_the_same_for_a_caller_without_the_right(world, fixed_today):
+    from tests.pg_world import make_client
+
+    fixed_today(D(2026, 11, 1))
+    settings_block(world, accounting_start_date="2026-10-01", billing_anchor="payment_date")
+    a, b = make_group(world.db, world.org, world.teacher, "Личная А"), make_group(world.db, world.org, world.teacher, "Личная Б")
+    for g in (a, b):
+        give_group_price(world.db, g, 420_000)
+        ensure_billing(world, g, price=None)
+    s = fresh_student(world, "Двое ЛП")
+    add(world, s, group=a, mode="add")
+    fixed_today(D(2026, 11, 20))
+    add(world, s, group=b, mode="add")
+    r = make_client(world, user=world.admin).get(f"{API}/org/groups/{a.id}/students/{s.id}/leave-preview")
+    assert r.json()["memberships"][0]["others"] == ["В группе «Личная Б» период начнётся с 21.11: сегодняшний день оплачен в группе «Личная А»"]

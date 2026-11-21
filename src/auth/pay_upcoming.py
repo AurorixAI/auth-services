@@ -17,7 +17,7 @@ from . import pay_due
 from . import payment_status as ps
 from . import payments_texts as tx
 
-PROBE_DAYS = 93          # the next period of a student begins within a month; three months is enough even with pauses (as ``money_whatif.NEXT_PERIOD_PROBE_DAYS``)
+PROBE_DAYS = 93          # PAY-TAILS Б6.8: THE horizon of every forecast («a late day»): the next period of a student begins within a month; three months is enough even with pauses (``leave_effects`` and ``money_whatif`` read this one)
 _IN_MONTH = ("январе", "феврале", "марте", "апреле", "мае", "июне", "июле", "августе", "сентябре", "октябре", "ноябре", "декабре")
 
 
@@ -58,11 +58,11 @@ class Upcoming:
 
     @property
     def sub(self) -> str:
-        return "долг с первого дня" if self.debt_from_first_day else (f"платить до {tx.ddmm(self.due_until)}" if self.due_until else "")
+        return tx.DEBT_FROM_FIRST_DAY_TEXT if self.debt_from_first_day else (tx.pay_until_text(self.due_until) if self.due_until else "")
 
     @property
     def text(self) -> str:
-        return f"Начисление с {tx.ddmm(self.begin)}: {tx.money(self.amount)}"
+        return tx.upcoming_text(self.begin, self.amount)
 
 
 def _open_stay(inp: bl.LedgerInput) -> Optional[bl.Stay]:

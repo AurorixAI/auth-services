@@ -209,7 +209,7 @@ class LeaveService:
                 money=self._money(ledger, refundable, loader, m, today, snaps[m.id]) if money else None,
                 has_open_balance=ledger.debt > 0 or ledger.advance > 0, allowed=allowed if money else ["keep"],
                 effects=leave_effects.build([snaps[m.id]], kind=kind, money=money),
-                recalc=leave_effects.recalc_of([snaps[m.id]]) if money else None, others=list(snaps[m.id].others) if money else []))
+                recalc=leave_effects.recalc_of([snaps[m.id]]) if money else None, others=leave_effects.others_of([snaps[m.id]], money)))
         return LeavePreview(as_of=today, memberships=items)
 
     def preview_group(self, org_id: str, group_id: UUID, student_id: UUID, *, money: bool) -> LeavePreview:
@@ -383,7 +383,7 @@ class LeaveService:
         invalidate_summary(org_id)
         done = leave_effects.after_settle(before_close, settled)
         return LeaveResult(message="Ученик убран из группы", settled=settled, effects=leave_effects.build(done, kind="leave", money=money, done=True),
-                           recalc=leave_effects.recalc_of(before_close, done=True) if money else None, others=[x for sn in before_close for x in sn.others] if money else [])
+                           recalc=leave_effects.recalc_of(before_close, done=True) if money else None, others=leave_effects.others_of(before_close, money))
 
 
 def apply_add_opening(db: Session, org_id: str, membership: StudentGroup, actor_id: str, opening, *, transfer: bool, source: str = "add") -> Optional[Dict[str, str]]:
