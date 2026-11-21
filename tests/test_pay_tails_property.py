@@ -90,6 +90,9 @@ def world(rng):
         entered = min(today, on + timedelta(days=rng.choice([0, 0, 1, 3])))
         kind = rng.choice([bl.PAYMENT, bl.WRITEOFF])
         credits.append(bl.Credit(f"c{i}", kind, on, T0 + timedelta(minutes=i), rng.choice([100_000, 150_000, 200_000, 300_000, price]), entered_on=entered))
+    if pauses and len(credits) >= 2 and rng.random() < 0.25:                      # PAY-TAILS Б6.9: the pause is entered BETWEEN the credits (after the first was entered, before the last)
+        entered = sorted(c.entered_on for c in credits)
+        pauses = (replace(pauses[0], created_on=entered[0] + (entered[-1] - entered[0]) // 2),)
     inp = replace(base, credits=tuple(credits), pauses=pauses)
     if common and rng.random() < 0.3:
         cancel = D(2026, 10, 13) + timedelta(days=7 * rng.randint(0, 3))
@@ -104,19 +107,45 @@ def uncut(inp, L, entered):
 
 def test_a_payment_entered_last_never_takes_back_a_used_forgiveness_when_nothing_was_cut():
     rng = random.Random(20261122)
-    checked = with_forgiveness = 0
+    checked = with_forgiveness = backdated = 0
     for trial in range(1500):
         inp = world(rng)
         before = bl.run_ledger(inp)
         assert before.reconciles and not before.flags, (trial, before.flags)
         assert before.advance == before.refundable and before.advance <= sum(c.amount for c in inp.credits if c.kind != bl.WRITEOFF)
-        late = bl.Credit("late", bl.PAYMENT, max(inp.today, max(c.on for c in inp.credits)), T0 + timedelta(minutes=999), rng.choice([100_000, 200_000, 420_000, 600_000]), entered_on=inp.today)
+        on_late = max(inp.today, max(c.on for c in inp.credits))
+        if rng.random() < 0.4:                                                          # Б6.9: a late payment DATED BACK (entered today, dated a day inside the account): the order of the dates puts it before the others
+            earliest = min(c.on for c in inp.credits)
+            on_late = earliest + timedelta(days=rng.randint(0, (inp.today - earliest).days))
+        late = bl.Credit("late", bl.PAYMENT, on_late, T0 + timedelta(minutes=999), rng.choice([100_000, 200_000, 420_000, 600_000]), entered_on=inp.today)
         after = bl.run_ledger(replace(inp, credits=(*inp.credits, late)))
         assert after.reconciles and not after.flags, (trial, after.flags)
+        # Б6.9: the filter read from the INPUT: the payment must not move the CHARGE, nothing is cut by a deduction, no forgiveness is dated AFTER the late payment (the order of the dates puts the money first: the
+        # documented class «a payment backdated after a forgiveness», see ``test_a_payment_entered_backdated_after_the_forgiveness...``) and every pause was entered before the first credit (the class of ``test_k1_known_deviation``)
         first_entered = min(c.entered_on or c.on for c in inp.credits)
-        if after.charged != before.charged or not uncut(inp, after, first_entered):
+        wo_days = [c.on for c in inp.credits if c.kind == bl.WRITEOFF]
+        if after.charged != before.charged or after.recalcs or (wo_days and late.on < max(wo_days)) or not uncut(inp, after, first_entered):
             continue
         checked += 1
         with_forgiveness += before.written_off > 0
+        backdated += late.on < inp.today
         assert after.written_off >= before.written_off, (trial, before.written_off, after.written_off, inp.credits, inp.pauses)
-    assert checked > 300 and with_forgiveness > 100, (checked, with_forgiveness)           # the filter must not make the property empty
+    assert checked > 300 and with_forgiveness > 100 and backdated > 40, (checked, with_forgiveness)           # the filter must not make the property empty
+
+
+def test_k1_known_deviation_a_pause_entered_between_the_forgiveness_and_a_payment_dated_back_leaves_a_debt_as_it_is():
+    # ОМ 600 000 (Tue / Thu / Fri).  October with a pause 15.10 - 31.10 costs 257 000 (the lessons that are left of 600 000).  05.11: October is forgiven for 300 000.  07.11: the pause is ENTERED (backdated).
+    # 08.11: a payment of 600 000 is entered DATED 01.11.  By the order of the dates the payment comes first and its capacity counts the pause (entered by 08.11): October 257 000, November 343 000; the forgiveness
+    # of 05.11 lies on October, which the money has filled: not used (0 of 300 000).  November 600 000 - 343 000 = DEBT 257 000.  Written as it IS (the owner decides in ROADMAP); the neighbours are fine:
+    # the same pause entered BEFORE the forgiveness (25.09) or the payment dated the day it is entered (08.11) give debt 0 and 257 000 used.
+    inp = make(today=D(2026, 11, 10), stays=[bl.Stay(D(2026, 10, 1))], price_at=flat(600_000), regimes=[FIXED1], start=D(2026, 9, 1), lesson_days=TTF)
+    forgive = bl.Credit("w", bl.WRITEOFF, D(2026, 11, 5), T0, 300_000, entered_on=D(2026, 11, 5))
+    pay = bl.Credit("p", bl.PAYMENT, D(2026, 11, 1), T0 + timedelta(minutes=1), 600_000, entered_on=D(2026, 11, 8))
+
+    def run(pause_entered, payment):
+        L = bl.run_ledger(replace(inp, credits=(forgive, payment), pauses=(bl.Pause(D(2026, 10, 15), D(2026, 10, 31), created_on=pause_entered),)))
+        return L.charged, L.debt, L.advance, L.written_off, L.written_off_granted
+
+    assert run(D(2026, 11, 7), pay) == (857_000, 257_000, 0, 0, 300_000)                      # the deviation: debt 257 000, forgiveness not used
+    assert run(D(2026, 9, 25), pay) == (857_000, 0, 0, 257_000, 300_000)                       # the pause known before: debt 0
+    assert run(D(2026, 11, 7), replace(pay, on=D(2026, 11, 8))) == (857_000, 0, 0, 257_000, 300_000)     # the payment dated the day it is entered: debt 0
