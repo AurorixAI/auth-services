@@ -177,6 +177,7 @@ def totals(segs: List[HSeg], total_credit: int, today: date, paid_total: int):
     advance = max(0, total_credit - charged)
     past = sum(max(0, s.charge - s.money - s.wo) for s in begun if s.b < today)
     through = None
+    border = None            # PAY-TAILS Б6.4: the day the WORDS name: the last day of the last period covered in full when the date lies inside a period that has not begun
     for s in segs:
         vol = s.money + s.wo
         cd = s.covered(vol)
@@ -184,8 +185,9 @@ def totals(segs: List[HSeg], total_credit: int, today: date, paid_total: int):
             through = s.dlist[-1] if s.n else through
             continue
         through = s.dlist[cd - 1] if cd > 0 else (through if through is not None else s.dlist[0] - timedelta(days=1))
+        border = through if not (cd > 0 and s.a > today) else (s.dlist[0] - timedelta(days=1) if s.n else through)
         break
-    return dict(charged=charged, debt=debt, advance=advance, past=past, current=debt - past, through=through)
+    return dict(charged=charged, debt=debt, advance=advance, past=past, current=debt - past, through=through, border=border if border is not None else through)
 
 
 # ------------------------------------------------------------------ the names of the unpaid sum, by hand (PAY-DUE) -----
@@ -570,7 +572,7 @@ def e1_previews(store):
             due_until_after=names.due_until if names.due else None, overdue_days_after=names.overdue if names.debt else None,
             advance_after=t["advance"], paid_until_before=t0["through"], paid_until_after=t["through"],
             status_after=shown_status(status, t["debt"]), partial_credit_after=exp["partial"], lessons=None,
-            after_text=tx.after_text(names.debt, names.due, t["through"], None, t["advance"]),
+            after_text=tx.after_text(names.debt, names.due, t["border"], None, t["advance"]),
             summary_text=tx.summary_text(
                 debt_paid=to_debt, debt_before=names0.debt, due_paid=to_due, due_before=names0.due,
                 advance=sum(a.amount for a in allocs if a.bucket == "advance"),
@@ -688,7 +690,7 @@ def e9_price_ahead(store):
         allocations=allocs, unpaid_after=0, advance_after=300_000,
         paid_until_before=t0["through"], paid_until_after=t["through"], status_after="active",
         partial_credit_after=0, lessons=None,
-        after_text=tx.after_text(0, 0, t["through"], None, 300_000),
+        after_text=tx.after_text(0, 0, t["border"], None, 300_000),
         summary_text=tx.summary_text(debt_paid=769_000, debt_before=769_000, due_paid=0, due_before=0, advance=300_000,
                                      debt_after=0, paid_until_after=t["through"],
                                      advance_periods=[(D(2026, 11, 15), D(2026, 12, 14))]),
@@ -736,7 +738,8 @@ def e1_statement(store):
     summary = StatementSummary(charged=1_000_000, paid=1_021_000, transferred_in=0, written_off=0, refunded=0,
                                transferred_out=0, unpaid=0, advance=21_000, paid_until=t["through"], status="active",
                                reconciles=(1_000_000 - 1_021_000 == 0 - 21_000), **fields,
-                               **state_kwargs(names, TODAY, status="active", paid_until=t["through"], advance=21_000, **fields))
+                               **{**state_kwargs(names, TODAY, status="active", paid_until=t["border"], advance=21_000, **fields),      # PAY-TAILS Б6.4: the words name the border of the last period covered in full and the sum ahead
+                                  "state_sub": tx.paid_forward_text(21_000)})
     write("e1_statement_790000.json", StatementOut(
         membership=StatementMembership(
             membership_id=uid(1), student_id=uid(101), student_name="Хасанов Азиз", display_id="N13-004",
@@ -813,7 +816,7 @@ def e2_e3(store):
             allocations=allocs, unpaid_after=t["debt"], debt_amount_after=names.debt, due_amount_after=0, overdue_days_after=names.overdue if names.debt else None,
             advance_after=t["advance"], paid_until_before=None, paid_until_after=t["through"], status_after=shown_status(st, t["debt"]),
             partial_credit_after=partial_exp, lessons=None,
-            after_text=tx.after_text(names.debt, 0, t["through"], None, t["advance"]),
+            after_text=tx.after_text(names.debt, 0, t["border"], None, t["advance"]),
             summary_text=tx.summary_text(
                 debt_paid=to_debt, debt_before=323_000, due_paid=0, due_before=0,
                 advance=sum(a.amount for a in allocs if a.bucket == "advance"),
@@ -867,7 +870,7 @@ def e2_e3(store):
             allocations=allocs, unpaid_after=t["debt"], debt_amount_after=names.debt, overdue_days_after=names.overdue if names.debt else None,
             advance_after=0, paid_until_before=None, paid_until_after=t["through"], status_after=shown_status(st, t["debt"]),
             partial_credit_after=partial_exp, lessons=None,
-            after_text=tx.after_text(names.debt, 0, t["through"], None, 0),
+            after_text=tx.after_text(names.debt, 0, t["border"], None, 0),
             summary_text=tx.summary_text(debt_paid=amount, debt_before=213_000, due_paid=0, due_before=0, advance=0, debt_after=t["debt"],
                                          paid_until_after=t["through"]))
         write(f"e3_preview_{amount}.json", PaymentPreview(
@@ -921,7 +924,7 @@ def e10(store):
             allocations=allocs, unpaid_after=left_, debt_amount_after=0, due_amount_after=names.due, due_until_after=names.due_until if names.due else None,
             advance_after=0, paid_until_before=None, paid_until_after=t["through"], status_after=shown_status(st, left_), partial_credit_after=partial_exp,
             lessons=None,
-            after_text=tx.after_text(names.debt, names.due, t["through"], None, 0),
+            after_text=tx.after_text(names.debt, names.due, t["border"], None, 0),
             summary_text=tx.summary_text(debt_paid=0, debt_before=0, due_paid=to_due, due_before=500_000, advance=0, debt_after=left_, paid_until_after=t["through"]))
         write(f"e10_preview_{amount}.json", PaymentPreview(as_of=today, mode="calendar", price=price, due=due, suggested_amount=500_000, amount=amount,
                                                            result=res, warnings=[]), store)
