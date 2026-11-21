@@ -1,0 +1,758 @@
+{
+ "package 2026-10-27": {
+  "accounts": {
+   "Алия | Группа": {
+    "advance": 0,
+    "charged": 150000,
+    "covered_through": "2026-10-13",
+    "current_due": 0,
+    "debt": 0,
+    "paid": 150000,
+    "paid_until": null,
+    "partial_credit": 0,
+    "past_debt": 0,
+    "recalculated": 0,
+    "reconciles": true,
+    "refundable": 0,
+    "refunded": 0,
+    "segments": [
+     {
+      "amount": 150000,
+      "begun": true,
+      "covered_days": 3,
+      "ended": false,
+      "forgiven": 0,
+      "kind": "package",
+      "money": 150000,
+      "period_end": "2026-10-13",
+      "period_start": "2026-09-29",
+      "recalculated": 0,
+      "unpaid": 0
+     }
+    ],
+    "transferred_in": 0,
+    "transferred_out": 0,
+    "written_off": 0,
+    "written_off_granted": 0
+   },
+   "Бек | Группа": {
+    "advance": 150000,
+    "charged": 250000,
+    "covered_through": "2026-10-27",
+    "current_due": 0,
+    "debt": 0,
+    "paid": 400000,
+    "paid_until": null,
+    "partial_credit": 0,
+    "past_debt": 0,
+    "recalculated": 0,
+    "reconciles": true,
+    "refundable": 150000,
+    "refunded": 0,
+    "segments": [
+     {
+      "amount": 250000,
+      "begun": true,
+      "covered_days": 5,
+      "ended": false,
+      "forgiven": 0,
+      "kind": "package",
+      "money": 250000,
+      "period_end": "2026-10-27",
+      "period_start": "2026-09-29",
+      "recalculated": 0,
+      "unpaid": 0
+     }
+    ],
+    "transferred_in": 0,
+    "transferred_out": 0,
+    "written_off": 0,
+    "written_off_granted": 0
+   },
+   "Дана | Группа": {
+    "advance": 0,
+    "charged": 100000,
+    "covered_through": "2026-09-28",
+    "current_due": 100000,
+    "debt": 100000,
+    "paid": 0,
+    "paid_until": null,
+    "partial_credit": 0,
+    "past_debt": 0,
+    "recalculated": 0,
+    "reconciles": true,
+    "refundable": 0,
+    "refunded": 0,
+    "segments": [
+     {
+      "amount": 100000,
+      "begun": true,
+      "covered_days": 0,
+      "ended": false,
+      "forgiven": 0,
+      "kind": "package",
+      "money": 0,
+      "period_end": "2026-10-06",
+      "period_start": "2026-09-29",
+      "recalculated": 0,
+      "unpaid": 100000
+     }
+    ],
+    "transferred_in": 0,
+    "transferred_out": 0,
+    "written_off": 0,
+    "written_off_granted": 0
+   }
+  },
+  "balances_advance": {
+   "advance_total": null,
+   "items": [
+    "Юсупов Бек | Группа | 150000"
+   ],
+   "total": 1
+  },
+  "income": {
+   "checks": [
+    {
+     "code": "received_eq_strip",
+     "diff": 0,
+     "left": 150000,
+     "right": 150000
+    },
+    {
+     "code": "refunded_eq_rows",
+     "diff": 0,
+     "left": 0,
+     "right": 0
+    },
+    {
+     "code": "received_eq_methods",
+     "diff": 0,
+     "left": 150000,
+     "right": 150000
+    },
+    {
+     "code": "received_eq_series",
+     "diff": 0,
+     "left": 150000,
+     "right": 150000
+    },
+    {
+     "code": "received_eq_journal",
+     "diff": 0,
+     "left": 150000,
+     "right": 150000
+    },
+    {
+     "code": "strip_current_eq_journal",
+     "diff": 0,
+     "left": 150000,
+     "right": 150000
+    }
+   ],
+   "current": {
+    "net_received": 150000,
+    "payments_count": 1,
+    "received": 150000,
+    "refunded": 0,
+    "refunded_from_received": 0,
+    "to_advance": 0,
+    "to_current": 150000,
+    "to_forward": 0,
+    "to_past_debt": 0,
+    "transferred": 0,
+    "written_off": 0
+   },
+   "position": {
+    "advance_total": 150000,
+    "debt_text": "Долг 100 000 сум",
+    "debt_total": 100000,
+    "debtors": 1,
+    "due_students": 0,
+    "due_text": null,
+    "due_total": 0,
+    "memberships_with_advance": 1,
+    "memberships_with_debt": 1,
+    "students_with_advance": 1
+   }
+  },
+  "statements": {
+   "Алия | Группа": {
+    "rows": [
+     {
+      "credit": 0,
+      "date": "2026-09-29",
+      "debit": 150000,
+      "outflow": 0,
+      "type": "charge"
+     },
+     {
+      "credit": 150000,
+      "date": "2026-10-14",
+      "debit": 0,
+      "outflow": 0,
+      "type": "payment"
+     }
+    ],
+    "summary": {
+     "advance": 0,
+     "charged": 150000,
+     "debt_amount": 0,
+     "due_amount": 0,
+     "paid": 150000,
+     "recalculated": 0,
+     "reconciles": true,
+     "refunded": 0,
+     "transferred_in": 0,
+     "transferred_out": 0,
+     "unpaid": 0,
+     "written_off": 0
+    }
+   },
+   "Бек | Группа": {
+    "rows": [
+     {
+      "credit": 0,
+      "date": "2026-09-29",
+      "debit": 250000,
+      "outflow": 0,
+      "type": "charge"
+     },
+     {
+      "credit": 400000,
+      "date": "2026-09-30",
+      "debit": 0,
+      "outflow": 0,
+      "type": "payment"
+     }
+    ],
+    "summary": {
+     "advance": 150000,
+     "charged": 250000,
+     "debt_amount": 0,
+     "due_amount": 0,
+     "paid": 400000,
+     "recalculated": 0,
+     "reconciles": true,
+     "refunded": 0,
+     "transferred_in": 0,
+     "transferred_out": 0,
+     "unpaid": 0,
+     "written_off": 0
+    }
+   },
+   "Дана | Группа": {
+    "rows": [
+     {
+      "credit": 0,
+      "date": "2026-09-29",
+      "debit": 100000,
+      "outflow": 0,
+      "type": "charge"
+     }
+    ],
+    "summary": {
+     "advance": 0,
+     "charged": 100000,
+     "debt_amount": 100000,
+     "due_amount": 0,
+     "paid": 0,
+     "recalculated": 0,
+     "reconciles": true,
+     "refunded": 0,
+     "transferred_in": 0,
+     "transferred_out": 0,
+     "unpaid": 100000,
+     "written_off": 0
+    }
+   }
+  },
+  "status": {
+   "active": {
+    "amount_total": 0,
+    "items": [],
+    "students": 0,
+    "total": 0
+   },
+   "debtors": {
+    "amount_total": 100000,
+    "items": [
+     {
+      "advance": 0,
+      "debt_amount": 100000,
+      "due_amount": 0,
+      "due_until": null,
+      "is_active": false,
+      "lessons_left": null,
+      "overdue_days": 14,
+      "paid_until": null,
+      "partial_credit": 0,
+      "refundable": 0,
+      "status": "none",
+      "unpaid": 100000,
+      "who": "Орлова Дана | Группа"
+     }
+    ],
+    "students": 1,
+    "total": 1
+   },
+   "expiring": {
+    "amount_total": 0,
+    "items": [
+     {
+      "advance": 0,
+      "debt_amount": 0,
+      "due_amount": 0,
+      "due_until": null,
+      "is_active": true,
+      "lessons_left": 0,
+      "overdue_days": null,
+      "paid_until": null,
+      "partial_credit": 0,
+      "refundable": 0,
+      "status": "expired",
+      "unpaid": 0,
+      "who": "Каримова Алия | Группа"
+     },
+     {
+      "advance": 150000,
+      "debt_amount": 0,
+      "due_amount": 0,
+      "due_until": null,
+      "is_active": true,
+      "lessons_left": 3,
+      "overdue_days": null,
+      "paid_until": null,
+      "partial_credit": 0,
+      "refundable": 150000,
+      "status": "expiring",
+      "unpaid": 0,
+      "who": "Юсупов Бек | Группа"
+     }
+    ],
+    "students": 2,
+    "total": 2
+   },
+   "paused": {
+    "amount_total": 0,
+    "items": [],
+    "students": 0,
+    "total": 0
+   },
+   "to_pay": {
+    "amount_total": 0,
+    "items": [],
+    "students": 0,
+    "total": 0
+   }
+  },
+  "summary": {
+   "active": 0,
+   "advance_total": 150000,
+   "bucket_rows": {
+    "active": 0,
+    "debtors": 1,
+    "expiring": 2,
+    "paused": 0,
+    "to_pay": 0
+   },
+   "buckets": {
+    "active": 0,
+    "debtors": 1,
+    "expiring": 2,
+    "paused": 0,
+    "to_pay": 0
+   },
+   "debt_total": 100000,
+   "debtors": 1,
+   "due_students": 0,
+   "due_total": 0,
+   "ends_today": 0,
+   "expiring": 1,
+   "free": 0,
+   "memberships_with_debt": 1,
+   "none": 0,
+   "paused": 0,
+   "students_with_advance": 1,
+   "tracked_total": 2
+  }
+ },
+ "package 2026-11-10": {
+  "accounts": {
+   "Алия | Группа": {
+    "advance": 0,
+    "charged": 150000,
+    "covered_through": "2026-10-13",
+    "current_due": 0,
+    "debt": 0,
+    "paid": 150000,
+    "paid_until": null,
+    "partial_credit": 0,
+    "past_debt": 0,
+    "recalculated": 0,
+    "reconciles": true,
+    "refundable": 0,
+    "refunded": 0,
+    "segments": [
+     {
+      "amount": 150000,
+      "begun": true,
+      "covered_days": 3,
+      "ended": false,
+      "forgiven": 0,
+      "kind": "package",
+      "money": 150000,
+      "period_end": "2026-10-13",
+      "period_start": "2026-09-29",
+      "recalculated": 0,
+      "unpaid": 0
+     }
+    ],
+    "transferred_in": 0,
+    "transferred_out": 0,
+    "written_off": 0,
+    "written_off_granted": 0
+   },
+   "Бек | Группа": {
+    "advance": 150000,
+    "charged": 250000,
+    "covered_through": "2026-10-27",
+    "current_due": 0,
+    "debt": 0,
+    "paid": 400000,
+    "paid_until": null,
+    "partial_credit": 0,
+    "past_debt": 0,
+    "recalculated": 0,
+    "reconciles": true,
+    "refundable": 150000,
+    "refunded": 0,
+    "segments": [
+     {
+      "amount": 250000,
+      "begun": true,
+      "covered_days": 5,
+      "ended": false,
+      "forgiven": 0,
+      "kind": "package",
+      "money": 250000,
+      "period_end": "2026-10-27",
+      "period_start": "2026-09-29",
+      "recalculated": 0,
+      "unpaid": 0
+     }
+    ],
+    "transferred_in": 0,
+    "transferred_out": 0,
+    "written_off": 0,
+    "written_off_granted": 0
+   },
+   "Дана | Группа": {
+    "advance": 0,
+    "charged": 100000,
+    "covered_through": "2026-09-28",
+    "current_due": 100000,
+    "debt": 100000,
+    "paid": 0,
+    "paid_until": null,
+    "partial_credit": 0,
+    "past_debt": 0,
+    "recalculated": 0,
+    "reconciles": true,
+    "refundable": 0,
+    "refunded": 0,
+    "segments": [
+     {
+      "amount": 100000,
+      "begun": true,
+      "covered_days": 0,
+      "ended": false,
+      "forgiven": 0,
+      "kind": "package",
+      "money": 0,
+      "period_end": "2026-10-06",
+      "period_start": "2026-09-29",
+      "recalculated": 0,
+      "unpaid": 100000
+     }
+    ],
+    "transferred_in": 0,
+    "transferred_out": 0,
+    "written_off": 0,
+    "written_off_granted": 0
+   }
+  },
+  "balances_advance": {
+   "advance_total": null,
+   "items": [
+    "Юсупов Бек | Группа | 150000"
+   ],
+   "total": 1
+  },
+  "income": {
+   "checks": [
+    {
+     "code": "received_eq_strip",
+     "diff": 0,
+     "left": 150000,
+     "right": 150000
+    },
+    {
+     "code": "refunded_eq_rows",
+     "diff": 0,
+     "left": 0,
+     "right": 0
+    },
+    {
+     "code": "received_eq_methods",
+     "diff": 0,
+     "left": 150000,
+     "right": 150000
+    },
+    {
+     "code": "received_eq_series",
+     "diff": 0,
+     "left": 150000,
+     "right": 150000
+    },
+    {
+     "code": "received_eq_journal",
+     "diff": 0,
+     "left": 150000,
+     "right": 150000
+    },
+    {
+     "code": "strip_current_eq_journal",
+     "diff": 0,
+     "left": 150000,
+     "right": 150000
+    }
+   ],
+   "current": {
+    "net_received": 150000,
+    "payments_count": 1,
+    "received": 150000,
+    "refunded": 0,
+    "refunded_from_received": 0,
+    "to_advance": 0,
+    "to_current": 150000,
+    "to_forward": 0,
+    "to_past_debt": 0,
+    "transferred": 0,
+    "written_off": 0
+   },
+   "position": {
+    "advance_total": 150000,
+    "debt_text": "Долг 100 000 сум",
+    "debt_total": 100000,
+    "debtors": 1,
+    "due_students": 0,
+    "due_text": null,
+    "due_total": 0,
+    "memberships_with_advance": 1,
+    "memberships_with_debt": 1,
+    "students_with_advance": 1
+   }
+  },
+  "statements": {
+   "Алия | Группа": {
+    "rows": [
+     {
+      "credit": 0,
+      "date": "2026-09-29",
+      "debit": 150000,
+      "outflow": 0,
+      "type": "charge"
+     },
+     {
+      "credit": 150000,
+      "date": "2026-10-14",
+      "debit": 0,
+      "outflow": 0,
+      "type": "payment"
+     }
+    ],
+    "summary": {
+     "advance": 0,
+     "charged": 150000,
+     "debt_amount": 0,
+     "due_amount": 0,
+     "paid": 150000,
+     "recalculated": 0,
+     "reconciles": true,
+     "refunded": 0,
+     "transferred_in": 0,
+     "transferred_out": 0,
+     "unpaid": 0,
+     "written_off": 0
+    }
+   },
+   "Бек | Группа": {
+    "rows": [
+     {
+      "credit": 0,
+      "date": "2026-09-29",
+      "debit": 250000,
+      "outflow": 0,
+      "type": "charge"
+     },
+     {
+      "credit": 400000,
+      "date": "2026-09-30",
+      "debit": 0,
+      "outflow": 0,
+      "type": "payment"
+     }
+    ],
+    "summary": {
+     "advance": 150000,
+     "charged": 250000,
+     "debt_amount": 0,
+     "due_amount": 0,
+     "paid": 400000,
+     "recalculated": 0,
+     "reconciles": true,
+     "refunded": 0,
+     "transferred_in": 0,
+     "transferred_out": 0,
+     "unpaid": 0,
+     "written_off": 0
+    }
+   },
+   "Дана | Группа": {
+    "rows": [
+     {
+      "credit": 0,
+      "date": "2026-09-29",
+      "debit": 100000,
+      "outflow": 0,
+      "type": "charge"
+     }
+    ],
+    "summary": {
+     "advance": 0,
+     "charged": 100000,
+     "debt_amount": 100000,
+     "due_amount": 0,
+     "paid": 0,
+     "recalculated": 0,
+     "reconciles": true,
+     "refunded": 0,
+     "transferred_in": 0,
+     "transferred_out": 0,
+     "unpaid": 100000,
+     "written_off": 0
+    }
+   }
+  },
+  "status": {
+   "active": {
+    "amount_total": 0,
+    "items": [],
+    "students": 0,
+    "total": 0
+   },
+   "debtors": {
+    "amount_total": 100000,
+    "items": [
+     {
+      "advance": 0,
+      "debt_amount": 100000,
+      "due_amount": 0,
+      "due_until": null,
+      "is_active": false,
+      "lessons_left": null,
+      "overdue_days": 28,
+      "paid_until": null,
+      "partial_credit": 0,
+      "refundable": 0,
+      "status": "none",
+      "unpaid": 100000,
+      "who": "Орлова Дана | Группа"
+     }
+    ],
+    "students": 1,
+    "total": 1
+   },
+   "expiring": {
+    "amount_total": 0,
+    "items": [
+     {
+      "advance": 0,
+      "debt_amount": 0,
+      "due_amount": 0,
+      "due_until": null,
+      "is_active": true,
+      "lessons_left": 0,
+      "overdue_days": null,
+      "paid_until": null,
+      "partial_credit": 0,
+      "refundable": 0,
+      "status": "expired",
+      "unpaid": 0,
+      "who": "Каримова Алия | Группа"
+     },
+     {
+      "advance": 150000,
+      "debt_amount": 0,
+      "due_amount": 0,
+      "due_until": null,
+      "is_active": true,
+      "lessons_left": 3,
+      "overdue_days": null,
+      "paid_until": null,
+      "partial_credit": 0,
+      "refundable": 150000,
+      "status": "expiring",
+      "unpaid": 0,
+      "who": "Юсупов Бек | Группа"
+     }
+    ],
+    "students": 2,
+    "total": 2
+   },
+   "paused": {
+    "amount_total": 0,
+    "items": [],
+    "students": 0,
+    "total": 0
+   },
+   "to_pay": {
+    "amount_total": 0,
+    "items": [],
+    "students": 0,
+    "total": 0
+   }
+  },
+  "summary": {
+   "active": 0,
+   "advance_total": 150000,
+   "bucket_rows": {
+    "active": 0,
+    "debtors": 1,
+    "expiring": 2,
+    "paused": 0,
+    "to_pay": 0
+   },
+   "buckets": {
+    "active": 0,
+    "debtors": 1,
+    "expiring": 2,
+    "paused": 0,
+    "to_pay": 0
+   },
+   "debt_total": 100000,
+   "debtors": 1,
+   "due_students": 0,
+   "due_total": 0,
+   "ends_today": 0,
+   "expiring": 1,
+   "free": 0,
+   "memberships_with_debt": 1,
+   "none": 0,
+   "paused": 0,
+   "students_with_advance": 1,
+   "tracked_total": 2
+  }
+ }
+}

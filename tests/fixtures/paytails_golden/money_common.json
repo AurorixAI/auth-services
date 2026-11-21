@@ -1,0 +1,2627 @@
+{
+ "common 2026-11-11": {
+  "accounts": {
+   "Алия | Группа": {
+    "advance": 0,
+    "charged": 0,
+    "covered_through": null,
+    "current_due": 0,
+    "debt": 0,
+    "paid": 0,
+    "paid_until": null,
+    "partial_credit": 0,
+    "past_debt": 0,
+    "recalculated": 0,
+    "reconciles": true,
+    "refundable": 0,
+    "refunded": 0,
+    "segments": [
+     {
+      "amount": 0,
+      "begun": true,
+      "covered_days": 0,
+      "ended": true,
+      "forgiven": 0,
+      "kind": "period",
+      "money": 0,
+      "period_end": "2026-10-31",
+      "period_start": "2026-10-01",
+      "recalculated": 0,
+      "unpaid": 0
+     },
+     {
+      "amount": 0,
+      "begun": true,
+      "covered_days": 0,
+      "ended": false,
+      "forgiven": 0,
+      "kind": "period",
+      "money": 0,
+      "period_end": "2026-11-30",
+      "period_start": "2026-11-01",
+      "recalculated": 0,
+      "unpaid": 0
+     }
+    ],
+    "transferred_in": 0,
+    "transferred_out": 0,
+    "written_off": 0,
+    "written_off_granted": 0
+   },
+   "Бек | Группа": {
+    "advance": 0,
+    "charged": 0,
+    "covered_through": null,
+    "current_due": 0,
+    "debt": 0,
+    "paid": 0,
+    "paid_until": null,
+    "partial_credit": 0,
+    "past_debt": 0,
+    "recalculated": 0,
+    "reconciles": true,
+    "refundable": 0,
+    "refunded": 0,
+    "segments": [
+     {
+      "amount": 0,
+      "begun": true,
+      "covered_days": 0,
+      "ended": true,
+      "forgiven": 0,
+      "kind": "period",
+      "money": 0,
+      "period_end": "2026-10-31",
+      "period_start": "2026-10-01",
+      "recalculated": 0,
+      "unpaid": 0
+     },
+     {
+      "amount": 0,
+      "begun": true,
+      "covered_days": 0,
+      "ended": false,
+      "forgiven": 0,
+      "kind": "period",
+      "money": 0,
+      "period_end": "2026-11-30",
+      "period_start": "2026-11-01",
+      "recalculated": 0,
+      "unpaid": 0
+     }
+    ],
+    "transferred_in": 0,
+    "transferred_out": 0,
+    "written_off": 0,
+    "written_off_granted": 0
+   },
+   "Дана | Группа": {
+    "advance": 0,
+    "charged": 0,
+    "covered_through": null,
+    "current_due": 0,
+    "debt": 0,
+    "paid": 0,
+    "paid_until": null,
+    "partial_credit": 0,
+    "past_debt": 0,
+    "recalculated": 0,
+    "reconciles": true,
+    "refundable": 0,
+    "refunded": 0,
+    "segments": [
+     {
+      "amount": 0,
+      "begun": true,
+      "covered_days": 0,
+      "ended": true,
+      "forgiven": 0,
+      "kind": "period",
+      "money": 0,
+      "period_end": "2026-10-31",
+      "period_start": "2026-10-01",
+      "recalculated": 0,
+      "unpaid": 0
+     },
+     {
+      "amount": 0,
+      "begun": true,
+      "covered_days": 0,
+      "ended": false,
+      "forgiven": 0,
+      "kind": "period",
+      "money": 0,
+      "period_end": "2026-11-30",
+      "period_start": "2026-11-01",
+      "recalculated": 0,
+      "unpaid": 0
+     }
+    ],
+    "transferred_in": 0,
+    "transferred_out": 0,
+    "written_off": 0,
+    "written_off_granted": 0
+   },
+   "Йота | Общий": {
+    "advance": 0,
+    "charged": 600000,
+    "covered_through": "2026-11-11",
+    "current_due": 400000,
+    "debt": 400000,
+    "paid": 200000,
+    "paid_until": "2026-11-11",
+    "partial_credit": 7143,
+    "past_debt": 0,
+    "recalculated": 0,
+    "reconciles": true,
+    "refundable": 0,
+    "refunded": 0,
+    "segments": [
+     {
+      "amount": 600000,
+      "begun": true,
+      "covered_days": 9,
+      "ended": false,
+      "forgiven": 0,
+      "kind": "period",
+      "money": 200000,
+      "period_end": "2026-11-30",
+      "period_start": "2026-11-01",
+      "recalculated": 0,
+      "unpaid": 400000
+     }
+    ],
+    "transferred_in": 0,
+    "transferred_out": 0,
+    "written_off": 0,
+    "written_off_granted": 0
+   },
+   "Каппа | Общий": {
+    "advance": 0,
+    "charged": 300000,
+    "covered_through": "2026-11-02",
+    "current_due": 300000,
+    "debt": 300000,
+    "paid": 0,
+    "paid_until": "2026-11-02",
+    "partial_credit": 0,
+    "past_debt": 0,
+    "recalculated": 0,
+    "reconciles": true,
+    "refundable": 0,
+    "refunded": 0,
+    "segments": [
+     {
+      "amount": 300000,
+      "begun": true,
+      "covered_days": 0,
+      "ended": false,
+      "forgiven": 0,
+      "kind": "period",
+      "money": 0,
+      "period_end": "2026-11-30",
+      "period_start": "2026-11-01",
+      "recalculated": 0,
+      "unpaid": 300000
+     }
+    ],
+    "transferred_in": 0,
+    "transferred_out": 0,
+    "written_off": 0,
+    "written_off_granted": 0
+   },
+   "Лямбда | Второй ОМ": {
+    "advance": 67000,
+    "charged": 333000,
+    "covered_through": "2026-12-04",
+    "current_due": 0,
+    "debt": 0,
+    "paid": 0,
+    "paid_until": "2026-12-04",
+    "partial_credit": 2484,
+    "past_debt": 0,
+    "recalculated": 0,
+    "reconciles": true,
+    "refundable": 67000,
+    "refunded": 0,
+    "segments": [
+     {
+      "amount": 333000,
+      "begun": true,
+      "covered_days": 20,
+      "ended": false,
+      "forgiven": 0,
+      "kind": "period",
+      "money": 333000,
+      "period_end": "2026-11-30",
+      "period_start": "2026-11-01",
+      "recalculated": 0,
+      "unpaid": 0
+     },
+     {
+      "amount": 500000,
+      "begun": false,
+      "covered_days": 4,
+      "ended": false,
+      "forgiven": 0,
+      "kind": "period",
+      "money": 67000,
+      "period_end": "2026-12-31",
+      "period_start": "2026-12-01",
+      "recalculated": 0,
+      "unpaid": 433000
+     }
+    ],
+    "transferred_in": 400000,
+    "transferred_out": 0,
+    "written_off": 0,
+    "written_off_granted": 0
+   },
+   "Лямбда | Общий": {
+    "advance": 0,
+    "charged": 200000,
+    "covered_through": "2026-11-11",
+    "current_due": 0,
+    "debt": 0,
+    "paid": 600000,
+    "paid_until": "2026-11-11",
+    "partial_credit": 0,
+    "past_debt": 0,
+    "recalculated": 0,
+    "reconciles": true,
+    "refundable": 0,
+    "refunded": 0,
+    "segments": [
+     {
+      "amount": 200000,
+      "begun": true,
+      "covered_days": 9,
+      "ended": false,
+      "forgiven": 0,
+      "kind": "period",
+      "money": 200000,
+      "period_end": "2026-11-30",
+      "period_start": "2026-11-01",
+      "recalculated": 0,
+      "unpaid": 0
+     }
+    ],
+    "transferred_in": 0,
+    "transferred_out": 400000,
+    "written_off": 0,
+    "written_off_granted": 0
+   },
+   "Ученик ОМ | Общий": {
+    "advance": 0,
+    "charged": 600000,
+    "covered_through": "2026-11-30",
+    "current_due": 0,
+    "debt": 0,
+    "paid": 600000,
+    "paid_until": "2026-11-30",
+    "partial_credit": 0,
+    "past_debt": 0,
+    "recalculated": 0,
+    "reconciles": true,
+    "refundable": 0,
+    "refunded": 0,
+    "segments": [
+     {
+      "amount": 600000,
+      "begun": true,
+      "covered_days": 28,
+      "ended": false,
+      "forgiven": 0,
+      "kind": "period",
+      "money": 600000,
+      "period_end": "2026-11-30",
+      "period_start": "2026-11-01",
+      "recalculated": 0,
+      "unpaid": 0
+     }
+    ],
+    "transferred_in": 0,
+    "transferred_out": 0,
+    "written_off": 0,
+    "written_off_granted": 0
+   },
+   "Хи | Общий": {
+    "advance": 100000,
+    "charged": 200000,
+    "covered_through": "2026-11-11",
+    "current_due": 0,
+    "debt": 0,
+    "paid": 300000,
+    "paid_until": "2026-11-11",
+    "partial_credit": 0,
+    "past_debt": 0,
+    "recalculated": 0,
+    "reconciles": true,
+    "refundable": 100000,
+    "refunded": 0,
+    "segments": [
+     {
+      "amount": 200000,
+      "begun": true,
+      "covered_days": 9,
+      "ended": false,
+      "forgiven": 0,
+      "kind": "period",
+      "money": 200000,
+      "period_end": "2026-11-30",
+      "period_start": "2026-11-01",
+      "recalculated": 0,
+      "unpaid": 0
+     }
+    ],
+    "transferred_in": 0,
+    "transferred_out": 0,
+    "written_off": 0,
+    "written_off_granted": 300000
+   }
+  },
+  "balances_advance": {
+   "advance_total": null,
+   "items": [
+    "Ученик Лямбда | Второй ОМ | 67000",
+    "Ученик Хи | Общий | 100000"
+   ],
+   "total": 2
+  },
+  "income": {
+   "checks": [
+    {
+     "code": "received_eq_strip",
+     "diff": 0,
+     "left": 1700000,
+     "right": 1700000
+    },
+    {
+     "code": "refunded_eq_rows",
+     "diff": 0,
+     "left": 0,
+     "right": 0
+    },
+    {
+     "code": "received_eq_methods",
+     "diff": 0,
+     "left": 1700000,
+     "right": 1700000
+    },
+    {
+     "code": "received_eq_series",
+     "diff": 0,
+     "left": 1700000,
+     "right": 1700000
+    },
+    {
+     "code": "received_eq_journal",
+     "diff": 0,
+     "left": 1700000,
+     "right": 1700000
+    },
+    {
+     "code": "strip_current_eq_journal",
+     "diff": 0,
+     "left": 1200000,
+     "right": 1200000
+    },
+    {
+     "code": "strip_advance_eq_journal",
+     "diff": 0,
+     "left": 100000,
+     "right": 100000
+    },
+    {
+     "code": "strip_transferred_eq_journal",
+     "diff": 0,
+     "left": 400000,
+     "right": 400000
+    }
+   ],
+   "current": {
+    "net_received": 1700000,
+    "payments_count": 4,
+    "received": 1700000,
+    "refunded": 0,
+    "refunded_from_received": 0,
+    "to_advance": 100000,
+    "to_current": 1200000,
+    "to_forward": 0,
+    "to_past_debt": 0,
+    "transferred": 400000,
+    "written_off": 0
+   },
+   "position": {
+    "advance_total": 167000,
+    "debt_text": "Долг 700 000 сум",
+    "debt_total": 700000,
+    "debtors": 2,
+    "due_students": 0,
+    "due_text": null,
+    "due_total": 0,
+    "memberships_with_advance": 2,
+    "memberships_with_debt": 2,
+    "students_with_advance": 2
+   }
+  },
+  "statements": {
+   "Алия | Группа": {
+    "rows": [],
+    "summary": {
+     "advance": 0,
+     "charged": 0,
+     "debt_amount": 0,
+     "due_amount": 0,
+     "paid": 0,
+     "recalculated": 0,
+     "reconciles": true,
+     "refunded": 0,
+     "transferred_in": 0,
+     "transferred_out": 0,
+     "unpaid": 0,
+     "written_off": 0
+    }
+   },
+   "Бек | Группа": {
+    "rows": [],
+    "summary": {
+     "advance": 0,
+     "charged": 0,
+     "debt_amount": 0,
+     "due_amount": 0,
+     "paid": 0,
+     "recalculated": 0,
+     "reconciles": true,
+     "refunded": 0,
+     "transferred_in": 0,
+     "transferred_out": 0,
+     "unpaid": 0,
+     "written_off": 0
+    }
+   },
+   "Дана | Группа": {
+    "rows": [],
+    "summary": {
+     "advance": 0,
+     "charged": 0,
+     "debt_amount": 0,
+     "due_amount": 0,
+     "paid": 0,
+     "recalculated": 0,
+     "reconciles": true,
+     "refunded": 0,
+     "transferred_in": 0,
+     "transferred_out": 0,
+     "unpaid": 0,
+     "written_off": 0
+    }
+   },
+   "Йота | Общий": {
+    "rows": [
+     {
+      "credit": 0,
+      "date": "2026-11-03",
+      "debit": 600000,
+      "outflow": 0,
+      "type": "charge"
+     },
+     {
+      "credit": 200000,
+      "date": "2026-11-03",
+      "debit": 0,
+      "outflow": 0,
+      "type": "payment"
+     }
+    ],
+    "summary": {
+     "advance": 0,
+     "charged": 600000,
+     "debt_amount": 400000,
+     "due_amount": 0,
+     "paid": 200000,
+     "recalculated": 0,
+     "reconciles": true,
+     "refunded": 0,
+     "transferred_in": 0,
+     "transferred_out": 0,
+     "unpaid": 400000,
+     "written_off": 0
+    }
+   },
+   "Каппа | Общий": {
+    "rows": [
+     {
+      "credit": 0,
+      "date": "2026-11-03",
+      "debit": 300000,
+      "outflow": 0,
+      "type": "charge"
+     },
+     {
+      "credit": 0,
+      "date": "2026-11-17",
+      "debit": 0,
+      "outflow": 0,
+      "type": "pause"
+     }
+    ],
+    "summary": {
+     "advance": 0,
+     "charged": 300000,
+     "debt_amount": 300000,
+     "due_amount": 0,
+     "paid": 0,
+     "recalculated": 0,
+     "reconciles": true,
+     "refunded": 0,
+     "transferred_in": 0,
+     "transferred_out": 0,
+     "unpaid": 300000,
+     "written_off": 0
+    }
+   },
+   "Лямбда | Второй ОМ": {
+    "rows": [
+     {
+      "credit": 0,
+      "date": "2026-11-11",
+      "debit": 333000,
+      "outflow": 0,
+      "type": "charge"
+     },
+     {
+      "credit": 400000,
+      "date": "2026-11-11",
+      "debit": 0,
+      "outflow": 0,
+      "type": "transfer_in"
+     }
+    ],
+    "summary": {
+     "advance": 67000,
+     "charged": 333000,
+     "debt_amount": 0,
+     "due_amount": 0,
+     "paid": 0,
+     "recalculated": 0,
+     "reconciles": true,
+     "refunded": 0,
+     "transferred_in": 400000,
+     "transferred_out": 0,
+     "unpaid": 0,
+     "written_off": 0
+    }
+   },
+   "Лямбда | Общий": {
+    "rows": [
+     {
+      "credit": 0,
+      "date": "2026-11-03",
+      "debit": 200000,
+      "outflow": 0,
+      "type": "charge"
+     },
+     {
+      "credit": 600000,
+      "date": "2026-11-03",
+      "debit": 0,
+      "outflow": 0,
+      "type": "payment"
+     },
+     {
+      "credit": 0,
+      "date": "2026-11-11",
+      "debit": 0,
+      "outflow": 400000,
+      "type": "transfer_out"
+     }
+    ],
+    "summary": {
+     "advance": 0,
+     "charged": 200000,
+     "debt_amount": 0,
+     "due_amount": 0,
+     "paid": 600000,
+     "recalculated": 0,
+     "reconciles": true,
+     "refunded": 0,
+     "transferred_in": 0,
+     "transferred_out": 400000,
+     "unpaid": 0,
+     "written_off": 0
+    }
+   },
+   "Ученик ОМ | Общий": {
+    "rows": [
+     {
+      "credit": 0,
+      "date": "2026-11-03",
+      "debit": 600000,
+      "outflow": 0,
+      "type": "charge"
+     },
+     {
+      "credit": 600000,
+      "date": "2026-11-03",
+      "debit": 0,
+      "outflow": 0,
+      "type": "payment"
+     }
+    ],
+    "summary": {
+     "advance": 0,
+     "charged": 600000,
+     "debt_amount": 0,
+     "due_amount": 0,
+     "paid": 600000,
+     "recalculated": 0,
+     "reconciles": true,
+     "refunded": 0,
+     "transferred_in": 0,
+     "transferred_out": 0,
+     "unpaid": 0,
+     "written_off": 0
+    }
+   },
+   "Хи | Общий": {
+    "rows": [
+     {
+      "credit": 0,
+      "date": "2026-11-03",
+      "debit": 200000,
+      "outflow": 0,
+      "type": "charge"
+     },
+     {
+      "credit": 300000,
+      "date": "2026-11-03",
+      "debit": 0,
+      "outflow": 0,
+      "type": "payment"
+     },
+     {
+      "credit": 0,
+      "date": "2026-11-03",
+      "debit": 0,
+      "outflow": 0,
+      "type": "writeoff"
+     }
+    ],
+    "summary": {
+     "advance": 100000,
+     "charged": 200000,
+     "debt_amount": 0,
+     "due_amount": 0,
+     "paid": 300000,
+     "recalculated": 0,
+     "reconciles": true,
+     "refunded": 0,
+     "transferred_in": 0,
+     "transferred_out": 0,
+     "unpaid": 0,
+     "written_off": 0
+    }
+   }
+  },
+  "status": {
+   "active": {
+    "amount_total": 0,
+    "items": [
+     {
+      "advance": 67000,
+      "debt_amount": 0,
+      "due_amount": 0,
+      "due_until": null,
+      "is_active": true,
+      "lessons_left": null,
+      "overdue_days": null,
+      "paid_until": "2026-12-04",
+      "partial_credit": 2484,
+      "refundable": 67000,
+      "status": "active",
+      "unpaid": 0,
+      "who": "Ученик Лямбда | Второй ОМ"
+     },
+     {
+      "advance": 0,
+      "debt_amount": 0,
+      "due_amount": 0,
+      "due_until": null,
+      "is_active": true,
+      "lessons_left": null,
+      "overdue_days": null,
+      "paid_until": "2026-11-30",
+      "partial_credit": 0,
+      "refundable": 0,
+      "status": "active",
+      "unpaid": 0,
+      "who": "Ученик Ученик ОМ | Общий"
+     }
+    ],
+    "students": 2,
+    "total": 2
+   },
+   "debtors": {
+    "amount_total": 700000,
+    "items": [
+     {
+      "advance": 0,
+      "debt_amount": 400000,
+      "due_amount": 0,
+      "due_until": null,
+      "is_active": true,
+      "lessons_left": null,
+      "overdue_days": 4,
+      "paid_until": "2026-11-11",
+      "partial_credit": 7143,
+      "refundable": 0,
+      "status": "active",
+      "unpaid": 400000,
+      "who": "Ученик Йота | Общий"
+     },
+     {
+      "advance": 0,
+      "debt_amount": 300000,
+      "due_amount": 0,
+      "due_until": null,
+      "is_active": true,
+      "lessons_left": null,
+      "overdue_days": 4,
+      "paid_until": "2026-11-02",
+      "partial_credit": 0,
+      "refundable": 0,
+      "status": "active",
+      "unpaid": 300000,
+      "who": "Ученик Каппа | Общий"
+     }
+    ],
+    "students": 2,
+    "total": 2
+   },
+   "expiring": {
+    "amount_total": 0,
+    "items": [],
+    "students": 0,
+    "total": 0
+   },
+   "paused": {
+    "amount_total": 0,
+    "items": [],
+    "students": 0,
+    "total": 0
+   },
+   "to_pay": {
+    "amount_total": 0,
+    "items": [],
+    "students": 0,
+    "total": 0
+   }
+  },
+  "summary": {
+   "active": 2,
+   "advance_total": 167000,
+   "bucket_rows": {
+    "active": 2,
+    "debtors": 2,
+    "expiring": 0,
+    "paused": 0,
+    "to_pay": 0
+   },
+   "buckets": {
+    "active": 2,
+    "debtors": 2,
+    "expiring": 0,
+    "paused": 0,
+    "to_pay": 0
+   },
+   "debt_total": 700000,
+   "debtors": 2,
+   "due_students": 0,
+   "due_total": 0,
+   "ends_today": 1,
+   "expiring": 0,
+   "free": 0,
+   "memberships_with_debt": 2,
+   "none": 3,
+   "paused": 0,
+   "students_with_advance": 2,
+   "tracked_total": 7
+  }
+ },
+ "common 2026-11-25": {
+  "accounts": {
+   "Алия | Группа": {
+    "advance": 0,
+    "charged": 0,
+    "covered_through": null,
+    "current_due": 0,
+    "debt": 0,
+    "paid": 0,
+    "paid_until": null,
+    "partial_credit": 0,
+    "past_debt": 0,
+    "recalculated": 0,
+    "reconciles": true,
+    "refundable": 0,
+    "refunded": 0,
+    "segments": [
+     {
+      "amount": 0,
+      "begun": true,
+      "covered_days": 0,
+      "ended": true,
+      "forgiven": 0,
+      "kind": "period",
+      "money": 0,
+      "period_end": "2026-10-31",
+      "period_start": "2026-10-01",
+      "recalculated": 0,
+      "unpaid": 0
+     },
+     {
+      "amount": 0,
+      "begun": true,
+      "covered_days": 0,
+      "ended": false,
+      "forgiven": 0,
+      "kind": "period",
+      "money": 0,
+      "period_end": "2026-11-30",
+      "period_start": "2026-11-01",
+      "recalculated": 0,
+      "unpaid": 0
+     }
+    ],
+    "transferred_in": 0,
+    "transferred_out": 0,
+    "written_off": 0,
+    "written_off_granted": 0
+   },
+   "Бек | Группа": {
+    "advance": 0,
+    "charged": 0,
+    "covered_through": null,
+    "current_due": 0,
+    "debt": 0,
+    "paid": 0,
+    "paid_until": null,
+    "partial_credit": 0,
+    "past_debt": 0,
+    "recalculated": 0,
+    "reconciles": true,
+    "refundable": 0,
+    "refunded": 0,
+    "segments": [
+     {
+      "amount": 0,
+      "begun": true,
+      "covered_days": 0,
+      "ended": true,
+      "forgiven": 0,
+      "kind": "period",
+      "money": 0,
+      "period_end": "2026-10-31",
+      "period_start": "2026-10-01",
+      "recalculated": 0,
+      "unpaid": 0
+     },
+     {
+      "amount": 0,
+      "begun": true,
+      "covered_days": 0,
+      "ended": false,
+      "forgiven": 0,
+      "kind": "period",
+      "money": 0,
+      "period_end": "2026-11-30",
+      "period_start": "2026-11-01",
+      "recalculated": 0,
+      "unpaid": 0
+     }
+    ],
+    "transferred_in": 0,
+    "transferred_out": 0,
+    "written_off": 0,
+    "written_off_granted": 0
+   },
+   "Дана | Группа": {
+    "advance": 0,
+    "charged": 0,
+    "covered_through": null,
+    "current_due": 0,
+    "debt": 0,
+    "paid": 0,
+    "paid_until": null,
+    "partial_credit": 0,
+    "past_debt": 0,
+    "recalculated": 0,
+    "reconciles": true,
+    "refundable": 0,
+    "refunded": 0,
+    "segments": [
+     {
+      "amount": 0,
+      "begun": true,
+      "covered_days": 0,
+      "ended": true,
+      "forgiven": 0,
+      "kind": "period",
+      "money": 0,
+      "period_end": "2026-10-31",
+      "period_start": "2026-10-01",
+      "recalculated": 0,
+      "unpaid": 0
+     },
+     {
+      "amount": 0,
+      "begun": true,
+      "covered_days": 0,
+      "ended": false,
+      "forgiven": 0,
+      "kind": "period",
+      "money": 0,
+      "period_end": "2026-11-30",
+      "period_start": "2026-11-01",
+      "recalculated": 0,
+      "unpaid": 0
+     }
+    ],
+    "transferred_in": 0,
+    "transferred_out": 0,
+    "written_off": 0,
+    "written_off_granted": 0
+   },
+   "Йота | Общий": {
+    "advance": 0,
+    "charged": 600000,
+    "covered_through": "2026-11-11",
+    "current_due": 400000,
+    "debt": 400000,
+    "paid": 200000,
+    "paid_until": "2026-11-11",
+    "partial_credit": 7143,
+    "past_debt": 0,
+    "recalculated": 0,
+    "reconciles": true,
+    "refundable": 0,
+    "refunded": 0,
+    "segments": [
+     {
+      "amount": 600000,
+      "begun": true,
+      "covered_days": 9,
+      "ended": false,
+      "forgiven": 0,
+      "kind": "period",
+      "money": 200000,
+      "period_end": "2026-11-30",
+      "period_start": "2026-11-01",
+      "recalculated": 0,
+      "unpaid": 400000
+     }
+    ],
+    "transferred_in": 0,
+    "transferred_out": 0,
+    "written_off": 0,
+    "written_off_granted": 0
+   },
+   "Каппа | Общий": {
+    "advance": 0,
+    "charged": 300000,
+    "covered_through": "2026-11-02",
+    "current_due": 300000,
+    "debt": 300000,
+    "paid": 0,
+    "paid_until": "2026-11-02",
+    "partial_credit": 0,
+    "past_debt": 0,
+    "recalculated": 0,
+    "reconciles": true,
+    "refundable": 0,
+    "refunded": 0,
+    "segments": [
+     {
+      "amount": 300000,
+      "begun": true,
+      "covered_days": 0,
+      "ended": false,
+      "forgiven": 0,
+      "kind": "period",
+      "money": 0,
+      "period_end": "2026-11-30",
+      "period_start": "2026-11-01",
+      "recalculated": 0,
+      "unpaid": 300000
+     }
+    ],
+    "transferred_in": 0,
+    "transferred_out": 0,
+    "written_off": 0,
+    "written_off_granted": 0
+   },
+   "Лямбда | Второй ОМ": {
+    "advance": 67000,
+    "charged": 333000,
+    "covered_through": "2026-12-04",
+    "current_due": 0,
+    "debt": 0,
+    "paid": 0,
+    "paid_until": "2026-12-04",
+    "partial_credit": 2484,
+    "past_debt": 0,
+    "recalculated": 0,
+    "reconciles": true,
+    "refundable": 67000,
+    "refunded": 0,
+    "segments": [
+     {
+      "amount": 333000,
+      "begun": true,
+      "covered_days": 20,
+      "ended": false,
+      "forgiven": 0,
+      "kind": "period",
+      "money": 333000,
+      "period_end": "2026-11-30",
+      "period_start": "2026-11-01",
+      "recalculated": 0,
+      "unpaid": 0
+     },
+     {
+      "amount": 500000,
+      "begun": false,
+      "covered_days": 4,
+      "ended": false,
+      "forgiven": 0,
+      "kind": "period",
+      "money": 67000,
+      "period_end": "2026-12-31",
+      "period_start": "2026-12-01",
+      "recalculated": 0,
+      "unpaid": 433000
+     }
+    ],
+    "transferred_in": 400000,
+    "transferred_out": 0,
+    "written_off": 0,
+    "written_off_granted": 0
+   },
+   "Лямбда | Общий": {
+    "advance": 0,
+    "charged": 200000,
+    "covered_through": "2026-11-11",
+    "current_due": 0,
+    "debt": 0,
+    "paid": 600000,
+    "paid_until": null,
+    "partial_credit": 0,
+    "past_debt": 0,
+    "recalculated": 0,
+    "reconciles": true,
+    "refundable": 0,
+    "refunded": 0,
+    "segments": [
+     {
+      "amount": 200000,
+      "begun": true,
+      "covered_days": 9,
+      "ended": false,
+      "forgiven": 0,
+      "kind": "period",
+      "money": 200000,
+      "period_end": "2026-11-30",
+      "period_start": "2026-11-01",
+      "recalculated": 0,
+      "unpaid": 0
+     }
+    ],
+    "transferred_in": 0,
+    "transferred_out": 400000,
+    "written_off": 0,
+    "written_off_granted": 0
+   },
+   "Ученик ОМ | Общий": {
+    "advance": 0,
+    "charged": 600000,
+    "covered_through": "2026-11-30",
+    "current_due": 0,
+    "debt": 0,
+    "paid": 600000,
+    "paid_until": "2026-11-30",
+    "partial_credit": 0,
+    "past_debt": 0,
+    "recalculated": 0,
+    "reconciles": true,
+    "refundable": 0,
+    "refunded": 0,
+    "segments": [
+     {
+      "amount": 600000,
+      "begun": true,
+      "covered_days": 28,
+      "ended": false,
+      "forgiven": 0,
+      "kind": "period",
+      "money": 600000,
+      "period_end": "2026-11-30",
+      "period_start": "2026-11-01",
+      "recalculated": 0,
+      "unpaid": 0
+     }
+    ],
+    "transferred_in": 0,
+    "transferred_out": 0,
+    "written_off": 0,
+    "written_off_granted": 0
+   },
+   "Хи | Общий": {
+    "advance": 100000,
+    "charged": 200000,
+    "covered_through": "2026-11-11",
+    "current_due": 0,
+    "debt": 0,
+    "paid": 300000,
+    "paid_until": null,
+    "partial_credit": 0,
+    "past_debt": 0,
+    "recalculated": 0,
+    "reconciles": true,
+    "refundable": 100000,
+    "refunded": 0,
+    "segments": [
+     {
+      "amount": 200000,
+      "begun": true,
+      "covered_days": 9,
+      "ended": false,
+      "forgiven": 0,
+      "kind": "period",
+      "money": 200000,
+      "period_end": "2026-11-30",
+      "period_start": "2026-11-01",
+      "recalculated": 0,
+      "unpaid": 0
+     }
+    ],
+    "transferred_in": 0,
+    "transferred_out": 0,
+    "written_off": 0,
+    "written_off_granted": 300000
+   }
+  },
+  "balances_advance": {
+   "advance_total": null,
+   "items": [
+    "Ученик Лямбда | Второй ОМ | 67000",
+    "Ученик Хи | Общий | 100000"
+   ],
+   "total": 2
+  },
+  "income": {
+   "checks": [
+    {
+     "code": "received_eq_strip",
+     "diff": 0,
+     "left": 1700000,
+     "right": 1700000
+    },
+    {
+     "code": "refunded_eq_rows",
+     "diff": 0,
+     "left": 0,
+     "right": 0
+    },
+    {
+     "code": "received_eq_methods",
+     "diff": 0,
+     "left": 1700000,
+     "right": 1700000
+    },
+    {
+     "code": "received_eq_series",
+     "diff": 0,
+     "left": 1700000,
+     "right": 1700000
+    },
+    {
+     "code": "received_eq_journal",
+     "diff": 0,
+     "left": 1700000,
+     "right": 1700000
+    },
+    {
+     "code": "strip_current_eq_journal",
+     "diff": 0,
+     "left": 1200000,
+     "right": 1200000
+    },
+    {
+     "code": "strip_advance_eq_journal",
+     "diff": 0,
+     "left": 100000,
+     "right": 100000
+    },
+    {
+     "code": "strip_transferred_eq_journal",
+     "diff": 0,
+     "left": 400000,
+     "right": 400000
+    }
+   ],
+   "current": {
+    "net_received": 1700000,
+    "payments_count": 4,
+    "received": 1700000,
+    "refunded": 0,
+    "refunded_from_received": 0,
+    "to_advance": 100000,
+    "to_current": 1200000,
+    "to_forward": 0,
+    "to_past_debt": 0,
+    "transferred": 400000,
+    "written_off": 0
+   },
+   "position": {
+    "advance_total": 167000,
+    "debt_text": "Долг 700 000 сум",
+    "debt_total": 700000,
+    "debtors": 2,
+    "due_students": 0,
+    "due_text": null,
+    "due_total": 0,
+    "memberships_with_advance": 2,
+    "memberships_with_debt": 2,
+    "students_with_advance": 2
+   }
+  },
+  "statements": {
+   "Алия | Группа": {
+    "rows": [],
+    "summary": {
+     "advance": 0,
+     "charged": 0,
+     "debt_amount": 0,
+     "due_amount": 0,
+     "paid": 0,
+     "recalculated": 0,
+     "reconciles": true,
+     "refunded": 0,
+     "transferred_in": 0,
+     "transferred_out": 0,
+     "unpaid": 0,
+     "written_off": 0
+    }
+   },
+   "Бек | Группа": {
+    "rows": [],
+    "summary": {
+     "advance": 0,
+     "charged": 0,
+     "debt_amount": 0,
+     "due_amount": 0,
+     "paid": 0,
+     "recalculated": 0,
+     "reconciles": true,
+     "refunded": 0,
+     "transferred_in": 0,
+     "transferred_out": 0,
+     "unpaid": 0,
+     "written_off": 0
+    }
+   },
+   "Дана | Группа": {
+    "rows": [],
+    "summary": {
+     "advance": 0,
+     "charged": 0,
+     "debt_amount": 0,
+     "due_amount": 0,
+     "paid": 0,
+     "recalculated": 0,
+     "reconciles": true,
+     "refunded": 0,
+     "transferred_in": 0,
+     "transferred_out": 0,
+     "unpaid": 0,
+     "written_off": 0
+    }
+   },
+   "Йота | Общий": {
+    "rows": [
+     {
+      "credit": 0,
+      "date": "2026-11-03",
+      "debit": 600000,
+      "outflow": 0,
+      "type": "charge"
+     },
+     {
+      "credit": 200000,
+      "date": "2026-11-03",
+      "debit": 0,
+      "outflow": 0,
+      "type": "payment"
+     }
+    ],
+    "summary": {
+     "advance": 0,
+     "charged": 600000,
+     "debt_amount": 400000,
+     "due_amount": 0,
+     "paid": 200000,
+     "recalculated": 0,
+     "reconciles": true,
+     "refunded": 0,
+     "transferred_in": 0,
+     "transferred_out": 0,
+     "unpaid": 400000,
+     "written_off": 0
+    }
+   },
+   "Каппа | Общий": {
+    "rows": [
+     {
+      "credit": 0,
+      "date": "2026-11-03",
+      "debit": 300000,
+      "outflow": 0,
+      "type": "charge"
+     },
+     {
+      "credit": 0,
+      "date": "2026-11-17",
+      "debit": 0,
+      "outflow": 0,
+      "type": "pause"
+     }
+    ],
+    "summary": {
+     "advance": 0,
+     "charged": 300000,
+     "debt_amount": 300000,
+     "due_amount": 0,
+     "paid": 0,
+     "recalculated": 0,
+     "reconciles": true,
+     "refunded": 0,
+     "transferred_in": 0,
+     "transferred_out": 0,
+     "unpaid": 300000,
+     "written_off": 0
+    }
+   },
+   "Лямбда | Второй ОМ": {
+    "rows": [
+     {
+      "credit": 0,
+      "date": "2026-11-11",
+      "debit": 333000,
+      "outflow": 0,
+      "type": "charge"
+     },
+     {
+      "credit": 400000,
+      "date": "2026-11-11",
+      "debit": 0,
+      "outflow": 0,
+      "type": "transfer_in"
+     }
+    ],
+    "summary": {
+     "advance": 67000,
+     "charged": 333000,
+     "debt_amount": 0,
+     "due_amount": 0,
+     "paid": 0,
+     "recalculated": 0,
+     "reconciles": true,
+     "refunded": 0,
+     "transferred_in": 400000,
+     "transferred_out": 0,
+     "unpaid": 0,
+     "written_off": 0
+    }
+   },
+   "Лямбда | Общий": {
+    "rows": [
+     {
+      "credit": 0,
+      "date": "2026-11-03",
+      "debit": 200000,
+      "outflow": 0,
+      "type": "charge"
+     },
+     {
+      "credit": 600000,
+      "date": "2026-11-03",
+      "debit": 0,
+      "outflow": 0,
+      "type": "payment"
+     },
+     {
+      "credit": 0,
+      "date": "2026-11-11",
+      "debit": 0,
+      "outflow": 400000,
+      "type": "transfer_out"
+     }
+    ],
+    "summary": {
+     "advance": 0,
+     "charged": 200000,
+     "debt_amount": 0,
+     "due_amount": 0,
+     "paid": 600000,
+     "recalculated": 0,
+     "reconciles": true,
+     "refunded": 0,
+     "transferred_in": 0,
+     "transferred_out": 400000,
+     "unpaid": 0,
+     "written_off": 0
+    }
+   },
+   "Ученик ОМ | Общий": {
+    "rows": [
+     {
+      "credit": 0,
+      "date": "2026-11-03",
+      "debit": 600000,
+      "outflow": 0,
+      "type": "charge"
+     },
+     {
+      "credit": 600000,
+      "date": "2026-11-03",
+      "debit": 0,
+      "outflow": 0,
+      "type": "payment"
+     }
+    ],
+    "summary": {
+     "advance": 0,
+     "charged": 600000,
+     "debt_amount": 0,
+     "due_amount": 0,
+     "paid": 600000,
+     "recalculated": 0,
+     "reconciles": true,
+     "refunded": 0,
+     "transferred_in": 0,
+     "transferred_out": 0,
+     "unpaid": 0,
+     "written_off": 0
+    }
+   },
+   "Хи | Общий": {
+    "rows": [
+     {
+      "credit": 0,
+      "date": "2026-11-03",
+      "debit": 200000,
+      "outflow": 0,
+      "type": "charge"
+     },
+     {
+      "credit": 300000,
+      "date": "2026-11-03",
+      "debit": 0,
+      "outflow": 0,
+      "type": "payment"
+     },
+     {
+      "credit": 0,
+      "date": "2026-11-03",
+      "debit": 0,
+      "outflow": 0,
+      "type": "writeoff"
+     }
+    ],
+    "summary": {
+     "advance": 100000,
+     "charged": 200000,
+     "debt_amount": 0,
+     "due_amount": 0,
+     "paid": 300000,
+     "recalculated": 0,
+     "reconciles": true,
+     "refunded": 0,
+     "transferred_in": 0,
+     "transferred_out": 0,
+     "unpaid": 0,
+     "written_off": 0
+    }
+   }
+  },
+  "status": {
+   "active": {
+    "amount_total": 0,
+    "items": [
+     {
+      "advance": 67000,
+      "debt_amount": 0,
+      "due_amount": 0,
+      "due_until": null,
+      "is_active": true,
+      "lessons_left": null,
+      "overdue_days": null,
+      "paid_until": "2026-12-04",
+      "partial_credit": 2484,
+      "refundable": 67000,
+      "status": "active",
+      "unpaid": 0,
+      "who": "Ученик Лямбда | Второй ОМ"
+     },
+     {
+      "advance": 0,
+      "debt_amount": 0,
+      "due_amount": 0,
+      "due_until": null,
+      "is_active": true,
+      "lessons_left": null,
+      "overdue_days": null,
+      "paid_until": "2026-11-30",
+      "partial_credit": 0,
+      "refundable": 0,
+      "status": "active",
+      "unpaid": 0,
+      "who": "Ученик Ученик ОМ | Общий"
+     }
+    ],
+    "students": 2,
+    "total": 2
+   },
+   "debtors": {
+    "amount_total": 700000,
+    "items": [
+     {
+      "advance": 0,
+      "debt_amount": 400000,
+      "due_amount": 0,
+      "due_until": null,
+      "is_active": true,
+      "lessons_left": null,
+      "overdue_days": 18,
+      "paid_until": "2026-11-11",
+      "partial_credit": 7143,
+      "refundable": 0,
+      "status": "active",
+      "unpaid": 400000,
+      "who": "Ученик Йота | Общий"
+     },
+     {
+      "advance": 0,
+      "debt_amount": 300000,
+      "due_amount": 0,
+      "due_until": null,
+      "is_active": true,
+      "lessons_left": null,
+      "overdue_days": 9,
+      "paid_until": "2026-11-02",
+      "partial_credit": 0,
+      "refundable": 0,
+      "status": "paused",
+      "unpaid": 300000,
+      "who": "Ученик Каппа | Общий"
+     }
+    ],
+    "students": 2,
+    "total": 2
+   },
+   "expiring": {
+    "amount_total": 0,
+    "items": [],
+    "students": 0,
+    "total": 0
+   },
+   "paused": {
+    "amount_total": 0,
+    "items": [],
+    "students": 0,
+    "total": 0
+   },
+   "to_pay": {
+    "amount_total": 0,
+    "items": [],
+    "students": 0,
+    "total": 0
+   }
+  },
+  "summary": {
+   "active": 2,
+   "advance_total": 167000,
+   "bucket_rows": {
+    "active": 2,
+    "debtors": 2,
+    "expiring": 0,
+    "paused": 0,
+    "to_pay": 0
+   },
+   "buckets": {
+    "active": 2,
+    "debtors": 2,
+    "expiring": 0,
+    "paused": 0,
+    "to_pay": 0
+   },
+   "debt_total": 700000,
+   "debtors": 2,
+   "due_students": 0,
+   "due_total": 0,
+   "ends_today": 0,
+   "expiring": 0,
+   "free": 0,
+   "memberships_with_debt": 2,
+   "none": 3,
+   "paused": 1,
+   "students_with_advance": 2,
+   "tracked_total": 7
+  }
+ },
+ "common 2026-12-05": {
+  "accounts": {
+   "Алия | Группа": {
+    "advance": 0,
+    "charged": 0,
+    "covered_through": null,
+    "current_due": 0,
+    "debt": 0,
+    "paid": 0,
+    "paid_until": null,
+    "partial_credit": 0,
+    "past_debt": 0,
+    "recalculated": 0,
+    "reconciles": true,
+    "refundable": 0,
+    "refunded": 0,
+    "segments": [
+     {
+      "amount": 0,
+      "begun": true,
+      "covered_days": 0,
+      "ended": true,
+      "forgiven": 0,
+      "kind": "period",
+      "money": 0,
+      "period_end": "2026-10-31",
+      "period_start": "2026-10-01",
+      "recalculated": 0,
+      "unpaid": 0
+     },
+     {
+      "amount": 0,
+      "begun": true,
+      "covered_days": 0,
+      "ended": true,
+      "forgiven": 0,
+      "kind": "period",
+      "money": 0,
+      "period_end": "2026-11-30",
+      "period_start": "2026-11-01",
+      "recalculated": 0,
+      "unpaid": 0
+     },
+     {
+      "amount": 0,
+      "begun": true,
+      "covered_days": 0,
+      "ended": false,
+      "forgiven": 0,
+      "kind": "period",
+      "money": 0,
+      "period_end": "2026-12-31",
+      "period_start": "2026-12-01",
+      "recalculated": 0,
+      "unpaid": 0
+     }
+    ],
+    "transferred_in": 0,
+    "transferred_out": 0,
+    "written_off": 0,
+    "written_off_granted": 0
+   },
+   "Бек | Группа": {
+    "advance": 0,
+    "charged": 0,
+    "covered_through": null,
+    "current_due": 0,
+    "debt": 0,
+    "paid": 0,
+    "paid_until": null,
+    "partial_credit": 0,
+    "past_debt": 0,
+    "recalculated": 0,
+    "reconciles": true,
+    "refundable": 0,
+    "refunded": 0,
+    "segments": [
+     {
+      "amount": 0,
+      "begun": true,
+      "covered_days": 0,
+      "ended": true,
+      "forgiven": 0,
+      "kind": "period",
+      "money": 0,
+      "period_end": "2026-10-31",
+      "period_start": "2026-10-01",
+      "recalculated": 0,
+      "unpaid": 0
+     },
+     {
+      "amount": 0,
+      "begun": true,
+      "covered_days": 0,
+      "ended": true,
+      "forgiven": 0,
+      "kind": "period",
+      "money": 0,
+      "period_end": "2026-11-30",
+      "period_start": "2026-11-01",
+      "recalculated": 0,
+      "unpaid": 0
+     },
+     {
+      "amount": 0,
+      "begun": true,
+      "covered_days": 0,
+      "ended": false,
+      "forgiven": 0,
+      "kind": "period",
+      "money": 0,
+      "period_end": "2026-12-31",
+      "period_start": "2026-12-01",
+      "recalculated": 0,
+      "unpaid": 0
+     }
+    ],
+    "transferred_in": 0,
+    "transferred_out": 0,
+    "written_off": 0,
+    "written_off_granted": 0
+   },
+   "Дана | Группа": {
+    "advance": 0,
+    "charged": 0,
+    "covered_through": null,
+    "current_due": 0,
+    "debt": 0,
+    "paid": 0,
+    "paid_until": null,
+    "partial_credit": 0,
+    "past_debt": 0,
+    "recalculated": 0,
+    "reconciles": true,
+    "refundable": 0,
+    "refunded": 0,
+    "segments": [
+     {
+      "amount": 0,
+      "begun": true,
+      "covered_days": 0,
+      "ended": true,
+      "forgiven": 0,
+      "kind": "period",
+      "money": 0,
+      "period_end": "2026-10-31",
+      "period_start": "2026-10-01",
+      "recalculated": 0,
+      "unpaid": 0
+     },
+     {
+      "amount": 0,
+      "begun": true,
+      "covered_days": 0,
+      "ended": true,
+      "forgiven": 0,
+      "kind": "period",
+      "money": 0,
+      "period_end": "2026-11-30",
+      "period_start": "2026-11-01",
+      "recalculated": 0,
+      "unpaid": 0
+     },
+     {
+      "amount": 0,
+      "begun": true,
+      "covered_days": 0,
+      "ended": false,
+      "forgiven": 0,
+      "kind": "period",
+      "money": 0,
+      "period_end": "2026-12-31",
+      "period_start": "2026-12-01",
+      "recalculated": 0,
+      "unpaid": 0
+     }
+    ],
+    "transferred_in": 0,
+    "transferred_out": 0,
+    "written_off": 0,
+    "written_off_granted": 0
+   },
+   "Йота | Общий": {
+    "advance": 0,
+    "charged": 1200000,
+    "covered_through": "2026-11-11",
+    "current_due": 600000,
+    "debt": 1000000,
+    "paid": 200000,
+    "paid_until": "2026-11-11",
+    "partial_credit": 7143,
+    "past_debt": 400000,
+    "recalculated": 0,
+    "reconciles": true,
+    "refundable": 0,
+    "refunded": 0,
+    "segments": [
+     {
+      "amount": 600000,
+      "begun": true,
+      "covered_days": 9,
+      "ended": true,
+      "forgiven": 0,
+      "kind": "period",
+      "money": 200000,
+      "period_end": "2026-11-30",
+      "period_start": "2026-11-01",
+      "recalculated": 0,
+      "unpaid": 400000
+     },
+     {
+      "amount": 600000,
+      "begun": true,
+      "covered_days": 0,
+      "ended": false,
+      "forgiven": 0,
+      "kind": "period",
+      "money": 0,
+      "period_end": "2026-12-31",
+      "period_start": "2026-12-01",
+      "recalculated": 0,
+      "unpaid": 600000
+     }
+    ],
+    "transferred_in": 0,
+    "transferred_out": 0,
+    "written_off": 0,
+    "written_off_granted": 0
+   },
+   "Каппа | Общий": {
+    "advance": 0,
+    "charged": 900000,
+    "covered_through": "2026-11-02",
+    "current_due": 600000,
+    "debt": 900000,
+    "paid": 0,
+    "paid_until": "2026-11-02",
+    "partial_credit": 0,
+    "past_debt": 300000,
+    "recalculated": 0,
+    "reconciles": true,
+    "refundable": 0,
+    "refunded": 0,
+    "segments": [
+     {
+      "amount": 300000,
+      "begun": true,
+      "covered_days": 0,
+      "ended": true,
+      "forgiven": 0,
+      "kind": "period",
+      "money": 0,
+      "period_end": "2026-11-30",
+      "period_start": "2026-11-01",
+      "recalculated": 0,
+      "unpaid": 300000
+     },
+     {
+      "amount": 600000,
+      "begun": true,
+      "covered_days": 0,
+      "ended": false,
+      "forgiven": 0,
+      "kind": "period",
+      "money": 0,
+      "period_end": "2026-12-31",
+      "period_start": "2026-12-01",
+      "recalculated": 0,
+      "unpaid": 600000
+     }
+    ],
+    "transferred_in": 0,
+    "transferred_out": 0,
+    "written_off": 0,
+    "written_off_granted": 0
+   },
+   "Лямбда | Второй ОМ": {
+    "advance": 0,
+    "charged": 833000,
+    "covered_through": "2026-12-04",
+    "current_due": 433000,
+    "debt": 433000,
+    "paid": 0,
+    "paid_until": "2026-12-04",
+    "partial_credit": 2484,
+    "past_debt": 0,
+    "recalculated": 0,
+    "reconciles": true,
+    "refundable": 0,
+    "refunded": 0,
+    "segments": [
+     {
+      "amount": 333000,
+      "begun": true,
+      "covered_days": 20,
+      "ended": true,
+      "forgiven": 0,
+      "kind": "period",
+      "money": 333000,
+      "period_end": "2026-11-30",
+      "period_start": "2026-11-01",
+      "recalculated": 0,
+      "unpaid": 0
+     },
+     {
+      "amount": 500000,
+      "begun": true,
+      "covered_days": 4,
+      "ended": false,
+      "forgiven": 0,
+      "kind": "period",
+      "money": 67000,
+      "period_end": "2026-12-31",
+      "period_start": "2026-12-01",
+      "recalculated": 0,
+      "unpaid": 433000
+     }
+    ],
+    "transferred_in": 400000,
+    "transferred_out": 0,
+    "written_off": 0,
+    "written_off_granted": 0
+   },
+   "Лямбда | Общий": {
+    "advance": 0,
+    "charged": 200000,
+    "covered_through": "2026-11-11",
+    "current_due": 0,
+    "debt": 0,
+    "paid": 600000,
+    "paid_until": null,
+    "partial_credit": 0,
+    "past_debt": 0,
+    "recalculated": 0,
+    "reconciles": true,
+    "refundable": 0,
+    "refunded": 0,
+    "segments": [
+     {
+      "amount": 200000,
+      "begun": true,
+      "covered_days": 9,
+      "ended": true,
+      "forgiven": 0,
+      "kind": "period",
+      "money": 200000,
+      "period_end": "2026-11-30",
+      "period_start": "2026-11-01",
+      "recalculated": 0,
+      "unpaid": 0
+     }
+    ],
+    "transferred_in": 0,
+    "transferred_out": 400000,
+    "written_off": 0,
+    "written_off_granted": 0
+   },
+   "Ученик ОМ | Общий": {
+    "advance": 0,
+    "charged": 1200000,
+    "covered_through": "2026-11-30",
+    "current_due": 600000,
+    "debt": 600000,
+    "paid": 600000,
+    "paid_until": "2026-11-30",
+    "partial_credit": 0,
+    "past_debt": 0,
+    "recalculated": 0,
+    "reconciles": true,
+    "refundable": 0,
+    "refunded": 0,
+    "segments": [
+     {
+      "amount": 600000,
+      "begun": true,
+      "covered_days": 28,
+      "ended": true,
+      "forgiven": 0,
+      "kind": "period",
+      "money": 600000,
+      "period_end": "2026-11-30",
+      "period_start": "2026-11-01",
+      "recalculated": 0,
+      "unpaid": 0
+     },
+     {
+      "amount": 600000,
+      "begun": true,
+      "covered_days": 0,
+      "ended": false,
+      "forgiven": 0,
+      "kind": "period",
+      "money": 0,
+      "period_end": "2026-12-31",
+      "period_start": "2026-12-01",
+      "recalculated": 0,
+      "unpaid": 600000
+     }
+    ],
+    "transferred_in": 0,
+    "transferred_out": 0,
+    "written_off": 0,
+    "written_off_granted": 0
+   },
+   "Хи | Общий": {
+    "advance": 100000,
+    "charged": 200000,
+    "covered_through": "2026-11-11",
+    "current_due": 0,
+    "debt": 0,
+    "paid": 300000,
+    "paid_until": null,
+    "partial_credit": 0,
+    "past_debt": 0,
+    "recalculated": 0,
+    "reconciles": true,
+    "refundable": 100000,
+    "refunded": 0,
+    "segments": [
+     {
+      "amount": 200000,
+      "begun": true,
+      "covered_days": 9,
+      "ended": true,
+      "forgiven": 0,
+      "kind": "period",
+      "money": 200000,
+      "period_end": "2026-11-30",
+      "period_start": "2026-11-01",
+      "recalculated": 0,
+      "unpaid": 0
+     }
+    ],
+    "transferred_in": 0,
+    "transferred_out": 0,
+    "written_off": 0,
+    "written_off_granted": 300000
+   }
+  },
+  "balances_advance": {
+   "advance_total": null,
+   "items": [
+    "Ученик Хи | Общий | 100000"
+   ],
+   "total": 1
+  },
+  "income": {
+   "checks": [
+    {
+     "code": "received_eq_strip",
+     "diff": 0,
+     "left": 1700000,
+     "right": 1700000
+    },
+    {
+     "code": "refunded_eq_rows",
+     "diff": 0,
+     "left": 0,
+     "right": 0
+    },
+    {
+     "code": "received_eq_methods",
+     "diff": 0,
+     "left": 1700000,
+     "right": 1700000
+    },
+    {
+     "code": "received_eq_series",
+     "diff": 0,
+     "left": 1700000,
+     "right": 1700000
+    },
+    {
+     "code": "received_eq_journal",
+     "diff": 0,
+     "left": 1700000,
+     "right": 1700000
+    },
+    {
+     "code": "strip_current_eq_journal",
+     "diff": 0,
+     "left": 1200000,
+     "right": 1200000
+    },
+    {
+     "code": "strip_advance_eq_journal",
+     "diff": 0,
+     "left": 100000,
+     "right": 100000
+    },
+    {
+     "code": "strip_transferred_eq_journal",
+     "diff": 0,
+     "left": 400000,
+     "right": 400000
+    }
+   ],
+   "current": {
+    "net_received": 1700000,
+    "payments_count": 4,
+    "received": 1700000,
+    "refunded": 0,
+    "refunded_from_received": 0,
+    "to_advance": 100000,
+    "to_current": 1200000,
+    "to_forward": 0,
+    "to_past_debt": 0,
+    "transferred": 400000,
+    "written_off": 0
+   },
+   "position": {
+    "advance_total": 100000,
+    "debt_text": "Долг 700 000 сум",
+    "debt_total": 700000,
+    "debtors": 2,
+    "due_students": 4,
+    "due_text": "К оплате 2 233 000 сум",
+    "due_total": 2233000,
+    "memberships_with_advance": 1,
+    "memberships_with_debt": 2,
+    "students_with_advance": 1
+   }
+  },
+  "statements": {
+   "Алия | Группа": {
+    "rows": [],
+    "summary": {
+     "advance": 0,
+     "charged": 0,
+     "debt_amount": 0,
+     "due_amount": 0,
+     "paid": 0,
+     "recalculated": 0,
+     "reconciles": true,
+     "refunded": 0,
+     "transferred_in": 0,
+     "transferred_out": 0,
+     "unpaid": 0,
+     "written_off": 0
+    }
+   },
+   "Бек | Группа": {
+    "rows": [],
+    "summary": {
+     "advance": 0,
+     "charged": 0,
+     "debt_amount": 0,
+     "due_amount": 0,
+     "paid": 0,
+     "recalculated": 0,
+     "reconciles": true,
+     "refunded": 0,
+     "transferred_in": 0,
+     "transferred_out": 0,
+     "unpaid": 0,
+     "written_off": 0
+    }
+   },
+   "Дана | Группа": {
+    "rows": [],
+    "summary": {
+     "advance": 0,
+     "charged": 0,
+     "debt_amount": 0,
+     "due_amount": 0,
+     "paid": 0,
+     "recalculated": 0,
+     "reconciles": true,
+     "refunded": 0,
+     "transferred_in": 0,
+     "transferred_out": 0,
+     "unpaid": 0,
+     "written_off": 0
+    }
+   },
+   "Йота | Общий": {
+    "rows": [
+     {
+      "credit": 0,
+      "date": "2026-11-03",
+      "debit": 600000,
+      "outflow": 0,
+      "type": "charge"
+     },
+     {
+      "credit": 200000,
+      "date": "2026-11-03",
+      "debit": 0,
+      "outflow": 0,
+      "type": "payment"
+     },
+     {
+      "credit": 0,
+      "date": "2026-12-01",
+      "debit": 600000,
+      "outflow": 0,
+      "type": "charge"
+     }
+    ],
+    "summary": {
+     "advance": 0,
+     "charged": 1200000,
+     "debt_amount": 400000,
+     "due_amount": 600000,
+     "paid": 200000,
+     "recalculated": 0,
+     "reconciles": true,
+     "refunded": 0,
+     "transferred_in": 0,
+     "transferred_out": 0,
+     "unpaid": 1000000,
+     "written_off": 0
+    }
+   },
+   "Каппа | Общий": {
+    "rows": [
+     {
+      "credit": 0,
+      "date": "2026-11-03",
+      "debit": 300000,
+      "outflow": 0,
+      "type": "charge"
+     },
+     {
+      "credit": 0,
+      "date": "2026-11-17",
+      "debit": 0,
+      "outflow": 0,
+      "type": "pause"
+     },
+     {
+      "credit": 0,
+      "date": "2026-12-01",
+      "debit": 600000,
+      "outflow": 0,
+      "type": "charge"
+     }
+    ],
+    "summary": {
+     "advance": 0,
+     "charged": 900000,
+     "debt_amount": 300000,
+     "due_amount": 600000,
+     "paid": 0,
+     "recalculated": 0,
+     "reconciles": true,
+     "refunded": 0,
+     "transferred_in": 0,
+     "transferred_out": 0,
+     "unpaid": 900000,
+     "written_off": 0
+    }
+   },
+   "Лямбда | Второй ОМ": {
+    "rows": [
+     {
+      "credit": 0,
+      "date": "2026-11-11",
+      "debit": 333000,
+      "outflow": 0,
+      "type": "charge"
+     },
+     {
+      "credit": 400000,
+      "date": "2026-11-11",
+      "debit": 0,
+      "outflow": 0,
+      "type": "transfer_in"
+     },
+     {
+      "credit": 0,
+      "date": "2026-12-01",
+      "debit": 500000,
+      "outflow": 0,
+      "type": "charge"
+     }
+    ],
+    "summary": {
+     "advance": 0,
+     "charged": 833000,
+     "debt_amount": 0,
+     "due_amount": 433000,
+     "paid": 0,
+     "recalculated": 0,
+     "reconciles": true,
+     "refunded": 0,
+     "transferred_in": 400000,
+     "transferred_out": 0,
+     "unpaid": 433000,
+     "written_off": 0
+    }
+   },
+   "Лямбда | Общий": {
+    "rows": [
+     {
+      "credit": 0,
+      "date": "2026-11-03",
+      "debit": 200000,
+      "outflow": 0,
+      "type": "charge"
+     },
+     {
+      "credit": 600000,
+      "date": "2026-11-03",
+      "debit": 0,
+      "outflow": 0,
+      "type": "payment"
+     },
+     {
+      "credit": 0,
+      "date": "2026-11-11",
+      "debit": 0,
+      "outflow": 400000,
+      "type": "transfer_out"
+     }
+    ],
+    "summary": {
+     "advance": 0,
+     "charged": 200000,
+     "debt_amount": 0,
+     "due_amount": 0,
+     "paid": 600000,
+     "recalculated": 0,
+     "reconciles": true,
+     "refunded": 0,
+     "transferred_in": 0,
+     "transferred_out": 400000,
+     "unpaid": 0,
+     "written_off": 0
+    }
+   },
+   "Ученик ОМ | Общий": {
+    "rows": [
+     {
+      "credit": 0,
+      "date": "2026-11-03",
+      "debit": 600000,
+      "outflow": 0,
+      "type": "charge"
+     },
+     {
+      "credit": 600000,
+      "date": "2026-11-03",
+      "debit": 0,
+      "outflow": 0,
+      "type": "payment"
+     },
+     {
+      "credit": 0,
+      "date": "2026-12-01",
+      "debit": 600000,
+      "outflow": 0,
+      "type": "charge"
+     }
+    ],
+    "summary": {
+     "advance": 0,
+     "charged": 1200000,
+     "debt_amount": 0,
+     "due_amount": 600000,
+     "paid": 600000,
+     "recalculated": 0,
+     "reconciles": true,
+     "refunded": 0,
+     "transferred_in": 0,
+     "transferred_out": 0,
+     "unpaid": 600000,
+     "written_off": 0
+    }
+   },
+   "Хи | Общий": {
+    "rows": [
+     {
+      "credit": 0,
+      "date": "2026-11-03",
+      "debit": 200000,
+      "outflow": 0,
+      "type": "charge"
+     },
+     {
+      "credit": 300000,
+      "date": "2026-11-03",
+      "debit": 0,
+      "outflow": 0,
+      "type": "payment"
+     },
+     {
+      "credit": 0,
+      "date": "2026-11-03",
+      "debit": 0,
+      "outflow": 0,
+      "type": "writeoff"
+     }
+    ],
+    "summary": {
+     "advance": 100000,
+     "charged": 200000,
+     "debt_amount": 0,
+     "due_amount": 0,
+     "paid": 300000,
+     "recalculated": 0,
+     "reconciles": true,
+     "refunded": 0,
+     "transferred_in": 0,
+     "transferred_out": 0,
+     "unpaid": 0,
+     "written_off": 0
+    }
+   }
+  },
+  "status": {
+   "active": {
+    "amount_total": 0,
+    "items": [],
+    "students": 0,
+    "total": 0
+   },
+   "debtors": {
+    "amount_total": 700000,
+    "items": [
+     {
+      "advance": 0,
+      "debt_amount": 400000,
+      "due_amount": 600000,
+      "due_until": "2026-12-05",
+      "is_active": true,
+      "lessons_left": null,
+      "overdue_days": 28,
+      "paid_until": "2026-11-11",
+      "partial_credit": 7143,
+      "refundable": 0,
+      "status": "active",
+      "unpaid": 1000000,
+      "who": "Ученик Йота | Общий"
+     },
+     {
+      "advance": 0,
+      "debt_amount": 300000,
+      "due_amount": 600000,
+      "due_until": "2026-12-05",
+      "is_active": true,
+      "lessons_left": null,
+      "overdue_days": 14,
+      "paid_until": "2026-11-02",
+      "partial_credit": 0,
+      "refundable": 0,
+      "status": "active",
+      "unpaid": 900000,
+      "who": "Ученик Каппа | Общий"
+     }
+    ],
+    "students": 2,
+    "total": 2
+   },
+   "expiring": {
+    "amount_total": 0,
+    "items": [],
+    "students": 0,
+    "total": 0
+   },
+   "paused": {
+    "amount_total": 0,
+    "items": [],
+    "students": 0,
+    "total": 0
+   },
+   "to_pay": {
+    "amount_total": 2233000,
+    "items": [
+     {
+      "advance": 0,
+      "debt_amount": 400000,
+      "due_amount": 600000,
+      "due_until": "2026-12-05",
+      "is_active": true,
+      "lessons_left": null,
+      "overdue_days": 28,
+      "paid_until": "2026-11-11",
+      "partial_credit": 7143,
+      "refundable": 0,
+      "status": "active",
+      "unpaid": 1000000,
+      "who": "Ученик Йота | Общий"
+     },
+     {
+      "advance": 0,
+      "debt_amount": 300000,
+      "due_amount": 600000,
+      "due_until": "2026-12-05",
+      "is_active": true,
+      "lessons_left": null,
+      "overdue_days": 14,
+      "paid_until": "2026-11-02",
+      "partial_credit": 0,
+      "refundable": 0,
+      "status": "active",
+      "unpaid": 900000,
+      "who": "Ученик Каппа | Общий"
+     },
+     {
+      "advance": 0,
+      "debt_amount": 0,
+      "due_amount": 433000,
+      "due_until": "2026-12-05",
+      "is_active": true,
+      "lessons_left": null,
+      "overdue_days": null,
+      "paid_until": "2026-12-04",
+      "partial_credit": 2484,
+      "refundable": 0,
+      "status": "active",
+      "unpaid": 433000,
+      "who": "Ученик Лямбда | Второй ОМ"
+     },
+     {
+      "advance": 0,
+      "debt_amount": 0,
+      "due_amount": 600000,
+      "due_until": "2026-12-05",
+      "is_active": true,
+      "lessons_left": null,
+      "overdue_days": null,
+      "paid_until": "2026-11-30",
+      "partial_credit": 0,
+      "refundable": 0,
+      "status": "active",
+      "unpaid": 600000,
+      "who": "Ученик Ученик ОМ | Общий"
+     }
+    ],
+    "students": 4,
+    "total": 4
+   }
+  },
+  "summary": {
+   "active": 0,
+   "advance_total": 100000,
+   "bucket_rows": {
+    "active": 0,
+    "debtors": 2,
+    "expiring": 0,
+    "paused": 0,
+    "to_pay": 4
+   },
+   "buckets": {
+    "active": 0,
+    "debtors": 2,
+    "expiring": 0,
+    "paused": 0,
+    "to_pay": 4
+   },
+   "debt_total": 700000,
+   "debtors": 2,
+   "due_students": 4,
+   "due_total": 2233000,
+   "ends_today": 0,
+   "expiring": 0,
+   "free": 0,
+   "memberships_with_debt": 2,
+   "none": 3,
+   "paused": 0,
+   "students_with_advance": 1,
+   "tracked_total": 7
+  }
+ }
+}
