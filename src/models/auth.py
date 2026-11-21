@@ -2095,7 +2095,7 @@ class MoneyReconcileFinding(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
     run_id = Column(UUID(as_uuid=True), ForeignKey("money_reconcile_runs.id", ondelete="CASCADE"), nullable=False)
     org_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False)
-    invariant = Column(String(4), nullable=False)  # I-1 .. I-5
+    invariant = Column(String(4), nullable=False)  # I-1 .. I-6
     subject_key = Column(String(200), nullable=False)
     subject_id = Column(String(64), nullable=True)
     month = Column(String(7), nullable=True)
@@ -2106,7 +2106,7 @@ class MoneyReconcileFinding(Base):
     created_at = Column(DateTime, nullable=False, default=bc.utc_now, server_default=func.now())
 
     __table_args__ = (
-        CheckConstraint("invariant IN ('I-1', 'I-2', 'I-3', 'I-4', 'I-5')", name="ck_money_reconcile_findings_invariant"),
+        CheckConstraint("invariant IN ('I-1', 'I-2', 'I-3', 'I-4', 'I-5', 'I-6')", name="ck_money_reconcile_findings_invariant"),
         Index("ix_money_reconcile_findings_run", "run_id"),
         Index("ix_money_reconcile_findings_org_key", "org_id", "invariant", "subject_key"),
     )

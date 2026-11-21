@@ -80,7 +80,7 @@ def main(argv=None) -> int:
         print(f"baseline: the first night of {result['firstCentres']} centres - the money rows were taken as they are, no comparison")
     print("by invariant: " + " ".join(f"{k}={v}" for k, v in result["byInvariant"].items()))
     for item in result["items"][:200]:
-        print(f"  org={item['org']} {item['invariant']} key={item['key']} month={item['month']} expected={item['expected']} actual={item['actual']}")
+        print(f"  org={item['org']} {item['invariant']} key={item['key']} month={item['month']} expected={item['expected']} actual={item['actual']}" + (f" text={item['text']}" if item.get("text") else ""))
     if result["failed"]:
         print("failed centres: " + ", ".join(result["failed"]))
         for org_id in result["failed"]:

@@ -11,6 +11,7 @@ import os
 from datetime import date
 from pathlib import Path
 
+from src.auth import money_reconcile as mr
 from src.models.auth import Group, Student, StudentGroup
 
 from tests.money1b_helpers import account, add, fresh_student, set_schedule, slot, transfer
@@ -179,6 +180,9 @@ def check_golden(name: str, w, days, fixed_today):
     for day in days:
         fixed_today(day)
         shots[f"{name} {day}"] = snapshot(w, day)
+        w.db.expire_all()
+        probes = [f for f in mr.reconcile_org(w.db, w.org.id, today=day) if f.invariant == "I-6"]            # Б10: the probes of the night find nothing on the accounts of the golden worlds
+        assert probes == [], (name, day, [f.details["text"] for f in probes][:3])
     got = json.loads(json.dumps(shots, ensure_ascii=False, sort_keys=True, default=str))
     path = GOLDEN.with_name(f"money_{name}.json")
     if os.environ.get("PAYTAILS_GOLDEN_WRITE") == "1":

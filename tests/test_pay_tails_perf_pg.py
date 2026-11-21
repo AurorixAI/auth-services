@@ -71,3 +71,42 @@ def test_a_list_of_300_rows_when_every_account_has_three_lessons_cancelled_by_th
     if os.environ.get("PAYTAILS_PERF_FILE"):
         open(os.environ["PAYTAILS_PERF_FILE"], "a", encoding="utf-8").write(line + "\n")
     assert took < 60
+
+
+def test_the_nightly_run_over_300_accounts_with_a_forgiveness_before_and_after_i6(world, fixed_today, monkeypatch):
+    """PAY-TAILS Б10: the cost of the probes of I-6 in the night: the same run over one centre of 300 accounts, EVERY with a payment and a forgiveness, without the probes (as before) and with them.
+    The numbers are printed (``-s``); the test keeps the cost within a loose bound, and no I-6 on honest accounts."""
+    from src.auth import money_reconcile as mr
+    from tests.test_payments_service_pg import mid, pay
+
+    g = world_om(world, fixed_today, today=D(2026, 11, 3))
+    g.max_students = None
+    world.db.commit()
+    ids = [fresh_student(world, f"Ученик{i:03d}") for i in range(N)]
+    r = owner(world).post(f"{API}/org/groups/{g.id}/students/bulk", params={"mode": "add"}, json={"student_ids": [str(s.id) for s in ids]})
+    assert r.status_code == 200 and r.json()["added"] == N, r.text[:300]
+    for s in ids:
+        pay(world, s, g, amount=300_000, paid_on=D(2026, 11, 3))
+    fixed_today(D(2026, 11, 24))
+    for s in ids:
+        r = owner(world).post(f"{API}/org/memberships/{mid(world, s, g)}/writeoffs", json={"amount": 50_000, "reason": "болезнь", "effective_on": "2026-11-24"})
+        assert r.status_code == 201, r.text
+
+    def run_once():
+        world.db.expire_all()
+        start = time.perf_counter()
+        found = mr.reconcile_org(world.db, world.org.id)
+        return time.perf_counter() - start, found
+
+    with monkeypatch.context() as m:
+        m.setattr(mr, "check_probes", lambda *a, **k: [])
+        before = min(run_once()[0] for _ in range(3))
+    results = [run_once() for _ in range(3)]
+    after = min(t for t, _ in results)
+    assert [f for f in results[0][1] if f.invariant == "I-6"] == []
+    line = f"PERF night rows={N} with a forgiveness on every account: before I-6 {before:.2f}s, with I-6 {after:.2f}s"
+    print(line)
+    import os
+    if os.environ.get("PAYTAILS_PERF_FILE"):
+        open(os.environ["PAYTAILS_PERF_FILE"], "a", encoding="utf-8").write(line + "\n")
+    assert after < 120

@@ -44,7 +44,7 @@ def test_the_revision_sits_on_top_of_the_one_of_the_production():
     from alembic.script import ScriptDirectory
 
     script = ScriptDirectory.from_config(config())
-    assert script.get_heads() == [REVISION] and script.get_revision(REVISION).down_revision == BEFORE
+    assert script.get_heads() == ["mm22a1b2c3d4"] and script.get_revision("mm22a1b2c3d4").down_revision == REVISION and script.get_revision(REVISION).down_revision == BEFORE
 
 
 def test_up_down_up_the_baseline_the_counters_the_wider_checks_and_the_cascade(engine):
@@ -103,3 +103,12 @@ def test_the_wider_checks_are_validated_and_added_without_a_full_pass_under_the_
     assert len(rows) == 3 and all(valid for _, valid in rows)
     source = Path("alembic/versions/mm21a1b2c3d4_money2_row_baseline.py").read_text(encoding="utf-8")
     assert re.search(r"ADD CONSTRAINT .* NOT VALID", source) and "VALIDATE CONSTRAINT" in source
+
+
+def test_i6_the_invariant_of_the_probes_is_allowed_by_the_check_and_nothing_is_lost(engine):
+    """PAY-TAILS Б10, ``mm22a1b2c3d4``: the CHECK of the finding invariant takes ``I-6`` and keeps the old values; a second ``upgrade`` is harmless."""
+    cfg = config()
+    command.upgrade(cfg, "mm22a1b2c3d4")
+    command.upgrade(cfg, "mm22a1b2c3d4")
+    live = check(engine, "ck_money_reconcile_findings_invariant")
+    assert all(f"'{v}'" in live for v in ("I-1", "I-2", "I-3", "I-4", "I-5", "I-6"))

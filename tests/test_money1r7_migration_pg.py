@@ -36,7 +36,7 @@ def test_the_revision_is_the_head_and_follows_the_audit_key():
     from alembic.script import ScriptDirectory
 
     script = ScriptDirectory.from_config(config())
-    assert script.get_heads() == ["mm21a1b2c3d4"] and script.get_revision("mm21a1b2c3d4").down_revision == REVISION and script.get_revision(REVISION).down_revision == BEFORE
+    assert script.get_heads() == ["mm22a1b2c3d4"] and script.get_revision("mm21a1b2c3d4").down_revision == REVISION and script.get_revision(REVISION).down_revision == BEFORE
 
 
 def actions(engine):
@@ -63,4 +63,4 @@ def test_up_down_up_the_new_action_is_accepted_and_no_record_is_lost(engine):
     command.downgrade(cfg, BEFORE)
     assert version(engine) == BEFORE and actions(engine) == ["corrected", "excuse_reason_changed"]      # the rollback deletes nothing
     command.upgrade(cfg, "head")
-    assert version(engine) == "mm21a1b2c3d4" and actions(engine) == ["corrected", "excuse_reason_changed"]
+    assert version(engine) == "mm22a1b2c3d4" and actions(engine) == ["corrected", "excuse_reason_changed"]

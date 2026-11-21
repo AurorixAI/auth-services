@@ -31,5 +31,5 @@ def latest(p: Principal = Depends(require_platform("audit.view")), db: Session =
         rows = db.query(MoneyReconcileFinding, Organization.name).join(Organization, Organization.id == MoneyReconcileFinding.org_id).filter(
             MoneyReconcileFinding.run_id == nightly.id).order_by(MoneyReconcileFinding.invariant, MoneyReconcileFinding.org_id, MoneyReconcileFinding.subject_key).all()
         findings = [{"id": str(f.id), "orgId": str(f.org_id), "orgName": name, "invariant": f.invariant, "what": INVARIANT_TEXT.get(f.invariant), "subjectKey": f.subject_key, "subjectId": f.subject_id,
-                     "month": f.month, "expected": f.expected, "actual": f.actual, "details": f.details, "isNew": f.is_new} for f, name in rows]
+                     "month": f.month, "expected": f.expected, "actual": f.actual, "text": (f.details or {}).get("text"), "details": f.details, "isNew": f.is_new} for f, name in rows]
     return {"runs": [_run_out(r) for r in runs], "latest": _run_out(nightly) if nightly else None, "findings": findings}

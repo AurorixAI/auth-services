@@ -1,4 +1,4 @@
-"""Money-1 (A7): the nightly reconciliation of the invariants I-1 .. I-4 over all centres.
+"""Money-1 (A7): the nightly reconciliation of the invariants I-1 .. I-6 over all centres (I-6, PAY-TAILS Б10: the rules of the trial records on the live accounts - ``money_reconcile_probes.py``).
 
 Pure functions (``check_*``) say whether ONE thing diverges; the loader (``reconcile_org``) reads a centre and calls them; ``run`` writes the result (``money_reconcile_runs`` /
 ``_findings`` / ``_snapshots`` / ``_centres``) and tells the team; ``scripts/money_reconcile.py`` is the command.  A centre never sees any of it (the platform console reads the tables).
@@ -47,6 +47,7 @@ from src.models.auth import (
 from src.models.platform import PlatformStaff
 
 from . import business_clock as bc
+from . import money_reconcile_probes as mprobes
 from . import money_reconcile_rows as mrows
 from . import payroll_engine as engine
 from .billing_ledger import F_ADVANCE_EXCEEDS_MONEY
@@ -60,6 +61,7 @@ INVARIANT_TEXT = {
     "I-3": "сохранённая зарплата за месяц не сходится с уроками",
     "I-4": "в закрытом месяце остался урок без отметки",
     "I-5": "запись денег изменена, удалена или отменена мимо журнала",
+    "I-6": "пробная запись меняет счёт не так, как должна",
 }
 ROW_CODE_TEXT = {
     "changed": "запись изменена на месте", "deleted": "запись удалена", "reopened": "недопустимый переход записи (отмена снята или изменена)",
@@ -139,6 +141,14 @@ def check_rows(org_id: UUID, membership_id: Any, ledger, rows: RowSums) -> List[
     if F_ADVANCE_EXCEEDS_MONEY in getattr(ledger, "flags", ()):
         out.append(Found(org_id, "I-1", f"membership:{sid}:advance", sid, None, ledger.paid + ledger.transferred_in - ledger.refunded - ledger.transferred_out, ledger.advance, {"what": "advance_exceeds_money"}))
     return out
+
+
+def check_probes(org_id: UUID, membership_id: Any, inp, ledger) -> List[Found]:
+    """I-6 (PAY-TAILS Б10, read only): the rules of Б7 on the LIVE account of a membership that has a forgiveness - the state, a trial payment today and back-dated, a trial forgiveness.  The sentence of
+    a finding is in ``details['text']`` (the letter and the console show it as it is); the key is the probe + the broken rule, so the same hole says the same key every night."""
+    sid = str(membership_id)
+    return [Found(org_id, "I-6", f"membership:{sid}:{p.probe}:{p.rule}", sid, None, p.expected, p.actual, {"probe": p.probe, "rule": p.rule, "text": p.text, **p.details})
+            for p in mprobes.check_probes(inp, ledger)]
 
 
 INFO = "INFO"                                    # the level of a finding that is told, not counted: not in the findings of I-1, not in the letter, not in the table of findings
@@ -391,6 +401,7 @@ def reconcile_org(db, org_id: Any, today: Optional[date] = None, *, snapshots: O
                     found.append(item)
             if info is not None:
                 info.extend(check_info(org_uuid, mid, ledger))
+            found.extend(check_probes(org_uuid, mid, entry.inp, ledger))
             now = coverage_of(ledger)
             before = (old[mid].covered_through, old[mid].lessons_covered, old[mid].paid) if mid in old else None
             if before is None:
@@ -657,7 +668,7 @@ def _run_locked(db, *, apply: bool, mail: bool, today: Optional[date], budget_se
     out: Dict[str, Any] = {"centres": len(orgs), "failed": failed, "failedWhy": why, "findings": len(findings), "new": new_count, "apply": apply, "mail": "off",
                            "rows": rows_seen, "baselined": sum(v.baselined for v in plans.values()), "firstCentres": sum(1 for v in plans.values() if v.first), "notChecked": dict(sorted(not_checked.items())),
                            "byInvariant": {k: sum(1 for f in findings if f.invariant == k) for k in INVARIANT_TEXT},
-                           "items": [{"org": str(f.org_id), "invariant": f.invariant, "key": f.subject_key, "month": f.month, "expected": f.expected, "actual": f.actual} for f in findings],
+                           "items": [{"org": str(f.org_id), "invariant": f.invariant, "key": f.subject_key, "month": f.month, "expected": f.expected, "actual": f.actual, **({"text": f.details["text"]} if f.invariant == "I-6" else {})} for f in findings],
                            "info": [{"org": str(f.org_id), "level": "info", "what": f.details["what"], "key": f.subject_key, "expected": f.expected, "actual": f.actual} for f in told]}
     if not apply:
         return out
@@ -758,6 +769,8 @@ def _mail(findings: List[Found], new_count: int, failed: List[str], run_id: Any,
     try:
         if findings and new_count:
             def line(f: Found) -> Tuple[str, str]:
+                if f.invariant == "I-6":          # a sentence that reads without a key: «Проба оплаты 1 000 сум сегодня увеличила долг: было 0 сум, стало 420 000 сум»
+                    return (f"I-6 · центр {str(f.org_id)[:8]}", f"{f.details.get('text')}; участие {f.subject_id}")
                 return (f"{f.invariant} · центр {str(f.org_id)[:8]}", f"{INVARIANT_TEXT[f.invariant]}; {f.subject_key}" + (f"; {f.month}" if f.month else "") +
                         (f"; ожидалось {f.expected}, есть {f.actual}" if f.expected is not None or f.actual is not None else ""))
 
