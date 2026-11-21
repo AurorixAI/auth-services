@@ -151,58 +151,30 @@ def test_k1_known_deviation_a_pause_entered_between_the_forgiveness_and_a_paymen
     assert run(D(2026, 11, 7), replace(pay, on=D(2026, 11, 8))) == (857_000, 0, 0, 257_000, 300_000)     # the payment dated the day it is entered: debt 0
 
 
-# ---------------------------------------------------------------------------------------------------------------------------- PAY-TAILS Б7: a payment never raises the debt (LESSONS 160)
-# The worlds are NOT filtered: a pause entered between the credits, a credit entered long after its date, a payment dated back before a forgiveness, a deduction for a cancelled lesson.
+# ---------------------------------------------------------------------------------------------------------------------------- PAY-TAILS Б7.2: a payment never raises the debt (LESSONS 160)
+# The worlds are those that the product ALLOWS (``tests/pay_tails_b7_tools.py``: facts with file:line in its header; every credit entered on a day <= today, a forgiveness not larger than the debt of
+# its entry day, a pause entered between the credits, a payment dated back before a forgiveness, a deduction for a cancelled lesson).  The same tool prints the table «credit x period» of a world and
+# shrinks a counterexample:  python tests/pay_tails_b7_tools.py smallest "P1 used" 1 20000
+from tests import pay_tails_b7_tools as tools
 
-def world_b7(rng):
-    inp = world(rng)
-    credits = []
-    for c in inp.credits:                                                           # a credit may be entered any day from its date up to today (not only 0-3 days later)
-        entered = c.on + timedelta(days=rng.randint(0, (inp.today - c.on).days)) if rng.random() < 0.5 else c.entered_on
-        credits.append(replace(c, entered_on=entered))
-    inp = replace(inp, credits=tuple(credits))
-    if inp.pauses and rng.random() < 0.4:                                           # the pause entered on a random day between the first and the last entry of a credit
-        entered = sorted(c.entered_on for c in credits)
-        span = (entered[-1] - entered[0]).days
-        inp = replace(inp, pauses=(replace(inp.pauses[0], created_on=entered[0] + timedelta(days=rng.randint(0, span))),))
-    return inp
+_COUNTS = {}
 
 
-def _extra(rng, inp, kind, name):
-    earliest = min(c.on for c in inp.credits)
-    on = earliest + timedelta(days=rng.randint(-5, (inp.today - earliest).days))
-    entered = on + timedelta(days=rng.randint(0, max(0, (inp.today - on).days)))
-    amount = rng.choice([100_000, 200_000, 300_000, 420_000, 600_000])
-    return bl.Credit(name, kind, on, T0 + timedelta(minutes=rng.randint(0, 2000)), amount, entered_on=entered)
+def _counts():
+    if not _COUNTS:
+        _COUNTS.update(tools.run_counts(1, 20_000)[0])
+    return _COUNTS
 
 
-def test_b7_p1_a_payment_added_with_any_date_never_raises_the_debt_or_the_advance_beyond_its_amount():
-    rng = random.Random(20261123)
-    for trial in range(2500):
-        inp = world_b7(rng)
-        before = bl.run_ledger(inp)
-        assert before.reconciles and not before.flags, (trial, before.flags)
-        late = _extra(rng, inp, bl.PAYMENT, "late")
-        after = bl.run_ledger(replace(inp, credits=(*inp.credits, late)))
-        assert after.reconciles and not after.flags, (trial, after.flags)
-        money = sum(c.amount for c in (*inp.credits, late) if c.kind != bl.WRITEOFF)
-        where = (trial, inp.credits, inp.pauses, late, before.debt, after.debt, before.advance, after.advance)
-        assert after.debt <= before.debt, where
-        assert after.advance <= before.advance + late.amount, where
-        assert after.advance == after.refundable <= money, where
+def test_b7_p1_a_payment_added_now_never_raises_the_debt_nor_the_used_forgiveness_and_the_advance_grows_by_no_more_than_the_payment():
+    counts = _counts()
+    assert {k: counts[k] for k in ("P1 debt", "P1 used", "P1 advance", "P1 advance<=money", "P1 identity", "flags")} == {k: 0 for k in ("P1 debt", "P1 used", "P1 advance", "P1 advance<=money", "P1 identity", "flags")}, counts
 
 
-def test_b7_p2_a_forgiveness_added_never_raises_the_debt_or_the_advance():
-    rng = random.Random(20261124)
-    for trial in range(2500):
-        inp = world_b7(rng)
-        before = bl.run_ledger(inp)
-        extra = _extra(rng, inp, bl.WRITEOFF, "extra")
-        after = bl.run_ledger(replace(inp, credits=(*inp.credits, extra)))
-        assert after.reconciles and not after.flags, (trial, after.flags)
-        where = (trial, inp.credits, inp.pauses, extra, before.debt, after.debt, before.advance, after.advance)
-        assert after.debt <= before.debt, where
-        assert after.advance <= before.advance, where
+def test_b7_p2_a_forgiveness_added_now_never_raises_the_debt_and_the_advance_only_by_a_backdated_one_and_by_no_more_than_its_sum():
+    counts = _counts()
+    keys = ("P2 debt", "P2 advance<=money", "P2 advance today", "P2 advance back")
+    assert {k: counts[k] for k in keys} == {k: 0 for k in keys}, counts
 
 
 def test_b7_named_world_a_payment_dated_before_two_forgivenesses_does_not_turn_the_debt_from_0_into_420000():
