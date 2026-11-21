@@ -327,17 +327,44 @@ def test_12_no_forecast_when_the_window_of_400_days_ends_before_the_package(pg_s
 # ---- 16. the income report puts the deduction in the month of the LESSON --------------------------------------------------------------------------------
 
 
-def test_16_the_income_report_reduces_the_month_of_the_cancelled_lesson(pg_session, clock):
+def test_16_the_income_report_cuts_the_target_of_the_month_of_the_period_that_holds_the_deduction(pg_session, clock):
+    """Б7.9 п. 2.  A personal period 06.10-05.11 paid 600 000, the lesson of 02.11 cancelled (deduction 46 000): the deduction lies in the period of OCTOBER (R4), so
+    October's target is 554 000 (all of it paid), November's stays 600 000 of which 46 000 are paid (the rest of the money moved on); the two months together are as before."""
     w = build_org(pg_session)
     g, s, m = month_world(w, clock, paid=600_000)
-    cancel(w, g, "lesson-mon", "2026-11-02")                                                  # a lesson of the period 06.10-05.11, but of NOVEMBER
+    cancel(w, g, "lesson-mon", "2026-11-02")
     clock.set("2026-11-10 12:00")
     loader = ls.LedgerLoader(w.db, str(w.org.id), ps.business_today())
     shown = loader.load(scope="all")
     october = IncomeReports._collection(shown, D(2026, 10, 1), D(2026, 10, 31))
     november = IncomeReports._collection(shown, D(2026, 11, 1), D(2026, 11, 30))
-    assert (october.total.charged, october.total.paid, october.total.debt) == (600_000, 600_000, 0)       # October's target is not touched
-    assert (november.total.charged, november.total.paid, november.total.debt + november.total.due) == (554_000, 0, 554_000)    # November's target shrank by the lesson of November
+    assert (october.total.charged, october.total.paid, october.total.debt, october.total.due) == (554_000, 554_000, 0, 0)
+    assert (november.total.charged, november.total.paid, november.total.debt + november.total.due) == (600_000, 46_000, 554_000)
+    assert (october.total.charged + november.total.charged, october.total.paid + november.total.paid) == (1_154_000, 600_000)
+
+
+def test_16b_the_income_report_of_a_common_month_cuts_the_month_of_the_lesson_and_moves_the_money_on(pg_session, clock):
+    """Б7.9 п. 2, a common month: the lesson is always in the month of its period, so the cut is the same month as before (the target of October shrinks by the deduction).  By hand: paid 600 000 on
+    06.10, October (06-31) costs 508 000, November 600 000.  Before the cancel: October 508 000 / 508 000, November 600 000 / 92 000.  The lesson of 21.10 is cancelled (46 000): October's target is 462 000
+    and the money that covered it (462 000) is all it takes; the 46 000 that the deduction frees go on as MONEY to November: 138 000 paid of 600 000, 462 000 to pay.  The two months together: the same 600 000 paid."""
+    w = build_org(pg_session)
+    clock.set("2026-10-06 09:00")
+    (g,), (s,), (m,) = centre(w, billing_anchor="fixed_day", billing_day=1)
+    assert client(w, "owner").put(f"{API}/org/settings/payments", json={"centre_cancel_recalc": True}).status_code == 200
+    pay(w, m, 600_000, D(2026, 10, 6))
+    clock.set("2026-11-10 12:00")
+
+    def months():
+        shown = ls.LedgerLoader(w.db, str(w.org.id), ps.business_today()).load(scope="all")
+        octo = IncomeReports._collection(shown, D(2026, 10, 1), D(2026, 10, 31)).total
+        nov = IncomeReports._collection(shown, D(2026, 11, 1), D(2026, 11, 30)).total
+        return (octo.charged, octo.paid, octo.debt + octo.due), (nov.charged, nov.paid, nov.debt + nov.due)
+
+    assert months() == ((508_000, 508_000, 0), (600_000, 92_000, 508_000))
+    cancel(w, g, "lesson-wed", "2026-10-21")
+    octo, nov = months()
+    assert octo == (462_000, 462_000, 0) and nov == (600_000, 138_000, 462_000)
+    assert octo[1] + nov[1] == 600_000                                                      # the money of the two months is the same payment
 
 
 def test_1_the_journal_says_the_kind_of_every_cancelled_lesson(pg_session, clock, monkeypatch):

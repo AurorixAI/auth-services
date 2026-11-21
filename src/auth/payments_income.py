@@ -585,7 +585,7 @@ class IncomeReports:
         all_students, debtors, due_students = set(), set(), set()
         total = defaultdict(int)
         for e in shown:
-            charged = paid = forgiven = debt = unpaid_all = 0
+            charged = paid = forgiven = debt = unpaid_all = recalculated = 0
             for seg in e.ledger.segments:
                 if seg.kind not in ("period", "package") or not seg.begun or not (first <= seg.period_start <= last):
                     continue
@@ -595,12 +595,14 @@ class IncomeReports:
                 forgiven += forg
                 unpaid_all += unpaid
                 debt += min(unpaid, sum(p.unpaid for p in e.due.parts_of(seg.id) if p.name == pay_due.DEBT))       # PAY-DUE: the debt of the month is the sum of its parts that are a debt (by the term), not a subtraction
+                recalculated += seg.recalculated
                 paid += seg.amount - seg.recalculated - forg - unpaid       # the money only: a deduction is not «paid»
             if charged == 0:
                 continue
-            # PAY-F: a lesson the centre cancelled is not to be collected: the target of the month of THE LESSON shrinks (not the month of the period where the
-            # deduction settled), and it is not «paid»
-            charged = max(0, charged - sum(line.amount for line in e.ledger.recalcs if first <= line.day <= last))
+            # PAY-F / R4: a lesson the centre cancelled is not to be collected: the target of the month shrinks by the deductions that LIE in the periods of this month
+            # (since R4 a deduction takes its place inside its own period, the same sum that ``paid`` leaves out above), not by the month of the lesson: a personal
+            # period 06.10-05.11 holds the lesson of 02.11, and the money that covered the deduction is counted in October, so the target of November is not cut twice
+            charged -= recalculated
             row = groups.setdefault(e.group.id, {
                 "group": e.group, "teacher": e.teacher, "charged": 0, "paid": 0, "forgiven": 0, "debt": 0, "due": 0, "students": set(),
                 "debtors": set(), "due_students": set()})
