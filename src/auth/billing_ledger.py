@@ -1162,6 +1162,11 @@ class _Placed:
     leftover: List[Tuple[str, int]] = field(default_factory=list)         # money no charge has absorbed (the advance), by credit, in order
 
 
+def _begun_by(s: Segment, day: date) -> bool:
+    """Б7 R1: had the period begun by ``day``?  The debt of the opening balance is old by its nature (А7.7): «had the period begun» is not asked.  (The first day of a package is its first held lesson.)"""
+    return s.kind == "opening" or (s.days[0] if s.days else s.period_start) <= day
+
+
 def _place_credits(segments: Sequence[Segment], credits: Sequence[Credit], net: Dict[str, int], recalcs: Sequence[RecalcLine]) -> _Placed:
     """PAY-TAILS А6.1-А6.2.  1) Every credit (payment, transfer in, forgiveness) is tied to a period by its ORDER ``(on, created_at, id)`` on the line of the NOMINAL sums of the periods
     (what each would cost without the cut of a leaving, a transfer or an archive of the student, and without the pauses that were entered by the day of THIS credit - А7.1, capacity per credit,
@@ -1181,6 +1186,8 @@ def _place_credits(segments: Sequence[Segment], credits: Sequence[Credit], net: 
         for s in segments:
             if rest <= 0:
                 break
+            if c.kind == WRITEOFF and not _begun_by(s, entered):       # Б7 R1: a forgiveness SKIPS a period that had not begun the day it was entered: what it cannot be tied to burns and does not hold the line
+                continue
             part = min(rest, max(0, s.capacity(entered) - filled[s.id]))
             if part:
                 tied[s.id].append((c, part))
@@ -1199,9 +1206,8 @@ def _place_credits(segments: Sequence[Segment], credits: Sequence[Credit], net: 
 
     def lay_forgiveness(s: Segment, left: int) -> int:
         """The forgiveness tied to the period covers what money and deductions left of its charge (only if the period had begun by the day it was entered); returns the room that is still free."""
-        begin = s.days[0] if s.days else s.period_start
         for c, a in tied[s.id]:
-            if c.kind != WRITEOFF or (s.kind != "opening" and begin > (c.entered_on or c.on)):             # А7.7: the debt of the opening balance is old by its nature: «had the period begun» is not asked
+            if c.kind != WRITEOFF:
                 continue
             take = min(a, left)
             left -= take
@@ -1283,8 +1289,7 @@ def _place_credits(segments: Sequence[Segment], credits: Sequence[Credit], net: 
         for s in segments:
             if left <= 0:
                 break
-            begin = s.days[0] if s.days else s.period_start
-            if room[s.id] <= 0 or (s.kind != "opening" and begin > (c.entered_on or c.on)):
+            if room[s.id] <= 0 or not _begun_by(s, c.entered_on or c.on):
                 continue
             take = min(left, room[s.id])
             left -= take
