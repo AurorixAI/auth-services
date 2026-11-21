@@ -359,9 +359,10 @@ def violations(inp, x):
             bad.append(f"{tag} advance<=money")
         if isinstance(x, PauseEdit) and x.kind == "shorten":      # the days only shrink: the charge may grow, nothing else is promised
             return bad
-        if after.written_off > before.written_off:
+        n_grow = max(0, (after.charged - after.recalculated) - (before.charged - before.recalculated))     # Б7.9 п. 1: the PURE charge N = charged - deductions; a pause over a cancelled lesson loses the deduction (a personal period is shifted, not cheapened)
+        if after.written_off - before.written_off > n_grow:
             bad.append(f"{tag} used")
-        if after.debt > before.debt:
+        if after.debt - before.debt > n_grow:
             bad.append(f"{tag} debt")
         cut = {}
         for line in after.recalcs:                                                         # R4: a deduction of a period takes its place INSIDE the period: the money room is the charge minus the deductions
@@ -380,9 +381,10 @@ def violations(inp, x):
             bad.append("flags")
         if after.advance > money_of(inp):
             bad.append("P3k advance<=money")
-        if after.written_off > before.written_off:
+        n_grow = max(0, (after.charged - after.recalculated) - (before.charged - before.recalculated))
+        if after.written_off - before.written_off > n_grow:
             bad.append("P3k used")
-        if after.debt > before.debt:
+        if after.debt - before.debt > n_grow:
             bad.append("P3k debt")
         if after.advance - before.advance > after.recalculated - before.recalculated:        # the advance grows only by the deduction that came on the line
             bad.append("P3k advance")
@@ -532,18 +534,6 @@ def apply_x(inp, x):
     return replace(inp, credits=(*inp.credits, x))
 
 
-def _pause_over_cancel(inp, x):
-    """R4 (personal period only): the pause entered now covers the day of a lesson the centre cancelled.  A lesson on a pause is not charged, so its deduction goes (the rule of PAY-F, test_11), while a PERSONAL period is
-    not cheapened by a pause - it is shifted: the student pays the period in full and loses the deduction.  Not a matter of the order of entering: counted apart so that it does not hide the rest."""
-    if isinstance(x, bl.Pause):
-        covers = [(x.first, x.last)]
-    elif isinstance(x, PauseEdit):
-        covers = [(x.first, x.last)]
-    else:
-        return False
-    return any(a <= c.day <= b for c in inp.centre_cancels for a, b in covers)
-
-
 def run_counts(seed, n, cfg=Cfg()):
     rng = random.Random(seed)
     counts = {p: 0 for p in PROPERTIES}
@@ -562,8 +552,6 @@ def run_counts(seed, n, cfg=Cfg()):
             pays += kind == bl.PAYMENT
             forgs += kind == bl.WRITEOFF
             names = violations(inp, x)
-            if inp.regimes[0].anchor != ps.FIXED_DAY and _pause_over_cancel(inp, x):
-                names = [f"{n} [personal: pause over a cancelled lesson]" if n.startswith(("P3 ", "P3e ")) and "advance<=money" not in n else n for n in names]
             for name in names:
                 counts[name] = counts.get(name, 0) + 1
                 found.setdefault(name, []).append((inp, x))
