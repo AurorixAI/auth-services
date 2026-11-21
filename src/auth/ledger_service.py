@@ -13,7 +13,7 @@ day, computed here (memoised, sources first) and given to the new membership as 
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timedelta
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 from uuid import UUID
@@ -192,9 +192,17 @@ def parse_recalc(block: Dict[str, Any]) -> Tuple[bl.RecalcVersion, ...]:
             start = date.min if raw in (None, "", "min") else date.fromisoformat(str(raw)[:10])
         except ValueError:
             continue
-        # R4 (Б7.8 шаг 5): the version is made on the day it begins (``payments_service`` writes ``from`` = today): its moment is the START of that business day - a time stamp inside the day is not stored
-        out.append(bl.RecalcVersion(start, entry["on"], entered=datetime.min if start == date.min else bc.lesson_instant_utc(start, 0)))
+        # R4 (Б7.8 шаг 5, Б7.9 п. 3): the version is made on the day it begins (``payments_service`` writes ``from`` = today and, since 22.11, ``at`` = the exact moment, as the billing history does):
+        # its moment is ``at``; an older entry has none - then the START of that business day (a cancel entered the same day before the setting was switched on counts as known from the start of the day)
+        stamp = _moment(entry.get("at"))
+        out.append(bl.RecalcVersion(start, entry["on"], entered=datetime.min if start == date.min else (stamp or bc.lesson_instant_utc(start, 0))))
     return tuple(sorted(out, key=lambda v: v.effective_from))
+
+
+def with_probe(inp: bl.LedgerInput, kind: str, on: date, amount: int, credit_id: str = "preview") -> bl.LedgerInput:
+    """The input with ONE trial record on top (a payment or a forgiveness dated ``on``), entered NOW (``PROBE_MOMENT``: after everything that is known).  The one way the window of a payment
+    (``PaymentService.preview``) and the nightly reconciliation (I-6) try a record on an account - nothing is written, the stand-in is not a row."""
+    return replace(inp, credits=tuple(inp.credits) + (bl.Credit(credit_id, kind, on, bl.PROBE_MOMENT, amount),))
 
 
 def accounting_start_of(block: Dict[str, Any], created: Optional[datetime]) -> date:

@@ -7,6 +7,7 @@ from datetime import datetime
 import pytest
 from sqlalchemy import text
 
+from src.auth import payment_status as ps
 from src.auth.payments_service import PaymentService
 from src.models.auth import GroupAttendance, StudentGroup, StudentPayment
 
@@ -52,13 +53,16 @@ def test_settings_default_is_off_and_the_change_is_versioned_from_today(pg_sessi
     assert c.put(f"{API}/org/settings/payments", json={"centre_cancel_recalc": True}).json()["centre_cancel_recalc"] is True
     w.db.expire_all()
     block = w.db.execute(text("SELECT settings->'payments' FROM organizations WHERE id=:o"), {"o": w.org.id}).scalar_one()
-    assert block["recalc_history"] == [{"from": "2026-10-25", "on": True}] and "centre_cancel_recalc" not in block
+    (first,) = block["recalc_history"]
+    assert {k: v for k, v in first.items() if k != "at"} == {"from": "2026-10-25", "on": True} and "centre_cancel_recalc" not in block
+    assert ps.business_date(datetime.fromisoformat(first["at"])).isoformat() == "2026-10-25"          # Б7.9 п. 3: the exact moment of the switch is stored with the version
     assert "billing_history" not in block                               # it is not a billing regime: the periods are not cut
     clock.set("2026-10-27 12:00")
     assert c.put(f"{API}/org/settings/payments", json={"centre_cancel_recalc": False}).json()["centre_cancel_recalc"] is False
     w.db.expire_all()
-    assert w.db.execute(text("SELECT settings->'payments'->'recalc_history' FROM organizations WHERE id=:o"), {"o": w.org.id}).scalar_one() == [
-        {"from": "2026-10-25", "on": True}, {"from": "2026-10-27", "on": False}]
+    history = w.db.execute(text("SELECT settings->'payments'->'recalc_history' FROM organizations WHERE id=:o"), {"o": w.org.id}).scalar_one()
+    assert [{k: v for k, v in h.items() if k != "at"} for h in history] == [{"from": "2026-10-25", "on": True}, {"from": "2026-10-27", "on": False}]
+    assert all(h["at"] for h in history)
     assert client(w, "admin").put(f"{API}/org/settings/payments", json={"centre_cancel_recalc": True}).status_code == 403          # the owner's alone
 
 

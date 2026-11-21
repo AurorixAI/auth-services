@@ -606,7 +606,7 @@ class PaymentService:
         if recalc is not None and recalc != before.centre_cancel_recalc:
             # PAY-F: acts for the lessons dated from today; what was cancelled before is never recalculated
             history = [dict(h) for h in (block.get("recalc_history") or []) if isinstance(h, dict)]
-            entry = {"from": today.isoformat(), "on": recalc}
+            entry = {"from": today.isoformat(), "on": recalc, "at": bc.utc_now().isoformat()}      # Б7.9 п. 3: the exact moment of the switch (the moment of the event of a deduction)
             if history and history[-1].get("from") == today.isoformat():
                 history[-1] = entry
             else:
@@ -2449,8 +2449,7 @@ class PaymentService:
             if old_payment is not None:        # К1 (круг 3): a correction is read on books where the NEW sum stands instead of the old one - also in the slices that fix what a transfer carried
                 after = bl.run_ledger(self._replaced_input(org_id, today, membership, old_payment, amount, paid_on))
             else:
-                credit = bl.Credit("preview", bl.PAYMENT, paid_on, bl.PROBE_MOMENT, amount)
-                after = bl.run_ledger(replace(inp, credits=tuple(inp.credits) + (credit,)))
+                after = bl.run_ledger(ls.with_probe(inp, bl.PAYMENT, paid_on, amount))
             preview.result = pv.preview_result(before, after, "preview", price.amount, due_before, loader.classify(after, membership.student_id, membership_id), today, archived)
             more = self._warnings(after, "preview", paid_on, today, price.amount, archived=False)
             seen = {w.code for w in warnings}

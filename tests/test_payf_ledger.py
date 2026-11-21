@@ -4,7 +4,7 @@ The deduction is a credit that ``run_ledger`` derives from the facts (``centre_c
 checks the invariant ``reconciles``.  The kinds (a holiday, a move, an old cancellation) are filtered where the facts are loaded (``tests/test_payf_pg.py``): a lesson
 that is not in ``centre_cancels`` never costs a sum - the scenarios 8 and 10 are asserted there against the real tables."""
 from dataclasses import replace
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
 import pytest
 
@@ -265,3 +265,16 @@ def test_r3_15_a_segment_covered_by_the_deduction_counts_as_covered():
     assert led.covered_through == second.days[1]
     records = bl.coverage_records(led)
     assert records and records[-1].valid_to == second.days[1]
+
+
+def test_the_moment_of_the_setting_is_the_stored_one_else_the_start_of_the_day():
+    """Б7.9 п. 3: a version of the setting carries the exact moment it was switched on (``at``); an older entry has none - the start of its business day.  The moment of a deduction is the later of
+    the cancel and this one."""
+    from src.auth import ledger_service as ls
+    with_at = ls.parse_recalc({"recalc_history": [{"from": "2026-10-25", "on": True, "at": "2026-10-25T07:30:00"}]})
+    without = ls.parse_recalc({"recalc_history": [{"from": "2026-10-25", "on": True}]})
+    assert with_at[0].entered.isoformat() == "2026-10-25T07:30:00"
+    assert without[0].entered.isoformat() == "2026-10-24T19:00:00"                         # 00:00 Tashkent of 25.10 (UTC+5)
+    cancel = bl.CentreCancel(D(2026, 10, 27), "l", entered=datetime(2026, 10, 25, 5, 0))        # made at 05:00 UTC the same day, before the switch at 07:30: known only from 07:30
+    assert bl.cancel_entered(with_at, cancel) == datetime(2026, 10, 25, 7, 30)
+    assert bl.cancel_entered(without, cancel) == datetime(2026, 10, 25, 5, 0)                   # no stamp: the start of the day (19:00 UTC of 24.10) is earlier - the cancel's own moment wins
