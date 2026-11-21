@@ -185,15 +185,14 @@ def test_b7_p2_a_forgiveness_added_now_never_raises_the_debt_and_the_advance_onl
 def test_b7_p3_a_pause_entered_or_edited_now_never_raises_the_debt_nor_the_used_forgiveness_and_the_advance_stays_money():
     # The common month and the personal period: all of P3 / P3e.  «The advance grows by no more than the money the cut freed» is counted period by period BY THE KEY OF THE MODEL (the slot of a period: the cell
     # of a common month, the piece of the stay and the number in the chain of a personal period; Б7.8 п. 1): a pause on the whole first personal period moves the chain one month back and the money
-    # that lay on the third period, which has not begun now, is freed (an advance in money, the right one).  The packages: only «the advance is money»; the rest is step 4.2.
+    # that lay on the third period, which has not begun now, is freed (an advance in money, the right one).  The packages (Б7.8 п. 2) are a world like the others: their place is their number.
     keys = ("P3 used", "P3 debt", "P3 advance", "P3 advance<=money", "P3e used", "P3e debt", "P3e advance", "P3e advance<=money", "P3c advance", "P3ec advance")
-    _zero(keys, modes=("common", "personal"))
-    _zero(("P3 advance<=money", "P3e advance<=money"), modes=("packages",))
+    _zero(keys)
 
 
 def test_b7_p4_p5_no_forgiveness_lies_on_a_period_that_had_not_begun_and_the_probe_of_the_window_is_the_record():
     _zero(("P4 early", "P4 today", "P5 probe"))
-    assert all(_counts(mode)["P4 nomatch"] == 0 for mode in ("common", "personal"))             # the periods of the older worlds are found by their place in every world of the two calendar modes
+    assert all(_counts(mode)["P4 nomatch"] == 0 for mode in ("common", "personal", "packages"))             # the periods of the older worlds are found by their place in every world (a package: its number)
 
 
 def test_b7_named_world_a_payment_dated_before_two_forgivenesses_does_not_turn_the_debt_from_0_into_420000():

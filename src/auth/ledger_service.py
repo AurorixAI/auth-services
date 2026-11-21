@@ -589,10 +589,7 @@ class LedgerLoader:
         since = max(floor, self.settings.accounting_start)
         ids = [m.id for m, _, _ in members]
         detail: Dict[UUID, List[tuple]] = {}
-        skip = {
-            mid: {d for p in self.pauses.get(mid, []) for d in _days(p.first_day, p.last_day)} for mid in ids if self.pauses.get(mid)
-        }
-        PaymentService(self.db)._counted_lesson_dates(self.org_id, members, since=since, detail_out=detail, exclude_days=skip)
+        PaymentService(self.db)._counted_lesson_dates(self.org_id, members, since=since, detail_out=detail)      # Б7.8 п. 2: the lessons of the days of a pause are IN the input - the ledger takes out the days of the pauses it knows (one place)
         for mid in ids:
             self.counted[mid] = [bl.CountedLesson(day, str(lesson_id or "")) for day, lesson_id, _ in detail.get(mid, [])]
 
@@ -763,7 +760,8 @@ class LedgerLoader:
         belongs to the old group» for a transfer and for a manual removal + add: a day the old group does not charge is charged by the new one, so it is neither paid twice nor lost."""
         regime = bl.regime_at(self.settings.regimes, day)
         if regime.mode == ps.LESSONS:
-            return any(c.day == day for c in self.counted.get(mid, ()))
+            paused = {d for p in self.pauses.get(mid, []) for d in _days(p.first_day, p.last_day)}
+            return any(c.day == day for c in self.counted.get(mid, ()) if c.day not in paused)
         if regime.mode == ps.CALENDAR:
             if regime.anchor == ps.PAYMENT_DATE:
                 return True

@@ -256,7 +256,7 @@ class Segment:
     # PAY-TAILS Б7.7: what the period would cost without the cut of a leaving but WITHOUT the days of the pauses of THIS world (``None`` = the same as ``nominal_amount``): see ``capacity``
     room: Optional[int] = field(default=None, repr=False)
     # PAY-TAILS Б7.7: the PLACE of the period among the periods of the account, the same in every world (see ``_worlds``): a cell of the fixed billing day - ``("c", start of the cell)``;
-    # a period of a personal chain - ``("p", first day of the piece of the stay, number in the chain)``; ``None`` (a package, the opening debt) = the period has no other world
+    # a period of a personal chain - ``("p", first day of the piece of the stay, number in the chain)``; a package - ``("k", number of the chain of its regime window, number of the package)``; ``None`` (the opening debt) = no other world
     slot: Optional[tuple] = field(default=None, repr=False)
 
     @property
@@ -829,7 +829,7 @@ class _Gen:
             common = dict(id=f"seg:{chain}:pkg{k}", kind="package", period_start=first_day, period_end=days[-1],
                           days=tuple(days), price=pkg_price, nominal_days=size, lessons_in_part=len(chunk),
                           lessons_in_period=size, begun=True, ended=complete,
-                          package_no=k, complete_package=complete)
+                          package_no=k, complete_package=complete, slot=("k", chain, k))
             p = pkg_price.amount
             part = [_lesson_cost(p, i, size) for i in range(1, len(chunk) + 1)]
             costs.extend(part)
@@ -917,6 +917,12 @@ def _subtract_pauses(lo: date, hi: Optional[date], pauses: List[Tuple[date, date
 def _is_paused(pauses: List[Tuple[date, date]], day: date) -> bool:
     i = bisect_right(pauses, (day, date.max)) - 1
     return i >= 0 and pauses[i][0] <= day <= pauses[i][1]
+
+
+def held_lessons(inp: LedgerInput) -> List[CountedLesson]:
+    """The counted lessons of the input without those held on a day of a pause (the input carries them all: a lesson of a pause is nobody's TODAY, but it was somebody's in a world before the pause)."""
+    days = _merge_pauses(inp.pauses)
+    return [c for c in inp.counted_lessons if not _is_paused(days, c.day)]
 
 
 def _first_unpaused(pauses: List[Tuple[date, date]], day: date) -> date:
@@ -1101,7 +1107,7 @@ def regime_switch_days(inp: LedgerInput, new: Regime, at: Optional[datetime] = N
     regimes = list(inp.regimes) + [replace(new, defer=True, effective_from=inp.today, at=at)]
     windows = regime_windows(regimes)
     _, _, _, pause_days, spans, _ = _pieces_of(inp)
-    priced = sorted(c.day for c in inp.counted_lessons if lesson_price(inp, c.day).amount is not None)
+    priced = sorted(c.day for c in held_lessons(inp) if lesson_price(inp, c.day).amount is not None)
     return [_window_starts(windows, first, priced, pause_days, _fresh_stay_check(inp.stays, first))[-1] for first, last in spans if last is None]
 
 
@@ -1176,11 +1182,6 @@ class _Placed:
     leftover: List[Tuple[str, int]] = field(default_factory=list)         # money no charge has absorbed (the advance), by credit, in order
 
 
-def _begun_by(s: Segment, day: date) -> bool:
-    """Б7 R1 for a period that has no other world (a package): had it begun by ``day``?  (The first day of a package is its first held lesson.)"""
-    return (s.days[0] if s.days else s.period_start) <= day
-
-
 @dataclass(frozen=True)
 class _World:
     """Б7.7: the periods of the account as they were KNOWN at ``moment`` - the pauses entered at or before it, each in the form of that moment: ``slot -> (the first charged day, the room)``."""
@@ -1246,15 +1247,11 @@ def _was_going(worlds: Sequence[_World], slot: tuple, c: Credit) -> bool:
 def _may_lie(worlds: Sequence[_World]) -> Callable[[Credit, Segment], bool]:
     """Б7.7 п. 1 (R1 in the world known at the moment): a forgiveness lies on a period only if the period had begun by the day the forgiveness was entered IN THE WORLD KNOWN AT THAT MOMENT (a pause
     entered later cannot make it «not begun» afterwards) AND has begun today (a period that has not begun charges nothing: what lay on it would be an advance made of forgiveness).  What it cannot
-    be tied to burns and does not hold the line.  The debt of the opening balance is old by its nature (А7.7): always; a package has no other world: its own first day."""
+    be tied to burns and does not hold the line.  The debt of the opening balance is old by its nature (А7.7): always.  A package is a period like the others: its place is its number (Б7.8 п. 2)."""
     def may(c: Credit, s: Segment) -> bool:
         if c.kind != WRITEOFF or s.kind == "opening":
             return True
-        if not s.begun:
-            return False
-        if s.slot is None:
-            return _begun_by(s, entered_day(c))
-        return _was_going(worlds, s.slot, c)
+        return s.begun and _was_going(worlds, s.slot, c)
     return may
 
 
@@ -1419,7 +1416,7 @@ def _build_segments(inp: LedgerInput, total: int, flags: set) -> _Built:
     gen = _Gen(inp, total, flags)
     windows = regime_windows(inp.regimes)
     deferred = any(w[0].defer for w in windows[1:])
-    priced_days = sorted(c.day for c in inp.counted_lessons if lesson_price(inp, c.day).amount is not None) if deferred else []
+    priced_days = sorted(c.day for c in held_lessons(inp) if lesson_price(inp, c.day).amount is not None) if deferred else []
     bounds = [_window_bounds(_window_starts(windows, first, priced_days, pause_days, _fresh_stay_check(inp.stays, first)) if deferred else [w[1] for w in windows])
               for first, _ in spans_of_stay]
     # the piece that tells which version is in force today (the one that holds today, else the last before it)

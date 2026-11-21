@@ -88,7 +88,8 @@ def now_of(inp):
 def _debt_on(inp, day, entered_before, moment):
     """The debt of the account as it was on ``day``, at ``moment``: the credits entered before, the pauses known by then."""
     seen = tuple(c for c in inp.credits if entered_before(c))
-    return bl.run_ledger(replace(inp, today=day, credits=seen, pauses=known_pauses(inp, moment))).debt
+    held = tuple(c for c in inp.counted_lessons if c.day <= day)                          # the lessons held BY THAT DAY (the product reads the account of the day it is entered on: no later lesson is there yet)
+    return bl.run_ledger(replace(inp, today=day, credits=seen, pauses=known_pauses(inp, moment), counted_lessons=held)).debt
 
 
 def allowed(inp):
@@ -236,7 +237,9 @@ def money_of(inp):
 
 
 def _slot_first_days(inp):
-    """``{key of a period: its first charged day}`` of the world; the key is the start of the month (common month) or the place in the chain (personal period); packages have none."""
+    """``{key of a period: its first charged day}`` of the world; the key is the start of the month (common month), the place in the chain (personal period) or the number of the package (packages)."""
+    if inp.regimes[0].mode == bl.LESSONS:
+        return {s.package_no: s.days[0] for s in bl.run_ledger(inp).segments if s.kind == "package"}
     segs = [s for s in bl.run_ledger(inp).segments if s.kind == "period"]
     if inp.regimes[0].anchor == ps.FIXED_DAY:
         return {s.period_start: (s.days[0] if s.days else s.period_start) for s in segs}
@@ -266,16 +269,13 @@ def oracle_p4(inp):
             bad.append("P4 today")
             continue
         day = entered_day(c)
-        if packages:
-            first = s.days[0] if s.days else s.period_start
-        else:
-            if c.id not in worlds:
-                worlds[c.id] = _slot_first_days(replace(inp, pauses=known_pauses(inp, c.created_at)))
-            key = s.period_start if inp.regimes[0].anchor == ps.FIXED_DAY else order[s.id]
-            if key not in worlds[c.id]:
-                lost += 1
-                continue
-            first = worlds[c.id][key]
+        if c.id not in worlds:
+            worlds[c.id] = _slot_first_days(replace(inp, pauses=known_pauses(inp, c.created_at)))
+        key = s.package_no if packages else (s.period_start if inp.regimes[0].anchor == ps.FIXED_DAY else order[s.id])
+        if key not in worlds[c.id]:
+            lost += 1
+            continue
+        first = worlds[c.id][key]
         if first > day:
             bad.append("P4 early")
     return bad, lost

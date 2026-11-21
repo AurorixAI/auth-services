@@ -842,7 +842,7 @@ class PaymentService:
                 after = bl.run_ledger(replace(fin, today=horizon, regimes=tuple(e.inp.regimes) + (later,)))
                 base = bl.run_ledger(replace(fin, today=on - timedelta(days=1))).charged                       # what the account had charged the day BEFORE the switch
                 snap_before, snap_after = mw.snapshot(before), mw.snapshot(after)
-                no_forecast = later.mode == bl.LESSONS and not planned and not any(on <= c.day <= horizon for c in e.inp.counted_lessons)       # a package with no lesson in sight: nothing to forecast
+                no_forecast = later.mode == bl.LESSONS and not planned and not any(on <= c.day <= horizon for c in bl.held_lessons(e.inp))       # a package with no lesson in sight: nothing to forecast
                 if no_forecast:
                     snap_after = snap_before
                 item = mw.item(e.membership.id, name, snap_before, snap_after, has_money=bool(e.inp.credits or e.inp.outflows), on=horizon)
