@@ -4,7 +4,7 @@
     python -m scripts.pay_tails_before_after dump FILE [--org ID ...]   # a snapshot of every membership by the image that is installed
     python -m scripts.pay_tails_before_after diff BEFORE AFTER          # prints the summary line, the three lists and one line per changed membership
 
-Order of the release check: ``dump`` with the image that runs on the server (-> before.json), ``dump`` with the NEW image on a copy of the same database (-> after.json), then ``diff``.
+Order of the release check: put this script and ``src/auth/pay_tails_report.py`` into the container of the OLD image (they are not in it), ``dump`` there (-> before.json), ``dump`` with the NEW image on a copy of the same database (-> after.json), then ``diff``.
 Every line of ``diff`` is explained in the report of the release (LESSONS 115, 133); the night reconciliation after the release is run with ``--apply`` and its whole summary line is quoted."""
 from __future__ import annotations
 
@@ -40,7 +40,7 @@ def main(argv=None) -> int:
     with Session(engine) as db:
         data = report.dump(db, args.org)
     report.save(args.file, data)
-    print(f"memberships={len(data['memberships'])} refunds_over_limit={len(data['refunds_over_limit'])} crossing_archive={len(data['crossing_archive'])} file={args.file}")
+    print(f"memberships={len(data['memberships'])} refunds_over_limit={len(data['refunds_over_limit'])} crossing_archive={len(data['crossing_archive'])} om_pause_forgiven={len(data['om_pause_forgiven'])} file={args.file}")
     return 0
 
 

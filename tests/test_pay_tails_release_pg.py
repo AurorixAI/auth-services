@@ -23,7 +23,7 @@ def test_the_dump_lists_the_refund_that_the_new_rule_does_not_allow_and_the_diff
     world.db.commit()
     after = report.dump(world.db, [world.org.id], D(2026, 11, 21))
     (over,) = after["refunds_over_limit"]
-    assert (over["membership"], over["amount"], over["limit"]) == (str(m.id), 126_000, 0)
+    assert (over["membership"], over["amount"], over["limit"], over["receipt"]) == (str(m.id), 126_000, 0, "В-1")            # А7.9: the receipt is named
     now = after["memberships"][str(m.id)]
     assert (now["charged"], now["written_off"], now["written_off_granted"]) == (294_000, 220_000, 220_000)      # the refund already left the cash: money 74 000, the forgiveness covers the other 220 000
     before = json.loads(json.dumps(after))
@@ -31,6 +31,10 @@ def test_the_dump_lists_the_refund_that_the_new_rule_does_not_allow_and_the_diff
     lines = report.diff(before, after)
     assert lines[0].startswith("memberships=") and "changed=1" in lines[0] and "transfers_changed=1" in lines[0] and "refunds_over_limit=1" in lines[0]
     assert any(str(m.id) in ln and "advance: 126000 -> 0" in ln and "written_off: 99000 -> 220000" in ln for ln in lines[1:])
+    assert any("REFUND OVER LIMIT" in ln and "receipt=В-1" in ln and f"membership={m.id}" in ln for ln in lines)
+    assert after["memberships"][str(m.id)]["transferred_in"] == 0 and "transferred_in" in report.FIELDS
+    before["memberships"][str(m.id)]["transferred_in"] = 5_000
+    assert any(str(m.id) in ln and "transferred_in: 5000 -> 0" in ln for ln in report.diff(before, after)[1:])                  # А7.9: the receiving side of a transfer is a field of its own
     same = report.diff(after, after)
     assert same[0].startswith("memberships=4 changed=0") and not [ln for ln in same if " -> " in ln]                          # nothing changed: no «было -> станет» line (the list of refunds stays)
 
@@ -50,3 +54,17 @@ def test_the_dump_lists_a_stay_that_overlaps_an_archive_interval_and_nothing_els
     stay(world, membership(world, b, group), D(2026, 11, 16))                                         # written back into the interval 14.11 - 18.11
     (found,) = report.dump(world.db, [world.org.id], D(2026, 11, 19))["crossing_archive"]
     assert found["membership"] == str(membership(world, b, group).id)
+
+
+def test_the_dump_lists_a_membership_of_the_common_month_with_a_pause_and_a_forgiveness(world, fixed_today):
+    # А7.9: the accounts that the fix of the capacity per credit (К1) may change: ОМ, a live pause, a forgiveness.  The plain ОМ without a pause is not on the list.
+    from tests.test_pay_tails_k1_pg import with_pause_in_november
+    from tests.test_pay_tails_money_pg import forgive
+
+    g, s = with_pause_in_november(world, fixed_today)
+    fixed_today(D(2026, 12, 2))
+    forgive(world, s, g, 300_000)
+    m = membership(world, s, g)
+    (found,) = report.dump(world.db, [world.org.id], D(2026, 12, 2))["om_pause_forgiven"]
+    assert found == {"membership": str(m.id), "pauses": 1, "granted": 300_000}
+    assert "om_pause_forgiven=1" in report.diff({"memberships": {}, "om_pause_forgiven": []}, {"memberships": {}, "refunds_over_limit": [], "crossing_archive": [], "om_pause_forgiven": [found]})[0]
