@@ -104,3 +104,22 @@ def test_a_transfer_says_when_the_new_group_begins_to_charge(world, fixed_today)
     r = owner(world).post(f"{API}/org/groups/{b.id}/students/{t.id}", params={"mode": "transfer", "dry_run": "true"}, json={"from_group_id": str(a.id)})
     assert r.status_code == 200, r.text
     assert r.json()["others"] == ["Начисление в группе «Английский 7» начнётся с 21.11"] and r.json()["recalc"][0]["text"] == f"Ноябрь: {N(600_000)} → {M(450_000)}"
+
+
+def test_the_forecast_of_the_second_group_says_why_it_begins_tomorrow(world, fixed_today):
+    # ЛП: B was written down today, A (the student left it today) holds the day: B begins on 21.11, its forecast is the whole period 420 000 and its sub-line says the reason
+    fixed_today(D(2026, 11, 1))
+    settings_block(world, accounting_start_date="2026-10-01", billing_anchor="payment_date")
+    a, b = make_group(world.db, world.org, world.teacher, "Личная А"), make_group(world.db, world.org, world.teacher, "Личная Б")
+    for g in (a, b):
+        give_group_price(world.db, g, 420_000)
+        ensure_billing(world, g, price=None)
+    s = fresh_student(world, "Двое ЛП")
+    add(world, s, group=a, mode="add")
+    fixed_today(D(2026, 11, 20))
+    add(world, s, group=b, mode="add")
+    assert owner(world).post(f"{API}/org/groups/{a.id}/students/{s.id}/leave", json={}).status_code == 200
+    page = owner(world).get(f"{API}/org/payments/status", params={"bucket": "active", "limit": 50}).json()
+    (row,) = [x for x in page["items"] if x["group_id"] == str(b.id)]
+    assert (row["state"], row["state_text"], row["upcoming"]["from"], row["upcoming"]["amount"]) == ("starts", "Начнётся 21.11", "2026-11-21", 420_000)
+    assert row["upcoming"]["terms_note"] == "сегодня ученик ещё числился в «Личная А»"

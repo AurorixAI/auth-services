@@ -137,3 +137,26 @@ def test_the_excel_of_the_statement_has_the_forecast_line_below_the_totals_marke
     at = lambda text: next(i for i, v in enumerate(cells) if text in v)
     assert at("Прогноз") > at("Итого") if any("Итого" in v for v in cells) else True               # no charge yet: no total row, the forecast is a service band
     assert any("прогноз: начислится 150 000 сум" in v.replace(" ", " ") for v in cells) and any("Ноябрь 2026 — неполный месяц (с 24.11, 3 урока из 12)" in v for v in cells)
+
+
+def test_the_accounting_of_the_centre_that_starts_later_gives_a_forecast_of_its_first_period(world, fixed_today):
+    # the accounting begins on Tuesday 01.12: nothing is charged in November; the forecast is December (14 lessons, the whole month 600 000), «Начнётся 01.12»
+    g = world_om(world, fixed_today)
+    settings_block(world, accounting_start_date="2026-12-01")
+    s = fresh_student(world, "Учёт позже")
+    add(world, s, group=g, mode="add")
+    r = row(world, s, g)
+    assert (r["state"], r["state_text"], r["upcoming"]["from"], r["upcoming"]["amount"]) == ("starts", "Начнётся 01.12", "2026-12-01", 600_000)
+
+
+def test_a_new_price_and_a_pause_before_the_start_move_the_forecast(world, fixed_today):
+    g = world_om(world, fixed_today)
+    s = fresh_student(world, "Меняется")
+    add(world, s, group=g, mode="add")
+    assert row(world, s, g)["upcoming"]["amount"] == 150_000                                  # 600 000 x 3 / 12
+    r = owner(world).put(f"{API}/org/groups/{g.id}/price", json={"amount": 900_000, "confirm_unusual": True, "valid_from": "2026-11-21"})
+    assert r.status_code == 200, r.text
+    assert row(world, s, g)["upcoming"]["amount"] == 225_000                                  # 900 000 x 3 / 12
+    r = owner(world).post(f"{API}/org/memberships/{membership(world, s, g).id}/pauses", json={"first_day": "2026-11-27", "last_day": "2026-11-27", "reason": "Болезнь"})
+    assert r.status_code == 201, r.text
+    assert row(world, s, g, "all")["upcoming"]["amount"] == 150_000                           # the pause takes the lesson of 27.11: 24, 26 = 2 of 12 -> 900 000 x 2 / 12 (a student with a pause entry is on the tab by the old status, which package B does not touch)

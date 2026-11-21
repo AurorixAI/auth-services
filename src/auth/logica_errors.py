@@ -26,7 +26,7 @@ PAUSE: List[Tuple[int, str, str]] = [
     (409, "MEMBERSHIP_CLOSED", "Ученик уже не в этой группе: паузу поставить нельзя"),
 ]
 LEAVE: List[Tuple[int, str, str]] = [
-    (409, "BALANCE_CHANGED", "Данные оплат изменились — проверьте суммы"),
+    (409, "BALANCE_CHANGED", "Сумма изменилась, откройте окно заново"),      # PAY-TAILS Б1.3: the sums (or the day) of the window moved; «keep» is checked too
     (422, "METHOD_REQUIRED", "Укажите способ возврата"),
     (422, "REASON_REQUIRED", "Причина: от 3 до 500 символов"),
     (403, "", "Нет доступа к оплатам"),
