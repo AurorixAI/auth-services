@@ -75,16 +75,16 @@
     "writeoff_id": null
    },
    "open_amount": 0,
-   "open_name": "paid",
+   "open_name": "closed",
    "open_parts": [
     {
      "amount": 0,
-     "name": "paid",
-     "text": "Оплачено"
+     "name": "closed",
+     "text": "Закрыто"
     }
    ],
    "open_sub": null,
-   "open_text": "Оплачено",
+   "open_text": "Закрыто",
    "outflow": 0,
    "seq": 1,
    "text": null,

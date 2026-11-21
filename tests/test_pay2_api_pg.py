@@ -805,6 +805,7 @@ def test_the_statement_xlsx_reads_like_the_page(world, fixed_today):
         "По состоянию на 21.10.2026 · Учёт ведётся с 01.08.2026 · Период: Все месяцы",
         "Стоимость обучения 1 103 000 · Оплачено 1 153 000 · Прощено 50 000 · Возвращено 40 000 · Остаток: Аванс 60 000", None]
     assert ws["A1"].font.bold and all(ws.cell(r, 1).data_type == "s" for r in (1, 2, 3))
+    # PAY-TAILS Б6.12: October is closed by money AND a forgiveness of 50 000 together: «Закрыто» (was «Оплачено»)
     assert [ws.cell(head, c).value for c in range(1, 9)] == ["Дата", "Операция", "Стоимость", "Оплачено", "Прощено", "Возвращено", "Остаток", "Подробности"]
     assert all(ws.cell(head, c).font.bold for c in range(1, 9)) and ws.freeze_panes == "A6"
     who = "Иван Owner"
@@ -817,7 +818,7 @@ def test_the_statement_xlsx_reads_like_the_page(world, fixed_today):
         [dt(2026, 9, 5), f"Оплата № 2 · карта · внёс {who}", None, 700_000, None, None, None,
          "за август — 3 000 (август оплачен)\nза сентябрь — 450 000 (сентябрь оплачен)\nаванс на октябрь — 247 000"],
         ["Октябрь 2026"] + [None] * 7,
-        [dt(2026, 10, 1), "Октябрь 2026", 450_000, None, None, None, "Оплачено", "цена 450 000 сум в месяц · индивидуальная цена"],
+        [dt(2026, 10, 1), "Октябрь 2026", 450_000, None, None, None, "Закрыто", "цена 450 000 сум в месяц · индивидуальная цена"],
         [dt(2026, 10, 15), f"Оплата № 3 · Click · внёс {who}", None, 153_000, None, None, None, "за октябрь — 153 000 (осталось 50 000)"],
         [dt(2026, 10, 19), f"Прощено 50 000 сум — причина: болел · {who}", None, None, 50_000, None, None, None],
         [dt(2026, 10, 20), f"Оплата № 4 · Payme · внёс {who}", None, 100_000, None, None, "Аванс 60 000 сум", "аванс на ноябрь — 60 000"],      # PAY-DUE 10.11: the part of the money laid on no begun charge (the 40 000 went back)

@@ -418,8 +418,11 @@ def open_of_row(kind: str, ref_id: str, ledger: bl.Ledger, due, segments: dict, 
         if owed > 0:
             out.append({"name": "due", "amount": owed, "text": tx.due_text(owed, sum(p.lessons or 0 for p in parts if p.name == pay_due.DUE) if all(p.kind == "package" for p in parts if p.name == pay_due.DUE) else None)})
         if not out:
-            # 17.7: «paid» only for a charge closed by MONEY; a charge closed by a forgiveness alone is «forgiven»; closed to zero by a recalculation (or free) - nothing: the row of the recalculation says why
-            if seg.money > 0:
+            # 17.7: «paid» only for a charge closed by MONEY; a charge closed by a forgiveness alone is «forgiven»; PAY-TAILS Б6.12: closed by money AND a used forgiveness together is «closed» («Закрыто»: «Оплачено»
+            # is about money only); closed to zero by a recalculation (or free) - nothing: the row of the recalculation says why
+            if seg.money > 0 and seg.forgiven > 0:
+                out = [{"name": "closed", "amount": 0, "text": tx.CLOSED_TEXT}]
+            elif seg.money > 0:
                 out = [{"name": "paid", "amount": 0, "text": "Оплачено"}]
             elif seg.forgiven > 0:
                 out = [{"name": "forgiven", "amount": 0, "text": "Прощено"}]

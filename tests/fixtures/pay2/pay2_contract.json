@@ -1255,6 +1255,7 @@
             "enum": [
               "paid",
               "forgiven",
+              "closed",
               "due",
               "debt",
               "advance"
@@ -6394,6 +6395,7 @@
                 "enum": [
                   "paid",
                   "forgiven",
+                  "closed",
                   "due",
                   "debt",
                   "advance"

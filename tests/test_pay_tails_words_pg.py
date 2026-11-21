@@ -201,3 +201,33 @@ def test_b6_4_money_ahead_of_the_next_period_names_the_border_and_the_sum_and_ne
     fixed_today(D(2026, 12, 6))
     r = row(world, s, g)
     assert (r["state"], r["debt_amount"], r["debt_sub"]) == ("debt", 322_000, "просрочено 1 день")
+
+
+def charge_row(w, s, g):
+    st = get(w, "/org/memberships/%s/statement" % membership(w, s, g).id)
+    (line,) = [r for r in st["rows"] if r["type"] == "charge"]
+    return line
+
+
+def test_b6_12_the_column_open_of_a_period_closed_by_money_by_a_forgiveness_or_by_both(world, fixed_today):
+    # ЛП 420 000 (01.11 - 30.11), today 05.11.  a: money 420 000 only -> «Оплачено» (paid); b: forgiven 420 000 only -> «Прощено» (forgiven); c: money 100 000 + the forgiveness 320 000 used together (100 000 + 320 000 =
+    # 420 000) -> «Закрыто» (closed): «Оплачено» is about money only.  Excel says the same words (the cell of the column «Остаток»)
+    import io
+
+    from openpyxl import load_workbook
+
+    g, a = lp(world, fixed_today)
+    b, c = fresh_student(world, "Прощён"), fresh_student(world, "Вместе")
+    for s in (b, c):
+        add(world, s, group=g, mode="add")
+    fixed_today(D(2026, 11, 5))
+    pay(world, a, g, amount=420_000, paid_on=D(2026, 11, 1))
+    forgive(world, b, g, 420_000)
+    pay(world, c, g, amount=100_000, paid_on=D(2026, 11, 1))
+    forgive(world, c, g, 320_000)
+    got = {n: (charge_row(world, s, g)["open_name"], charge_row(world, s, g)["open_text"], charge_row(world, s, g)["open_amount"]) for n, s in (("a", a), ("b", b), ("c", c))}
+    assert got == {"a": ("paid", "Оплачено", 0), "b": ("forgiven", "Прощено", 0), "c": ("closed", "Закрыто", 0)}
+    r = owner(world).get(f"{API}/org/memberships/{membership(world, c, g).id}/statement/export", params={"format": "xlsx"})
+    assert r.status_code == 200, r.text
+    cells = [str(x.value) for row in load_workbook(io.BytesIO(r.content)).active.iter_rows() for x in row if x.value is not None]
+    assert any(v.startswith("Закрыто") for v in cells)

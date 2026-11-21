@@ -1131,7 +1131,7 @@ class StatementDetails(PayModel):
 class OpenPart(PayModel):
     """PAY-DUE 10.11 (lead 20.11, decision 6): one named part of what is open on a statement row (``paid`` / ``due`` / ``debt`` / ``advance``) with its words."""
 
-    name: Literal["paid", "forgiven", "due", "debt", "advance"]
+    name: Literal["paid", "forgiven", "closed", "due", "debt", "advance"]
     amount: int
     text: str
 
@@ -1150,7 +1150,7 @@ class StatementRow(PayModel):
     # PAY-DUE 10.11: what is open on the row ITSELF today.  A charge: the unpaid part of THIS charge named by ``pay_due`` (``paid`` = «Оплачено», ``due`` = «К оплате N», ``debt`` = «Долг N»); a payment: ``advance``
     # («Аванс N») while a part of it is not laid on the charges yet, else null; a transfer, a refund, a write-off: null.
     open_amount: Optional[int] = None
-    open_name: Optional[Literal["paid", "forgiven", "due", "debt", "advance"]] = None
+    open_name: Optional[Literal["paid", "forgiven", "closed", "due", "debt", "advance"]] = None
     open_text: Optional[str] = None
     open_sub: Optional[str] = None  # the term of the row in words: «срок был 05.11» (debt) / «до 24.11» / «до сегодня» (к оплате), both joined by « · »; null for a paid charge, the opening balance and rows with no unpaid part
     # the same split by name: ONE element, or TWO when the unpaid part of one charge holds both names (a package: some lessons a debt, the newest ones «к оплате»; the debt first).  ``open_name`` is the worst of them

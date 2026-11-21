@@ -366,6 +366,7 @@ def pay_until_text(due: date) -> str:
 
 
 DEBT_FROM_FIRST_DAY_TEXT = "долг с первого дня"
+CLOSED_TEXT = "Закрыто"      # PAY-TAILS Б6.12: the column «Остаток» of a charge that money AND a used forgiveness closed together
 
 
 def terms_note_text(names) -> str:
