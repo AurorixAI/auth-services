@@ -332,3 +332,26 @@ def test_c8_a_transfer_takes_only_money_with_it(world, fixed_today):
     add(world, s, group=b, mode="transfer", from_group_id=str(a.id))
     check(world, s, a, D(2026, 11, 21), charged=294_000, debt=0, advance=0, used=94_000, granted=220_000)
     assert led(world, s, b, D(2026, 11, 22)).transferred_in == 0
+
+
+
+def test_o3_the_change_of_the_mode_in_the_middle_of_a_period_is_deferred_by_the_product_and_the_window_shows_no_growth_of_debt(world, fixed_today):
+    # А7.11.  The pure ledger keeps the known deviation О3 (a change of the mode that CUTS the running period: debt 210 000 although 220 000 were forgiven).  The product never cuts: a change is saved as a
+    # DEFERRED version (the running period goes on, the new way reaches the student on his own switch day), so the window «что если» and the account agree: ЛП 420 000 from 01.11, paid 200 000, forgiven
+    # 220 000 on 02.11; on 16.11 the owner asks about the common month: the student switches on 01.12, in the first 30 days he is charged 420 000 -> 420 000, and the sentence has NO «неоплаченная сумма»
+    # part (his debt does not grow).  After the real save the account of 16.11 is the same: charged 420 000, debt 0, used 220 000.
+    g, s = lp(world, fixed_today)
+    pay(world, s, g, amount=200_000, paid_on=D(2026, 11, 1))
+    fixed_today(D(2026, 11, 2))
+    forgive(world, s, g, 220_000)
+    fixed_today(D(2026, 11, 16))
+    body = {"period_mode": "calendar", "billing_anchor": "fixed_day", "billing_day": 1}
+    r = owner(world).put(f"{API}/org/settings/payments", params={"dry_run": True}, json=body)
+    assert r.status_code == 200, r.text
+    items = r.json()["regime_impact"]["items"]
+    (mine,) = [i for i in items if i["membership_id"] == str(membership(world, s, g).id)]
+    assert mine["switch_on"] == "2026-12-01" and (mine["charged_before"], mine["charged_after"]) == (420_000, 420_000)
+    assert "неоплаченная сумма" not in mine["text"] and "аванс" not in mine["text"], mine["text"]
+    check(world, s, g, D(2026, 11, 16), charged=420_000, debt=0, advance=0, used=220_000, granted=220_000)
+    assert owner(world).put(f"{API}/org/settings/payments", json=body).status_code == 200
+    check(world, s, g, D(2026, 11, 16), charged=420_000, debt=0, advance=0, used=220_000, granted=220_000)             # saved: the running period is not cut

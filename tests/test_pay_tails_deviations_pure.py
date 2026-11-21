@@ -58,3 +58,13 @@ def test_o3_a_change_of_the_billing_mode_in_the_middle_of_the_month_with_payment
     assert [(s.amount, s.nominal, s.money, s.forgiven) for s in L.segments] == [(210_000, 420_000, 200_000, 10_000), (210_000, 210_000, 0, 0)]
     assert (L.charged, L.debt, L.advance, L.written_off, L.written_off_granted) == (420_000, 210_000, 0, 10_000, 220_000)
     assert L.reconciles and L.refundable == L.advance
+
+
+def test_o3_the_same_change_deferred_as_the_product_saves_it_does_not_cut_the_period():
+    # А7.11: the product saves a change of the mode as a DEFERRED version: the running period 01.11 - 30.11 (420 000) goes on, the common month begins for the student on 01.12.  The same credits (paid 200 000,
+    # forgiven 220 000): November money 200 000 + forgiveness 220 000 = 420 000, debt 0 - the cut of О3 does not arise.
+    first = bl.Regime()
+    second = bl.Regime(effective_from=D(2026, 11, 16), anchor=ps.FIXED_DAY, billing_day=1, defer=True, at=T0 + timedelta(days=320))
+    L = bl.run_ledger(make(today=D(2026, 11, 20), stays=[bl.Stay(D(2026, 11, 1))], price_at=flat(420_000), regimes=[first, second], start=D(2026, 10, 1), lesson_days=weekly((1, 3, 4)),
+                           credits=[credit("p", D(2026, 11, 1), 200_000), entered("w", D(2026, 11, 2), 220_000, 1)]))
+    assert (L.charged, L.debt, L.advance, L.written_off, L.written_off_granted) == (420_000, 0, 0, 220_000, 220_000) and L.reconciles
