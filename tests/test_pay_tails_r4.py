@@ -116,3 +116,29 @@ def test_world_b_a_payment_entered_late_makes_an_advance_of_exactly_its_sum():
     assert (before.charged, before.debt, before.advance, before.written_off, before.written_off_granted) == (1_200_000, 0, 0, 257_000, 300_000) and before.reconciles and not before.flags
     after = world_b([pay("late", D(2026, 9, 17), D(2026, 11, 26), 100_000, 900)])
     assert (after.charged, after.debt, after.advance, after.written_off) == (1_200_000, 0, 100_000, 257_000) and after.reconciles and not after.flags
+
+
+# ---- Б7.10 п. 1: the worlds of the replay do not depend on the sum of the credits (the length of the tape) -------------------------------------------------------------------------------------------------------------
+def personal_oct_pause_world(extra_credits=(), today=D(2026, 11, 14)):
+    """A personal period 420 000 from 01.10 (Tue / Thu / Fri), the lesson of 13.10 cancelled by the centre (entered 30.10: deduction 30 000), a forgiveness of 400 000 entered 09.11, a pause of the whole October entered 12.11."""
+    credits = [forgive("w", D(2026, 11, 9), D(2026, 11, 9), 400_000), *extra_credits]
+    inp = make(today=today, stays=[bl.Stay(D(2026, 10, 1))], price_at=flat(420_000), regimes=[bl.Regime()], start=D(2026, 9, 1), credits=credits, lesson_days=TTF)
+    pause = bl.Pause(D(2026, 10, 1), D(2026, 10, 31), forms=((at(D(2026, 11, 12), 700), D(2026, 10, 1), D(2026, 10, 31)),))
+    cancels = (bl.CentreCancel(D(2026, 10, 13), "l", entered=at(D(2026, 10, 30), 90)),)
+    return replace(inp, pauses=(pause,), centre_cancels=cancels, recalc_versions=(bl.RecalcVersion(date.min, True),))
+
+
+def test_b710_the_forgiveness_does_not_burn_because_the_next_payment_is_not_yet_entered():
+    # By hand: the pause of the whole October (entered 12.11, AFTER the forgiveness) takes the cancel deduction away (the lesson is on a pause) and shifts the periods: the first = November (room 420 000), the second
+    # = December (room 420 000, not begun).  The forgiveness 400 000 lay (09.11) on the periods of the world before the pause: October 390 000 (420 000 - 30 000) + 10 000 on the next one.  In the world after the pause
+    # the room of the first period is 420 000 >= 400 000, of the second 420 000 >= 10 000: nothing is cut - used 400 000, debt 420 000 - 400 000 = 20 000, advance 0.
+    L = bl.run_ledger(personal_oct_pause_world())
+    assert (L.written_off, L.debt, L.advance) == (400_000, 20_000, 0) and L.reconciles
+    # a payment of 100 000 entered today: 20 000 pays the debt of the first period, 80 000 go on (the advance); the forgiveness is the same 400 000
+    P = bl.run_ledger(personal_oct_pause_world([pay("late", D(2026, 11, 14), D(2026, 11, 14), 100_000, minute=900)]))
+    assert (P.written_off, P.debt, P.advance) == (400_000, 0, 80_000) and P.reconciles
+    # on 01.12 without the payment: the same 400 000 used and the 20 000 of the first period still owed
+    Q = bl.run_ledger(personal_oct_pause_world(today=D(2026, 12, 1)))
+    assert Q.written_off == 400_000 and Q.reconciles
+    first = next(s for s in Q.segments if s.kind != "opening")
+    assert first.amount - first.money - first.forgiven - first.recalculated == 20_000
