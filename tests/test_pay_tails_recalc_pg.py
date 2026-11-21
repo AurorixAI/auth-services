@@ -36,10 +36,10 @@ def test_om_a_debtor_leaves_the_month_is_cut_to_the_four_lessons_and_the_total_i
     g, s = om(world, fixed_today)
     fixed_today(D(2026, 11, 11))
     body, m = preview(world, g, s)
-    assert m["recalc"] == [{"label": "Ноябрь", "before": 600_000, "after": 200_000, "basis_text": "пересчёт по день ухода · 4 урока из 12", "text": f"Ноябрь: {N(600_000)} → {M(200_000)}", "done": False}]
+    assert m["recalc"]["more"] == 0 and m["recalc"]["lines"] == [{"label": "Ноябрь", "before": 600_000, "after": 200_000, "basis_text": "пересчёт по день ухода · 4 урока из 12", "text": f"Ноябрь: {N(600_000)} → {M(200_000)}", "done": False}]
     assert stays(m)["debt"]["text"] == "Останется долг " + M(200_000) and m["money"]["unpaid"] == 200_000 and body["as_of"] == "2026-11-11"
     done = leave(world, g, s)
-    assert done["recalc"][0]["text"] == f"Ноябрь: {N(600_000)} → {M(200_000)}" and done["recalc"][0]["done"] is True
+    assert done["recalc"]["lines"][0]["text"] == f"Ноябрь: {N(600_000)} → {M(200_000)}" and done["recalc"]["lines"][0]["done"] is True
     assert done["message"] == "Ученик убран из группы" and [x["text"] for x in done["effects"]["stays"]] == ["Долг " + M(200_000) + " остался за учеником"]
 
 
@@ -50,10 +50,10 @@ def test_om_paid_ahead_two_periods_the_next_one_never_begins_and_the_money_on_it
     pay(world, s, g, amount=300_000, paid_on=D(2026, 11, 3))
     fixed_today(D(2026, 11, 11))
     _, m = preview(world, g, s)
-    assert [x["text"] for x in m["recalc"]] == [f"Ноябрь: {N(600_000)} → {M(200_000)}", f"Декабрь не начнётся: {M(300_000)} останутся авансом"]
+    assert [x["text"] for x in m["recalc"]["lines"]] == [f"Ноябрь: {N(600_000)} → {M(200_000)}", f"Декабрь не начнётся: {M(300_000)} останутся авансом"]
     assert stays(m)["advance"]["text"] == "Останется аванс " + M(700_000) and m["money"]["advance"] == 700_000
     done = leave(world, g, s)
-    assert done["recalc"][1]["text"] == f"Декабрь не начался: {M(300_000)} остались авансом"
+    assert done["recalc"]["lines"][1]["text"] == f"Декабрь не начался: {M(300_000)} остались авансом"
 
 
 def test_om_money_and_forgiveness_the_forgiveness_falls_with_the_charge_the_money_stays(world, fixed_today):
@@ -63,7 +63,7 @@ def test_om_money_and_forgiveness_the_forgiveness_falls_with_the_charge_the_mone
     forgive(world, s, g, 300_000)
     fixed_today(D(2026, 11, 11))
     _, m = preview(world, g, s)
-    assert [x["text"] for x in m["recalc"]] == [f"Ноябрь: {N(600_000)} → {M(200_000)}", f"Прощено: {N(300_000)} → {M(0)}"]
+    assert [x["text"] for x in m["recalc"]["lines"]] == [f"Ноябрь: {N(600_000)} → {M(200_000)}", f"Прощено: {N(300_000)} → {M(0)}"]
     assert stays(m)["advance"]["text"] == "Останется аванс " + M(100_000)
 
 
@@ -71,7 +71,7 @@ def test_lp_the_basis_is_the_days_and_the_label_is_the_period(world, fixed_today
     g, s = lp(world, fixed_today, joined=D(2026, 11, 5))                      # the period 05.11 - 04.12
     fixed_today(D(2026, 11, 25))                                              # the 21st day
     _, m = preview(world, g, s)
-    (line,) = m["recalc"]
+    (line,) = m["recalc"]["lines"]
     assert (line["label"], line["before"], line["after"], line["basis_text"]) == ("05.11–04.12", 420_000, 294_000, "пересчёт по день ухода · 21 день из 30")
 
 
@@ -117,7 +117,7 @@ def test_a_pause_inside_the_current_period_the_charge_before_has_no_paused_days(
     assert r.status_code == 201, r.text
     fixed_today(D(2026, 11, 11))
     _, m = preview(world, g, s)
-    assert [(x["before"], x["after"], x["basis_text"]) for x in m["recalc"]] == [(300_000, 200_000, "пересчёт по день ухода · 4 урока из 12")]
+    assert [(x["before"], x["after"], x["basis_text"]) for x in m["recalc"]["lines"]] == [(300_000, 200_000, "пересчёт по день ухода · 4 урока из 12")]
 
 
 def test_a_future_lesson_cancelled_by_the_centre_vanishes_after_the_leaving_and_the_total_is_read_from_the_account(world, fixed_today):
@@ -129,5 +129,5 @@ def test_a_future_lesson_cancelled_by_the_centre_vanishes_after_the_leaving_and_
     assert r.status_code == 200, r.text
     fixed_today(D(2026, 11, 11))
     _, m = preview(world, g, s)
-    assert [x["text"] for x in m["recalc"]] == [f"Ноябрь: {N(600_000)} → {M(200_000)}"]
+    assert [x["text"] for x in m["recalc"]["lines"]] == [f"Ноябрь: {N(600_000)} → {M(200_000)}"]
     assert stays(m)["advance"]["text"] == "Останется аванс " + M(400_000) and m["money"]["advance"] == 400_000       # the total comes from the account after the closing, not from the lines

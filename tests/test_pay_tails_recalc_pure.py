@@ -91,3 +91,21 @@ def test_a_forgiveness_of_the_opening_balance_covers_it_even_when_the_debt_day_i
     inp = make(today=D(2026, 11, 20), stays=[bl.Stay(D(2026, 11, 1))], price_at=flat(420_000), start=D(2026, 10, 1), credits=[entered("w", D(2026, 11, 5), 100_000)])
     L = bl.run_ledger(replace(inp, opening=bl.Opening(debt_amount=100_000, debt_on=D(2026, 11, 10))))
     assert (L.charged, L.debt, L.advance, L.written_off, L.written_off_granted) == (520_000, 420_000, 0, 100_000, 100_000) and L.reconciles and not L.flags
+
+
+def test_b6_5_the_block_of_the_lines_is_always_lines_and_more():
+    # RecalcItem(kind, label, before, after, basis): one period - one line, ``more`` 0; four periods - the first two lines (MAX_LINES = 2) and ``more`` = 4 - 2 = 2; nothing changes - no block; an archive
+    # of two groups - the lines of both with the names of the groups, ``more`` summed
+    from src.auth import leave_effects as le
+    from src.auth import leave_recalc as lr
+
+    def item(label):
+        return lr.RecalcItem("charge", label, 600_000, 200_000, "пересчёт по день ухода · 4 урока из 12")
+
+    one = lr.lines_of([item("Ноябрь")])
+    assert one["more"] == 0 and [x["text"] for x in one["lines"]] == ["Ноябрь: 600\u00a0000 → 200\u00a0000\u00a0сум"]
+    four = lr.lines_of([item(m) for m in ("Ноябрь", "Декабрь", "Январь", "Февраль")])
+    assert four["more"] == 2 and [x["label"] for x in four["lines"]] == ["Ноябрь", "Декабрь"]
+    assert lr.lines_of([]) is None
+    two_groups = le.recalc_of([type("S", (), {"recalc": [item("Ноябрь")], "group_name": "А"})(), type("S", (), {"recalc": [item(m) for m in ("Ноябрь", "Декабрь", "Январь")], "group_name": "Б"})()])
+    assert two_groups["more"] == 1 and [x["text"].split(":")[0] for x in two_groups["lines"]] == ["А", "Б", "Б"]

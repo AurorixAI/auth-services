@@ -453,12 +453,13 @@
           },
           "recalc": {
             "anyOf": [
-              {},
+              {
+                "$ref": "#/components/schemas/RecalcCutOut"
+              },
               {
                 "type": "null"
               }
-            ],
-            "title": "Recalc"
+            ]
           },
           "sequence_number": {
             "anyOf": [
@@ -1703,19 +1704,12 @@
           "recalc": {
             "anyOf": [
               {
-                "items": {
-                  "$ref": "#/components/schemas/RecalcLineOut"
-                },
-                "type": "array"
-              },
-              {
                 "$ref": "#/components/schemas/RecalcCutOut"
               },
               {
                 "type": "null"
               }
-            ],
-            "title": "Recalc"
+            ]
           }
         },
         "required": [
@@ -1892,19 +1886,12 @@
           "recalc": {
             "anyOf": [
               {
-                "items": {
-                  "$ref": "#/components/schemas/RecalcLineOut"
-                },
-                "type": "array"
-              },
-              {
                 "$ref": "#/components/schemas/RecalcCutOut"
               },
               {
                 "type": "null"
               }
-            ],
-            "title": "Recalc"
+            ]
           },
           "settled": {
             "items": {
@@ -7593,7 +7580,7 @@
         "type": "object"
       },
       "RecalcCutOut": {
-        "description": "The block when more than two periods change: the first two lines and the number of the rest («и ещё N периодов»).",
+        "description": "The block «что было -> что станет» (PAY-TAILS Б6.5: always this object, never a bare list): the first two periods as lines and the number of the rest (``more``, 0 when all are shown: «и ещё N периодов»).",
         "properties": {
           "lines": {
             "items": {

@@ -1618,7 +1618,7 @@ class RecalcLineOut(PayModel):
 
 
 class RecalcCutOut(PayModel):
-    """The block when more than two periods change: the first two lines and the number of the rest («и ещё N периодов»)."""
+    """The block «что было -> что станет» (PAY-TAILS Б6.5: always this object, never a bare list): the first two periods as lines and the number of the rest (``more``, 0 when all are shown: «и ещё N периодов»)."""
 
     lines: List[RecalcLineOut] = Field(default_factory=list)
     more: int = 0
@@ -1634,7 +1634,7 @@ class LeaveMembership(PayModel):
     effects: Optional[Dict[str, Any]] = None  # Money-2 T3: what the closing ends / leaves behind (``leave_effects.build``); sums only with the right to money
     # PAY-TAILS Б1.3 / Б5.1-Б5.2 (sums: only with the right to money): what the closing does to the charges of THIS group (a list of lines, or ``{lines, more}`` when cut at two periods; null: no change)
     # and to the OTHER groups of the student (the day that was paid in this group is not paid twice there): sentences of the server with the money in them
-    recalc: Optional[Union[List[RecalcLineOut], RecalcCutOut]] = None
+    recalc: Optional[RecalcCutOut] = None
     others: List[str] = Field(default_factory=list)
 
 
@@ -1671,7 +1671,7 @@ class LeaveResult(PayModel):
     message: str
     settled: List[SettledOut] = Field(default_factory=list)
     effects: Optional[Dict[str, Any]] = None  # Money-2 T3: the same structure as the preview, after the choices of ``settle`` (a refunded advance no longer «stays»)
-    recalc: Optional[Union[List[RecalcLineOut], RecalcCutOut]] = None      # PAY-TAILS Б1.3: the lines of the probe, done (past tense); sums only with the right to money
+    recalc: Optional[RecalcCutOut] = None      # PAY-TAILS Б1.3: the lines of the probe, done (past tense); sums only with the right to money
     others: List[str] = Field(default_factory=list)
 
 

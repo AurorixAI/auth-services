@@ -53,7 +53,7 @@ from . import business_clock as bc
 from . import payment_status as ps
 from .ops_rules import EnrolmentRefused
 from .models import DiagnosticInvite, Group, GroupAudit, Student, StudentDiagnosticResult, StudentGroup
-from .payments_schemas import SettledOut, SettleItem
+from .payments_schemas import RecalcCutOut, SettledOut, SettleItem
 from .payments_service import CONCURRENT_EDIT_MESSAGE, is_deadlock
 from .schemas import ArchivedGroupOut, StudentResponse
 
@@ -143,7 +143,7 @@ class ArchiveStudentResponse(StudentResponse):
     diagnostic_invites_in_progress: int = 0
     settled: List[SettledOut] = []  # LOGIC-A (F9): the refunds / write-offs of ``settle``
     effects: List[Dict[str, Any]] = []  # Money-2 T3: per closed group what the archiving ends / leaves behind (``leave_effects.build``); sums only with the right to money
-    recalc: Optional[Any] = None  # PAY-TAILS Б1.3: the lines «что было -> что станет» of all the closed groups, each with the name of its group (a list, or ``{lines, more}``); sums only with the right to money
+    recalc: Optional[RecalcCutOut] = None  # PAY-TAILS Б1.3 / Б6.5: the lines «что было -> что станет» of all the closed groups, each with the name of its group, as ``{lines, more}``; sums only with the right to money
     others: List[str] = []
 
 

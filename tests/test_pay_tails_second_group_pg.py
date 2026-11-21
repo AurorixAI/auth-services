@@ -47,7 +47,7 @@ def test_om_the_probe_says_the_money_of_the_second_group_and_the_write_agrees(wo
     assert account(world, membership(world, s, b).id, D(2026, 11, 30)).charged == 500_000            # before: B begins today (read when the month has begun)
     m = probe(world, a, s)
     assert m["others"] == [f"В группе «Английский 7»: {N(500_000)} → {M(400_000)} — сегодняшний урок оплачен в группе «Математика 7»"]
-    assert [x["text"] for x in m["recalc"]] == [f"Ноябрь: {N(600_000)} → {M(450_000)}"] and m["recalc"][0]["basis_text"] == "пересчёт по день ухода · 9 уроков из 12"
+    assert [x["text"] for x in m["recalc"]["lines"]] == [f"Ноябрь: {N(600_000)} → {M(450_000)}"] and m["recalc"]["lines"][0]["basis_text"] == "пересчёт по день ухода · 9 уроков из 12"
     done = owner(world).post(f"{API}/org/groups/{a.id}/students/{s.id}/leave", json={}).json()
     assert done["others"] == m["others"]
     assert account(world, membership(world, s, b).id, D(2026, 11, 30)).charged == 400_000            # the probe was the write: B begins on Monday 23.11 (the lesson of Friday 20.11 is A's)
@@ -103,7 +103,7 @@ def test_a_transfer_says_when_the_new_group_begins_to_charge(world, fixed_today)
     fixed_today(D(2026, 11, 20))
     r = owner(world).post(f"{API}/org/groups/{b.id}/students/{t.id}", params={"mode": "transfer", "dry_run": "true"}, json={"from_group_id": str(a.id)})
     assert r.status_code == 200, r.text
-    assert r.json()["others"] == ["Начисление в группе «Английский 7» начнётся с 21.11"] and r.json()["recalc"][0]["text"] == f"Ноябрь: {N(600_000)} → {M(450_000)}"
+    assert r.json()["others"] == ["Начисление в группе «Английский 7» начнётся с 21.11"] and r.json()["recalc"]["lines"][0]["text"] == f"Ноябрь: {N(600_000)} → {M(450_000)}"
 
 
 def test_the_forecast_of_the_second_group_says_why_it_begins_tomorrow(world, fixed_today):

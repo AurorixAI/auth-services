@@ -165,19 +165,15 @@ def second_groups(db: Session, org_id: Any, closing: Sequence[StudentGroup], day
 def recalc_of(snaps: Sequence[Snap], *, done: bool = False, named: bool = False) -> Optional[Any]:
     """The block ``recalc`` of an answer about ``snaps`` (see ``leave_recalc.lines_of``): ONE membership - its own block; several (an archive of a student) - the lines of all, each with the name of its group."""
     if len(snaps) == 1 and not named:
-        return leave_recalc.lines_of(snaps[0].recalc, done)
+        return leave_recalc.lines_of(snaps[0].recalc, done)          # ``{lines, more}`` or ``None``
     lines: List[Dict[str, Any]] = []
     more = 0
     for snap in snaps:
         block = leave_recalc.lines_of(snap.recalc, done, snap.group_name)
-        if isinstance(block, dict):
+        if block:
             lines.extend(block["lines"])
             more += block["more"]
-        elif block:
-            lines.extend(block)
-    if not lines:
-        return None
-    return {"lines": lines, "more": more} if more else lines
+    return {"lines": lines, "more": more} if lines else None
 
 
 def _name_the_unpaid(snap: Snap, loader: Any, membership: StudentGroup, ledger: Any, in_centre: Optional[bool]) -> None:

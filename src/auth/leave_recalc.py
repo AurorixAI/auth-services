@@ -84,7 +84,7 @@ def wording(item: RecalcItem, done: bool = False) -> Dict[str, Any]:
 
 
 def lines_of(found: Sequence[RecalcItem], done: bool = False, group_name: Optional[str] = None) -> Optional[Any]:
-    """The block of the answer: a list of at most ``MAX_LINES`` periods (+ the line of the forgiveness that goes with them); when periods are cut - ``{"lines": [...], "more": N}`` («и ещё N периодов»).
+    """The block of the answer, ALWAYS ``{"lines": [...], "more": N}`` (PAY-TAILS Б6.5): at most ``MAX_LINES`` periods (+ the line of the forgiveness that goes with them) and the number of the periods that were cut (``more``, 0 when all are shown; «и ещё N периодов»).
     ``group_name`` goes before the sentence when one answer speaks of several groups.  ``None`` when nothing changes (no block)."""
     periods = [i for i in found if i.kind != "forgiven"]
     kept: List[RecalcItem] = []
@@ -104,4 +104,4 @@ def lines_of(found: Sequence[RecalcItem], done: bool = False, group_name: Option
         for w in words:
             w["text"] = f"{group_name}: {w['text']}"
     more = max(0, len(periods) - MAX_LINES)
-    return {"lines": words, "more": more} if more else words
+    return {"lines": words, "more": more}
