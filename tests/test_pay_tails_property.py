@@ -132,11 +132,11 @@ def test_a_payment_entered_last_never_takes_back_a_used_forgiveness_when_nothing
     assert checked > 300 and with_forgiveness > 100 and backdated > 40, (checked, with_forgiveness)           # the filter must not make the property empty
 
 
-def test_k1_known_deviation_a_pause_entered_between_the_forgiveness_and_a_payment_dated_back_leaves_a_debt_as_it_is():
-    # ОМ 600 000 (Tue / Thu / Fri).  October with a pause 15.10 - 31.10 costs 257 000 (the lessons that are left of 600 000).  05.11: October is forgiven for 300 000.  07.11: the pause is ENTERED (backdated).
-    # 08.11: a payment of 600 000 is entered DATED 01.11.  By the order of the dates the payment comes first and its capacity counts the pause (entered by 08.11): October 257 000, November 343 000; the forgiveness
-    # of 05.11 lies on October, which the money has filled: not used (0 of 300 000).  November 600 000 - 343 000 = DEBT 257 000.  Written as it IS (the owner decides in ROADMAP); the neighbours are fine:
-    # the same pause entered BEFORE the forgiveness (25.09) or the payment dated the day it is entered (08.11) give debt 0 and 257 000 used.
+def test_k1_fixed_a_pause_entered_between_the_forgiveness_and_a_payment_dated_back_no_longer_leaves_a_debt():
+    # Б7-1 (it was the «known deviation» K1: debt 257 000).  ОМ 600 000 (Tue / Thu / Fri).  October with a pause 15.10 - 31.10 costs 257 000 (6 lessons of 14).  05.11: 300 000 are forgiven (dated 05.11).
+    # 07.11: the pause is ENTERED.  08.11: a payment of 600 000 is entered DATED 01.11.  The world of 07.11 knew only the forgiveness: it lay on October [0; 300 000], the room became 257 000, 43 000 are cut off:
+    # alive 257 000.  The main line: the payment (01.11) - October 257 000 + November 343 000; the forgiveness 257 000 - November (October is full).  November 600 000 = 343 000 + 257 000: debt 0, used 257 000.
+    # The neighbours are the same: the pause entered BEFORE the forgiveness (25.09), or the payment dated the day it is entered (08.11) - debt 0, used 257 000.
     inp = make(today=D(2026, 11, 10), stays=[bl.Stay(D(2026, 10, 1))], price_at=flat(600_000), regimes=[FIXED1], start=D(2026, 9, 1), lesson_days=TTF)
     forgive = bl.Credit("w", bl.WRITEOFF, D(2026, 11, 5), at(D(2026, 11, 5)), 300_000)
     pay = bl.Credit("p", bl.PAYMENT, D(2026, 11, 1), at(D(2026, 11, 8), 1), 600_000)
@@ -145,9 +145,9 @@ def test_k1_known_deviation_a_pause_entered_between_the_forgiveness_and_a_paymen
         L = bl.run_ledger(replace(inp, credits=(forgive, payment), pauses=(pause(D(2026, 10, 15), D(2026, 10, 31), pause_entered),)))
         return L.charged, L.debt, L.advance, L.written_off, L.written_off_granted
 
-    assert run(D(2026, 11, 7), pay) == (857_000, 257_000, 0, 0, 300_000)                      # the deviation: debt 257 000, forgiveness not used
-    assert run(D(2026, 9, 25), pay) == (857_000, 0, 0, 257_000, 300_000)                       # the pause known before: debt 0
-    assert run(D(2026, 11, 7), replace(pay, on=D(2026, 11, 8))) == (857_000, 0, 0, 257_000, 300_000)     # the payment dated the day it is entered: debt 0
+    assert run(D(2026, 11, 7), pay) == (857_000, 0, 0, 257_000, 300_000)
+    assert run(D(2026, 9, 25), pay) == (857_000, 0, 0, 257_000, 300_000)
+    assert run(D(2026, 11, 7), replace(pay, on=D(2026, 11, 8))) == (857_000, 0, 0, 257_000, 300_000)
 
 
 # ---------------------------------------------------------------------------------------------------------------------------- PAY-TAILS Б7.2: a payment never raises the debt (LESSONS 160)
