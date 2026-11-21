@@ -580,8 +580,8 @@ def dump(seed, n, cfg):
     """Б7.8 5.3: the TOTALS of the account of the worlds WITHOUT a forgiveness (as they are, and with a payment / a pause / an edit of a pause / a cancel entered now): one JSON line per account.  The same seed on
     two trees (``B7_TREE``) must give the same lines: R4 moves money between the periods, never the totals."""
     import json
-    rng = random.Random(seed)
     for k in range(n):
+        rng = random.Random(seed * 1_000_003 + k)                 # a stream of its own for every world: a world that differs in one tree (a debt that caps a forgiveness) does not shift the others
         inp = allowed_world(rng, cfg)
         pay, pse, edit = new_payment(rng, inp), new_pause(rng, inp), new_pause_edit(rng, inp)
         cancel = new_cancel(rng, inp) if inp.centre_cancels else None
