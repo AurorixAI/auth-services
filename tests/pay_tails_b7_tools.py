@@ -3,6 +3,7 @@
 One command:   python tests/pay_tails_b7_tools.py count  SEED N          -> number of counterexamples per property
                python tests/pay_tails_b7_tools.py smallest PROPERTY SEED N -> the smallest world of a property with the table before / after
                B7_TREE=/path/to/another/worktree  python <this file> ...   -> the same on another checkout of ``src`` (a comparison with an older head)
+               B7_CANCELS=none|with   -> the generator WITHOUT a lesson cancelled by the centre (no deduction on the line) / ONLY with one (common month, a cancel in October); unset = the old mix (30 % of the common months)
 
 What the product allows (facts, file:line on head 1d323dd / f4642e2):
   * a payment: ``paid_on`` in [today - 3 years, today] (payments_service.py:1490-1494 ``_check_date``; PaymentCreate at :1714); an administrator not earlier than 7 days (payment_status.py:100,
@@ -29,6 +30,7 @@ TTF = weekly((1, 3, 4))
 FIXED1 = bl.Regime(anchor=ps.FIXED_DAY, billing_day=1)
 BOOKS = D(2026, 9, 1)
 EARLIEST = D(2026, 9, 15)                # the earliest date the generator gives a payment / a forgiveness (the product allows 3 years)
+CANCELS = os.environ.get("B7_CANCELS", "")        # "" = mixed, "none" = no cancelled lessons, "with" = every world has one
 PROPERTIES = ("P1 debt", "P1 used", "P1 advance", "P1 advance<=money", "P1 identity", "P2 debt", "P2 advance<=money", "P2 advance today", "P2 advance back")
 
 
@@ -53,11 +55,11 @@ def allowed(inp):
 
 
 def base_world(rng):
-    common = rng.random() < 0.6
+    common = rng.random() < 0.6 or CANCELS == "with"
     price = 600_000 if common else 420_000
     today = D(2026, 11, 3) + timedelta(days=rng.randint(0, 45))
     inp = make(today=today, stays=[bl.Stay(D(2026, 10, 1))], price_at=flat(price), regimes=[FIXED1] if common else [bl.Regime()], start=BOOKS, lesson_days=TTF)
-    if common and rng.random() < 0.3:
+    if common and (CANCELS == "with" or (CANCELS != "none" and rng.random() < 0.3)):
         cancel = D(2026, 10, 13) + timedelta(days=7 * rng.randint(0, 3))
         inp = replace(inp, centre_cancels=(bl.CentreCancel(cancel, "l"),), recalc_versions=(bl.RecalcVersion(date.min, True),))
     if rng.random() < 0.7:
