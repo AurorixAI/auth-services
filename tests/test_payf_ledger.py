@@ -226,10 +226,11 @@ def test_random_accounts_keep_the_invariants():
 
 
 def test_r3_4_the_deduction_reaches_the_next_period_before_it_begins():
-    """Paid in full, a lesson cancelled: the 46 000 settles on the NEXT period, which is generated for the money plus the deductions."""
+    """Paid in full, a lesson cancelled: the 46 000 of the money that the deduction pushes out of the period settle on the NEXT period (R4: as MONEY; the deduction itself stays in its own period), which is generated for the money plus the deductions."""
     led = bl.run_ledger(own_month(cancels=(D(2026, 10, 21),), paid=600_000))
     nxt = [s for s in led.segments if not s.begun]
-    assert len(nxt) == 1 and nxt[0].recalculated == 46_000 and nxt[0].unpaid == 554_000 and nxt[0].state == "future"
+    assert len(nxt) == 1 and nxt[0].money == 46_000 and nxt[0].recalculated == 0 and nxt[0].unpaid == 554_000 and nxt[0].state == "future"
+    assert (led.segments[0].money, led.segments[0].recalculated) == (554_000, 46_000)
     assert led.debt == 0 and led.advance == 46_000 and led.reconciles
     from src.auth import payments_views as pv
 

@@ -129,5 +129,7 @@ def test_a_future_lesson_cancelled_by_the_centre_vanishes_after_the_leaving_and_
     assert r.status_code == 200, r.text
     fixed_today(D(2026, 11, 11))
     _, m = preview(world, g, s)
-    assert [x["text"] for x in m["recalc"]["lines"]] == [f"Ноябрь: {N(600_000)} → {M(200_000)}"]
+    # R4: the deduction takes its place INSIDE November (money 550 000 + deduction 50 000) and the 50 000 of the payment it pushed out lie on December as money: the closing sees December paid ahead and that it will not
+    # begin - one more line (before R4 the 50 000 were a "deduction" credit on December, not money: no line).  The total below is the same: 550 000 - 200 000 + 50 000 = 400 000 advance.
+    assert [x["text"] for x in m["recalc"]["lines"]] == [f"Ноябрь: {N(600_000)} → {M(200_000)}", f"Декабрь не начнётся: {M(50_000)} останутся авансом"]
     assert stays(m)["advance"]["text"] == "Останется аванс " + M(400_000) and m["money"]["advance"] == 400_000       # the total comes from the account after the closing, not from the lines

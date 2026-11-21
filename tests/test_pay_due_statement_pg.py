@@ -158,9 +158,12 @@ def test_17_1_the_recalculation_row_carries_the_advance_it_freed_and_the_equalit
     cancel(w, g, "lesson-wed", "2026-10-21")
     s = statement(w, m)
     (recalc,) = [r for r in s["rows"] if r["type"] == "recalc"]
-    assert (recalc["open_name"], recalc["open_amount"], recalc["open_text"]) == ("advance", 46_000, f"Аванс 46{NB}000{NB}сум")
+    # R4: the deduction takes its place INSIDE the month (money 554 000 + deduction 46 000), the 46 000 of the payment it pushes out are MONEY that lies ahead: the advance is carried by the row of the PAYMENT, the
+    # row of the deduction has none (before R4 the payment was "fully laid" and the deduction travelled on as the advance).  The summary and the equalities are the same.
+    assert (recalc["open_name"], recalc["open_amount"], recalc["open_text"]) == (None, None, None)
+    (payment,) = [r for r in s["rows"] if r["type"] == "payment"]
+    assert (payment["open_name"], payment["open_amount"], payment["open_text"]) == ("advance", 46_000, f"Аванс 46{NB}000{NB}сум")
     assert s["summary"]["advance"] == 46_000
-    assert [r["open_amount"] for r in s["rows"] if r["type"] == "payment"] == [None]           # the payment itself is fully laid on the charge
     check_equalities(s)
     assert open_sums(s)["advance"] == 46_000
 

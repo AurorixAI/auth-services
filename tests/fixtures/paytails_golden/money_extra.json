@@ -313,10 +313,10 @@
       "ended": false,
       "forgiven": 0,
       "kind": "period",
-      "money": 600000,
+      "money": 550000,
       "period_end": "2026-11-30",
       "period_start": "2026-11-01",
-      "recalculated": 0,
+      "recalculated": 50000,
       "unpaid": 0
      },
      {
@@ -326,10 +326,10 @@
       "ended": false,
       "forgiven": 0,
       "kind": "period",
-      "money": 0,
+      "money": 50000,
       "period_end": "2026-12-31",
       "period_start": "2026-12-01",
-      "recalculated": 50000,
+      "recalculated": 0,
       "unpaid": 550000
      }
     ],
@@ -382,14 +382,14 @@
     {
      "code": "strip_current_eq_journal",
      "diff": 0,
-     "left": 800000,
-     "right": 800000
+     "left": 750000,
+     "right": 750000
     },
     {
      "code": "strip_advance_eq_journal",
      "diff": 0,
-     "left": 100000,
-     "right": 100000
+     "left": 150000,
+     "right": 150000
     }
    ],
    "current": {
@@ -398,8 +398,8 @@
     "received": 900000,
     "refunded": 0,
     "refunded_from_received": 0,
-    "to_advance": 100000,
-    "to_current": 800000,
+    "to_advance": 150000,
+    "to_current": 750000,
     "to_forward": 0,
     "to_past_debt": 0,
     "transferred": 0,
@@ -1077,10 +1077,10 @@
       "ended": false,
       "forgiven": 0,
       "kind": "period",
-      "money": 600000,
+      "money": 550000,
       "period_end": "2026-11-30",
       "period_start": "2026-11-01",
-      "recalculated": 0,
+      "recalculated": 50000,
       "unpaid": 0
      },
      {
@@ -1090,10 +1090,10 @@
       "ended": false,
       "forgiven": 0,
       "kind": "period",
-      "money": 0,
+      "money": 50000,
       "period_end": "2026-12-31",
       "period_start": "2026-12-01",
-      "recalculated": 50000,
+      "recalculated": 0,
       "unpaid": 550000
      }
     ],
@@ -1146,14 +1146,14 @@
     {
      "code": "strip_current_eq_journal",
      "diff": 0,
-     "left": 800000,
-     "right": 800000
+     "left": 750000,
+     "right": 750000
     },
     {
      "code": "strip_advance_eq_journal",
      "diff": 0,
-     "left": 100000,
-     "right": 100000
+     "left": 150000,
+     "right": 150000
     }
    ],
    "current": {
@@ -1162,8 +1162,8 @@
     "received": 900000,
     "refunded": 0,
     "refunded_from_received": 0,
-    "to_advance": 100000,
-    "to_current": 800000,
+    "to_advance": 150000,
+    "to_current": 750000,
     "to_forward": 0,
     "to_past_debt": 0,
     "transferred": 0,
@@ -1926,10 +1926,10 @@
       "ended": true,
       "forgiven": 0,
       "kind": "period",
-      "money": 600000,
+      "money": 550000,
       "period_end": "2026-11-30",
       "period_start": "2026-11-01",
-      "recalculated": 0,
+      "recalculated": 50000,
       "unpaid": 0
      },
      {
@@ -1939,10 +1939,10 @@
       "ended": false,
       "forgiven": 0,
       "kind": "period",
-      "money": 0,
+      "money": 50000,
       "period_end": "2026-12-31",
       "period_start": "2026-12-01",
-      "recalculated": 50000,
+      "recalculated": 0,
       "unpaid": 550000
      }
     ],
@@ -1994,8 +1994,14 @@
     {
      "code": "strip_current_eq_journal",
      "diff": 0,
-     "left": 800000,
-     "right": 800000
+     "left": 750000,
+     "right": 750000
+    },
+    {
+     "code": "strip_forward_eq_journal",
+     "diff": 0,
+     "left": 50000,
+     "right": 50000
     },
     {
      "code": "strip_advance_eq_journal",
@@ -2011,8 +2017,8 @@
     "refunded": 0,
     "refunded_from_received": 0,
     "to_advance": 100000,
-    "to_current": 800000,
-    "to_forward": 0,
+    "to_current": 750000,
+    "to_forward": 50000,
     "to_past_debt": 0,
     "transferred": 0,
     "written_off": 0
