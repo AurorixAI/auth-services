@@ -63,6 +63,7 @@ AUDIT_LEFT = "student_left_group"
 BALANCE_NEEDS_MONEY_RIGHT = "У ученика есть неоплаченные занятия — убрать может владелец или сотрудник с правом на деньги"
 BALANCE_NEEDS_MONEY_RIGHT_ADVANCE = "У ученика есть оплата вперёд — убрать может владелец или сотрудник с правом на деньги"      # only an advance blocks
 BALANCE_NEEDS_MONEY_RIGHT_BOTH = "У ученика есть неоплаченные занятия и оплата вперёд — убрать может владелец или сотрудник с правом на деньги"      # both do      # Money-2 T11: ONE text for the leaving and the archive; a fact, no sum
+BALANCE_CHANGED_TEXT = "Сумма изменилась, откройте окно заново"      # PAY-TAILS Б1.3: the one refusal of a window whose numbers (or day) moved
 LEFT_GROUP_REASON = "left_group"
 RETURN_REASON = "return_group"
 
@@ -177,12 +178,12 @@ class LeaveService:
             out[mid] = (ledger, min(ledger.refundable, bl.refundable_at(closed, today)))
         return out, loader
 
-    def require_money_right_for_balance(self, org_id: str, membership_ids: Sequence[UUID], money: bool) -> None:
+    def require_money_right_for_balance(self, org_id: str, membership_ids: Sequence[UUID], money: bool, day: Optional[date] = None) -> None:
         """Money-1 A4 / Money-2 T11: a student who has PAID AHEAD or OWES leaves (or is archived) with his advance / debt and his paid-until date - the owner / an administrator with the right decides that.
         The one rule of the leaving and of the archive of a student; the text is the same for both and names no sum (403)."""
         if money:
             return
-        after, _ = self._after(org_id, list(membership_ids), ps.business_today())
+        after, _ = self._after(org_id, list(membership_ids), day or ps.business_today())      # PAY-TAILS Б5.1: ``day`` - the day of the action's own moment (the right and the action read ONE moment)
         owes = any(ledger.debt > 0 for ledger, _refundable in after.values())
         ahead = any(ledger.advance > 0 for ledger, _refundable in after.values())
         if owes or ahead:
@@ -207,7 +208,8 @@ class LeaveService:
                 membership_id=str(m.id), group_id=str(m.group_id), group_name=groups[m.group_id].name,
                 money=self._money(ledger, refundable, loader, m, today, snaps[m.id]) if money else None,
                 has_open_balance=ledger.debt > 0 or ledger.advance > 0, allowed=allowed if money else ["keep"],
-                effects=leave_effects.build([snaps[m.id]], kind=kind, money=money)))
+                effects=leave_effects.build([snaps[m.id]], kind=kind, money=money),
+                recalc=leave_effects.recalc_of([snaps[m.id]]) if money else None, others=list(snaps[m.id].others) if money else []))
         return LeavePreview(as_of=today, memberships=items)
 
     def preview_group(self, org_id: str, group_id: UUID, student_id: UUID, *, money: bool) -> LeavePreview:
@@ -238,34 +240,43 @@ class LeaveService:
         """Carry out the choices.  Raises ``PaymentError`` (the caller rolls back): 403 without access to money, 422 for a bad choice,
         409 ``BALANCE_CHANGED`` when the numbers moved.  ``at``: the one moment of the whole action (leave / archive) - the rows of the settlement carry it too."""
         todo = [i for i in items if i.action != "keep"]
-        if not todo:
+        seen_ids = {id(i) for i in todo}
+        checked = [i for i in items if money and id(i) not in seen_ids and (i.expected_unpaid is not None or i.expected_advance is not None or i.expected_as_of is not None)]      # PAY-TAILS Б5.1: «keep» is checked too
+        if not todo and not checked:
             return []
-        if not money:
+        if todo and not money:
             raise PaymentForbidden("Нет доступа к оплатам")
         by_id = {str(m.id): m for m in memberships}
         seen = set()
-        for item in todo:
+        for item in [*todo, *checked]:
             if item.membership_id not in by_id:
                 raise PaymentInvalid("Это членство не закрывается этим действием")
             if item.membership_id in seen:
                 raise PaymentInvalid("Одно членство указано дважды")
             seen.add(item.membership_id)
         today = bc.utc_to_business_date(at) if at is not None else ps.business_today()      # TIME-TESTS: the day of the action's own moment, not a new reading of the clock
-        ids = [by_id[i.membership_id].id for i in todo]
+        ids = [by_id[i.membership_id].id for i in [*todo, *checked]]
         after, loader = self._after_closed(org_id, ids, today)
-        # 1. every choice is checked against the numbers of NOW; any difference answers with ALL the fresh numbers
+        # 1. every choice is checked against the numbers of NOW; any difference answers with ALL the fresh numbers.  PAY-TAILS Б5.1: the day of the probe, the debt and the advance the person SAW are checked for
+        # EVERY membership he sent (a choice «keep» included) BEFORE anything is written; without the right to money nothing is sent and nothing is checked (the old behaviour)
         stale = []
-        for item in todo:
+        for item in [*todo, *checked]:
             ledger, refundable = after[by_id[item.membership_id].id]
-            if item.action == "writeoff" and item.expected_unpaid is not None and item.expected_unpaid != ledger.debt:
+            if item.expected_as_of is not None and item.expected_as_of != today:
                 stale.append(item)
-            if item.action == "refund" and item.expected_refundable is not None and item.expected_refundable != refundable:
+            elif item.expected_unpaid is not None and item.expected_unpaid != ledger.debt:
+                stale.append(item)
+            elif item.expected_advance is not None and item.expected_advance != ledger.advance:
+                stale.append(item)
+            elif item.action == "refund" and item.expected_refundable is not None and item.expected_refundable != refundable:
                 stale.append(item)
         if stale:
-            raise BalanceChanged("Данные оплат изменились — проверьте суммы", fresh=[
+            raise BalanceChanged(BALANCE_CHANGED_TEXT, fresh=[
                 FreshBalance(membership_id=i.membership_id, debt=after[by_id[i.membership_id].id][0].debt,
                              advance=after[by_id[i.membership_id].id][0].advance,
-                             refundable=after[by_id[i.membership_id].id][1]).model_dump() for i in todo])
+                             refundable=after[by_id[i.membership_id].id][1]).model_dump() for i in [*todo, *checked]])
+        if not todo:
+            return []
         # 2. validation of what the choice needs
         out: List[SettledOut] = []
         now = (at.astimezone(timezone.utc).replace(tzinfo=None) if at is not None and at.tzinfo is not None else at) or _utcnow()
@@ -342,10 +353,10 @@ class LeaveService:
             if not sg:
                 raise PaymentConflict("Ученик не в этой группе")
             self.pay._lock_family(org_id, student.id)
-            self.require_money_right_for_balance(org_id, [sg.id], money)
+            moment = bc.utc_now()   # DM-005: the one clock; TIME-TESTS: this ONE moment stamps the closed stay, the settlement rows, the day of the snapshot, the day of the right to money and the journal line of the leave
+            self.require_money_right_for_balance(org_id, [sg.id], money, bc.utc_to_business_date(moment))
             svc._lock_groups_for_membership_change(org_id, [group.id])
             svc._assert_no_open_attendance_for_groups(org_id, [group.id])
-            moment = bc.utc_now()   # DM-005: the one clock; TIME-TESTS: this ONE moment stamps the closed stay, the settlement rows, the day of the snapshot and the journal line of the leave
             before_close = leave_effects.snapshot(self.db, org_id, [sg], bc.utc_to_business_date(moment))      # Money-2 T3: read before the stay is closed
             now = moment.replace(tzinfo=timezone.utc)
             close_stay(self.db, sg, now, actor_id, "leave")
@@ -370,7 +381,9 @@ class LeaveService:
             self.db.rollback()
             raise
         invalidate_summary(org_id)
-        return LeaveResult(message="Ученик удалён из группы", settled=settled, effects=leave_effects.build(leave_effects.after_settle(before_close, settled), kind="leave", money=money))
+        done = leave_effects.after_settle(before_close, settled)
+        return LeaveResult(message="Ученик убран из группы", settled=settled, effects=leave_effects.build(done, kind="leave", money=money, done=True),
+                           recalc=leave_effects.recalc_of(before_close, done=True) if money else None, others=[x for sn in before_close for x in sn.others] if money else [])
 
 
 def apply_add_opening(db: Session, org_id: str, membership: StudentGroup, actor_id: str, opening, *, transfer: bool, source: str = "add") -> Optional[Dict[str, str]]:

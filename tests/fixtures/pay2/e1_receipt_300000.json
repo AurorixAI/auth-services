@@ -62,6 +62,7 @@
   "void_reason": null,
   "issued_at": null,
   "state_on_issue": null,
+  "receipt_state_text": null,
   "is_copy": false,
   "print_count": 0,
   "void_note": null,

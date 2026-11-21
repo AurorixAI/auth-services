@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from datetime import date
 from datetime import date as date_type
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional, Union
 
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, field_validator
 
@@ -306,6 +306,22 @@ class PaymentOut(BaseModel):
     void_reason: Optional[str] = None
 
 
+class UpcomingOut(PayModel):
+    """PAY-TAILS Б1.4 / Б5.3: the FORECAST of a charge that has not begun (never a part of any sum): ``from`` - the first day of the period, ``amount`` - what the ledger will charge for it (null for a caller without the right to
+    money: the date only), ``lessons_text`` («2 урока из 8 в ноябре»), ``due_until`` - the last day of the term (null: «долг с первого дня»), ``text`` - the sentence of the message after adding («Начисление с 24.11: 120 000 сум»),
+    ``sub`` - «платить до 28.11» / «долг с первого дня», ``terms_note`` - «сегодня ученик ещё числился в «Математике 7»» when another group moved the day."""
+
+    model_config = ConfigDict(populate_by_name=True, json_schema_serialization_defaults_required=True)
+
+    from_: date_type = Field(..., alias="from")
+    amount: Optional[int] = None
+    lessons_text: Optional[str] = None
+    due_until: Optional[date_type] = None
+    text: Optional[str] = None
+    sub: Optional[str] = None
+    terms_note: Optional[str] = None
+
+
 class UnpaidFields(BaseModel):
     """PAY-DUE 10.2: how a membership's unpaid sum is NAMED - one meaning on every row (the status list, the balances, the student card): ``debt_amount`` the part whose term has passed (a «Долг»), ``due_amount`` the
     part still within its term («К оплате», until ``due_until``); ``overdue_days`` (K) the age of the oldest debt part (null without a debt; 0 = not overdue yet: a student who left before the term); packages:
@@ -324,11 +340,21 @@ class UnpaidFields(BaseModel):
     due_sub: Optional[str] = None
     debt_also_text: Optional[str] = None      # the second line of a row that holds BOTH sums: «и долг 600 000 сум · просрочено 45 дней» (null: no second sum)
     due_also_text: Optional[str] = None       # «и к оплате 231 000 сум до 24.11» (a package: «и к оплате 100 000 сум · 2 урока · до 24.11»)
-    state: Literal["debt", "to_pay", "expiring", "paused", "paid", "free", "none"] = "none"
-    state_text: Optional[str] = None          # the words of the worst state for EVERY state: «Долг ...», «К оплате ...», «Оплачено до ДД.ММ», «Осталось K урока», «Аванс N сум», «На паузе до ДД.ММ», «Бесплатно», «Нет цены»
+    state: Literal["debt", "to_pay", "expiring", "paused", "paid", "free", "none", "starts", "settled", "no_charges"] = "none"
+    state_text: Optional[str] = None          # the words of the worst state for EVERY state: «Долг ...», «К оплате ...», «Оплачено до ДД.ММ», «Прощено до ДД.ММ», «Осталось K урока», «Аванс N сум», «На паузе до ДД.ММ», «Бесплатно», «Нет цены», «Начнётся ДД.ММ», «Расчёт закрыт», «Расчётов нет»
+    # PAY-TAILS Б5.4: ``starts`` - the charge has not begun («Начнётся 24.11» / «Уроков ещё не было»); ``settled`` - a closed membership with nothing left to pay or to give back («Расчёт закрыт»); ``no_charges`` - a closed
+    # membership that never charged anything and never held money («Расчётов нет»).  ``state_sub``: the quiet line of the state (a closed membership «ушёл 28.10»; «из них прощено 300 000 сум»; the forecast «≈ 120 000 сум»).
+    # ``covered_by``: what covered the last covered period - money / forgiven / recalc / opening (the word «Прощено до» is not the green of «Оплачено до»); null where nothing is covered.
+    state_sub: Optional[str] = None
+    covered_by: Optional[Literal["money", "forgiven", "recalc", "opening"]] = None
+    left_on: Optional[date_type] = None      # the day a closed membership ended (null for an open one)
+    upcoming: Optional[UpcomingOut] = None   # PAY-TAILS Б1.4: the forecast of a charge that has not begun (state ``starts``); never a part of a sum
 
 
 class MembershipPaymentRow(UnpaidFields):
+    # PAY-TAILS Б5.5: the words of the TAB «Аванс» only (``state_text`` / ``state_sub`` are the same on every tab): «Аванс 37 000 сум» and «ушёл 28.10» / «оплачено до 31.12»; null on the other tabs
+    tab_text: Optional[str] = None
+    tab_sub: Optional[str] = None
     membership_id: str
     student_id: str
     student_name: str
@@ -394,6 +420,7 @@ class PaymentsBuckets(BaseModel):
     expiring: int = 0
     active: int = 0
     paused: int = 0
+    advance: int = 0            # PAY-TAILS Б1.1: DISTINCT students with an advance (the tab «Аванс»: open and closed memberships alike)
 
 
 class PayDueExample(BaseModel):
@@ -433,6 +460,8 @@ class PaymentsSummary(BaseModel):
     due_nearest: Optional[DueNearest] = None
     advance_total: int = 0
     students_with_advance: int = 0
+    advance_left_students: int = 0      # PAY-TAILS Б5.5: DISTINCT students whose advance sits on a CLOSED membership (the toggle «Ушедшие» of the tab «Аванс»)
+    advance_text: str = ""              # the sub-line of the card «Аванс», the words of the server: «5 учеников · 4 ушли из группы» / «5 учеников» / «» at zero
     memberships_with_debt: int = 0
     accounting_start_date: Optional[date_type] = None
     paused: int = 0  # LOGIC-A: memberships whose today is inside a pause
@@ -453,7 +482,9 @@ class PaymentStatusPage(BaseModel):
     offset: int
     as_of: str
     students: int = 0           # PAY-DUE 10.2: DISTINCT students of the filter - the number of the tab
-    amount_total: int = 0       # the sum of the tab's part over ALL the rows of the filter (``debtors``: ``debt_amount``; ``to_pay``: ``due_amount``; the other tabs: 0)
+    amount_total: int = 0       # the sum of the tab's part over ALL the rows of the filter (``debtors``: ``debt_amount``; ``to_pay``: ``due_amount``; ``advance``: ``advance``; the other tabs: 0)
+    left_students: int = 0      # PAY-TAILS Б5.5, tab ``advance``: DISTINCT students with an advance on a CLOSED membership among the filter (the other filters of the request kept, ``left_only`` not)
+    left_count: int = 0         # PAY-TAILS Б1.2, ``bucket=left_open`` of a group: the number of its closed memberships that still have a settlement (the number of the band «Ушли из группы»)
 
 
 # ---- group price and individual price (ROADMAP #105) ------------------------------------------------
@@ -844,6 +875,7 @@ class ReceiptOut(BaseModel):
     # Money-1 V5 (additive): the moment of issue (naive UTC), the account on that day, «копия» for every print after the first, the note of a cancelled payment, the line that this is not a fiscal cheque
     issued_at: Optional[str] = None
     state_on_issue: Optional[ReceiptState] = None
+    receipt_state_text: Optional[str] = None      # PAY-TAILS Б1.5: the coverage on the receipt - «оплачено до 30.11» (a period closed by money) / «оплачено 100 000 из 420 000 сум · к оплате 320 000 сум до 23.11» (in part); null for a closed membership and a forgiven period
     is_copy: bool = False
     print_count: int = 0
     void_note: Optional[str] = None
@@ -1113,7 +1145,8 @@ class StatementRow(PayModel):
     credit: int = 0  # money in (payment, transfer in, write-off)
     outflow: int = 0  # money out (refund, transfer out)
     balance_after: Optional[int] = None  # negative = debt, positive = advance; null on a voided row
-    balance_text: Optional[str] = None  # «Долг 500 000» | «Аванс 21 000» | «0»: the RUNNING total - TO BE REMOVED after П2 (the screen still reads it; ``balance_after`` too); the column reads ``open_*``
+    balance_text: Optional[str] = None  # «Долг 500 000 сум» | «Аванс 21 000 сум» | «0»: the RUNNING total (the screen reads it; PAY-TAILS Б1.6: with the unit, in the words of the dictionary); the column reads ``open_*``
+    text: Optional[str] = None  # PAY-TAILS Б1.5: the quiet line of a record - a forgiveness: «использовано 35 000 сум» (only when less was used than entered; the same words as ``details.text``)
     # PAY-DUE 10.11: what is open on the row ITSELF today.  A charge: the unpaid part of THIS charge named by ``pay_due`` (``paid`` = «Оплачено», ``due`` = «К оплате N», ``debt`` = «Долг N»); a payment: ``advance``
     # («Аванс N») while a part of it is not laid on the charges yet, else null; a transfer, a refund, a write-off: null.
     open_amount: Optional[int] = None
@@ -1129,6 +1162,14 @@ class StatementRow(PayModel):
     details: StatementDetails = Field(default_factory=StatementDetails)
 
 
+class StatementForecast(PayModel):
+    """The forecast row of a statement (a charge that has not begun): the day, the title («Ноябрь 2026 — неполный месяц (с 24.11, 2 урока из 8)»), the sub-line («прогноз: начислится 120 000 сум»)."""
+
+    date: date_type
+    title: str
+    sub: str
+
+
 class StatementOut(PayModel):
     """``GET /org/memberships/{id}/statement``.  The last row's ``balance_after`` equals ``summary.advance - summary.debt``
     (rows cut by ``from`` / ``to`` keep the running total of the whole history)."""
@@ -1140,6 +1181,7 @@ class StatementOut(PayModel):
     summary: StatementSummary
     rows: List[StatementRow] = Field(default_factory=list)
     voided: List[StatementRow] = Field(default_factory=list)  # only with ``include_voided=true``
+    forecast: Optional[StatementForecast] = None  # PAY-TAILS Б1.4: ONE grey row «прогноз» of the charge that has not begun; in no row, no total, no equality
     upcoming: List[Segment] = Field(default_factory=list)  # future periods that already hold money
 
 
@@ -1563,6 +1605,25 @@ class LeaveMoney(PayModel):
     individual_price_ends: bool = False
 
 
+class RecalcLineOut(PayModel):
+    """PAY-TAILS Б1.3: one line of «что было -> что станет» of a closing: the charge of a period that falls (``Ноябрь: 600 000 → 415 000 сум``, ``basis_text`` - the grey line under it), the forgiveness that falls with it
+    (``Прощено: 600 000 → 415 000 сум``) or a period paid ahead that will not begin (``Декабрь не начнётся: 300 000 сум останутся авансом`` - the MONEY laid on it).  ``done``: the sentence is in the past tense (the answer)."""
+
+    label: str
+    before: Optional[int] = None
+    after: Optional[int] = None
+    basis_text: Optional[str] = None
+    text: str
+    done: bool = False
+
+
+class RecalcCutOut(PayModel):
+    """The block when more than two periods change: the first two lines and the number of the rest («и ещё N периодов»)."""
+
+    lines: List[RecalcLineOut] = Field(default_factory=list)
+    more: int = 0
+
+
 class LeaveMembership(PayModel):
     membership_id: str
     group_id: str
@@ -1571,6 +1632,10 @@ class LeaveMembership(PayModel):
     has_open_balance: bool = False
     allowed: List[SettleAction] = Field(default_factory=lambda: ["keep"])
     effects: Optional[Dict[str, Any]] = None  # Money-2 T3: what the closing ends / leaves behind (``leave_effects.build``); sums only with the right to money
+    # PAY-TAILS Б1.3 / Б5.1-Б5.2 (sums: only with the right to money): what the closing does to the charges of THIS group (a list of lines, or ``{lines, more}`` when cut at two periods; null: no change)
+    # and to the OTHER groups of the student (the day that was paid in this group is not paid twice there): sentences of the server with the money in them
+    recalc: Optional[Union[List[RecalcLineOut], RecalcCutOut]] = None
+    others: List[str] = Field(default_factory=list)
 
 
 class LeavePreview(PayModel):
@@ -1582,7 +1647,9 @@ class SettleItem(BaseModel):
     membership_id: str
     action: SettleAction = "keep"
     expected_refundable: Optional[StrictInt] = None  # refund (R3 2)
-    expected_unpaid: Optional[StrictInt] = None  # writeoff (R3 2): everything unpaid the person SAW
+    expected_unpaid: Optional[StrictInt] = None  # writeoff (R3 2): everything unpaid the person SAW; PAY-TAILS Б5.1: sent for EVERY membership (``keep`` too) by a caller with the right to money
+    expected_advance: Optional[StrictInt] = None  # PAY-TAILS Б5.1: the advance the person SAW (every membership)
+    expected_as_of: Optional[date_type] = None  # PAY-TAILS Б5.1: the business day of the probe; another day at the action is 409 BALANCE_CHANGED (the numbers of the day may be the same, the words about the other groups are not)
     method: Optional[NewPaymentMethod] = None  # refund: mandatory
     reason: Optional[str] = Field(None, max_length=500)  # writeoff: mandatory (3..500)
 
@@ -1604,6 +1671,8 @@ class LeaveResult(PayModel):
     message: str
     settled: List[SettledOut] = Field(default_factory=list)
     effects: Optional[Dict[str, Any]] = None  # Money-2 T3: the same structure as the preview, after the choices of ``settle`` (a refunded advance no longer «stays»)
+    recalc: Optional[Union[List[RecalcLineOut], RecalcCutOut]] = None      # PAY-TAILS Б1.3: the lines of the probe, done (past tense); sums only with the right to money
+    others: List[str] = Field(default_factory=list)
 
 
 # ---- price impact (decision 4) ----------------------------------------------------------------------

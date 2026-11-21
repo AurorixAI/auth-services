@@ -143,6 +143,8 @@ class ArchiveStudentResponse(StudentResponse):
     diagnostic_invites_in_progress: int = 0
     settled: List[SettledOut] = []  # LOGIC-A (F9): the refunds / write-offs of ``settle``
     effects: List[Dict[str, Any]] = []  # Money-2 T3: per closed group what the archiving ends / leaves behind (``leave_effects.build``); sums only with the right to money
+    recalc: Optional[Any] = None  # PAY-TAILS Б1.3: the lines «что было -> что станет» of all the closed groups, each with the name of its group (a list, or ``{lines, more}``); sums only with the right to money
+    others: List[str] = []
 
 
 class RestoreStudentResponse(StudentResponse):
@@ -428,7 +430,9 @@ class StudentArchiveService:
             diagnostic_invites_cancelled=invites_cancelled,
             diagnostic_invites_in_progress=invites_in_progress,
             settled=settled,
-            effects=[leave_effects.build([snap], kind="archive", money=money) for snap in leave_effects.after_settle(before_close, settled)],
+            effects=[leave_effects.build([snap], kind="archive", money=money, done=True) for snap in leave_effects.after_settle(before_close, settled)],
+            recalc=leave_effects.recalc_of(before_close, done=True) if money else None,
+            others=[x for sn in before_close for x in sn.others] if money else [],
         )
 
     def _cancel_open_invites(self, org_id: str, student_id: UUID, now: datetime) -> tuple:

@@ -623,10 +623,10 @@ def tabs_and_statement(store):
                                  group_id=uid(301), group_name="A-1", teacher_name="Каримова", is_active=True)
     rows = [
         StatementRow(seq=1, date=D(2026, 9, 30), type="opening_debt", title="Долг на начало учёта на 30.09.2026", debit=250_000,
-                     balance_after=-250_000, balance_text="Долг 250 000", details=StatementDetails(segment=seg_open),
+                     balance_after=-250_000, balance_text="Долг 250 000 сум", details=StatementDetails(segment=seg_open),
                      open_amount=250_000, open_name="debt", open_text=tx.debt_text(250_000), open_parts=[OpenPart(name="debt", amount=250_000, text=tx.debt_text(250_000))]),
         StatementRow(seq=2, date=D(2026, 10, 21), type="charge", title="Стоимость 01.10–31.10", debit=213_000, balance_after=-463_000,
-                     balance_text="Долг 463 000", details=StatementDetails(segment=seg_oct),
+                     balance_text="Долг 463 000 сум", details=StatementDetails(segment=seg_oct),
                      open_amount=213_000, open_name="due", open_text=tx.due_text(213_000), open_parts=[OpenPart(name="due", amount=213_000, text=tx.due_text(213_000))]),
     ]
     write("A31_statement_opening_debt.json", StatementOut(membership=member, as_of=TODAY, mode="calendar", accounting_start=AS, summary=summary,

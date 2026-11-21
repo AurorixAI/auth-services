@@ -61,7 +61,7 @@ def test_buckets_count_students_and_bucket_rows_count_memberships(pg_session, cl
     assert s["bucket_rows"]["debtors"] == status_page(w, "debtors")["total"]
     assert s["buckets"]["to_pay"] == status_page(w, "to_pay")["students"] and s["bucket_rows"]["to_pay"] == status_page(w, "to_pay")["total"]
     assert s["bucket_rows"]["to_pay"] > s["buckets"]["to_pay"] or s["bucket_rows"]["debtors"] >= s["buckets"]["debtors"]
-    assert set(s["buckets"]) == set(s["bucket_rows"]) == {"debtors", "to_pay", "expiring", "active", "paused"}
+    assert set(s["buckets"]) == set(s["bucket_rows"]) == {"debtors", "to_pay", "expiring", "active", "paused", "advance"}      # PAY-TAILS Б1.1: + the tab «Аванс»
 
 
 def test_the_second_line_of_a_row_that_owes_both(pg_session, clock):

@@ -1065,7 +1065,7 @@ class PaymentService:
             void_reason=payment.void_reason,
         )
 
-    def _rows(self, entries: Sequence[ls.MembershipLedger]) -> List[MembershipPaymentRow]:
+    def _rows(self, entries: Sequence[ls.MembershipLedger], tab: Optional[str] = None) -> List[MembershipPaymentRow]:
         last = {e.membership.id: (e.payments[-1] if e.payments else None) for e in entries}
         users = self._users(x for p in last.values() if p for x in (p.created_by, p.voided_by))
         files = load_files(self.db, [p.id for p in last.values() if p])
@@ -1106,6 +1106,7 @@ class PaymentService:
                     paused=self._paused_range(e), opening=self._opening_brief(e),
                     price_ends_on_leave=bool(e.membership.is_active and e.price.source == pricing.SOURCE_OVERRIDE and e.price.amount is not None),
                     debt_age_bucket=pv.debt_age_basket(e.due.overdue_days) if e.due.debt_amount > 0 else None,
+                    **dict(zip(("tab_text", "tab_sub"), pv.tab_words(e, tab))),
                     **pv.unpaid_fields(e, today),
                 )
             )
@@ -1153,7 +1154,8 @@ class PaymentService:
         students_due: set = set()
         students_advance: set = set()
         students_paused: set = set()
-        buckets = {pv.BUCKET_DEBTORS: 0, pv.BUCKET_TO_PAY: 0, pv.BUCKET_EXPIRING: 0, pv.BUCKET_ACTIVE: 0, pv.BUCKET_PAUSED: 0}      # ROWS (memberships) per tab
+        students_left_advance: set = set()      # PAY-TAILS Б5.5: the students whose advance sits on a CLOSED membership
+        buckets = {pv.BUCKET_DEBTORS: 0, pv.BUCKET_TO_PAY: 0, pv.BUCKET_EXPIRING: 0, pv.BUCKET_ACTIVE: 0, pv.BUCKET_PAUSED: 0, pv.BUCKET_ADVANCE: 0}      # ROWS (memberships) per tab
         bucket_students: Dict[str, set] = {k: set() for k in buckets}                                                                   # DISTINCT students per tab
         price_missing = 0
         nearest: Optional[date] = None
@@ -1174,8 +1176,12 @@ class PaymentService:
                 students_due.add(e.student.id)
                 if d.due_until is not None and (nearest is None or d.due_until < nearest):
                     nearest = d.due_until
-            if l.advance > 0:
+            if pv.in_tab(e, pv.BUCKET_ADVANCE):
                 students_advance.add(e.student.id)
+                buckets[pv.BUCKET_ADVANCE] += 1
+                bucket_students[pv.BUCKET_ADVANCE].add(e.student.id)
+                if pv.is_closed(e):
+                    students_left_advance.add(e.student.id)
             for tab in (pv.BUCKET_DEBTORS, pv.BUCKET_TO_PAY):
                 if pv.in_tab(e, tab):
                     buckets[tab] += 1
@@ -1205,7 +1211,8 @@ class PaymentService:
             lessons_per_payment=settings.lessons_per_payment,
             debt_total=debt_total, debtors=len(students_debt), due_total=due_total, due_students=len(students_due),
             due_nearest=DueNearest(date=nearest, text=tx.due_until_phrase(nearest, loader.today)) if nearest is not None else None,
-            advance_total=advance_total, students_with_advance=len(students_advance), memberships_with_debt=with_debt,
+            advance_total=advance_total, students_with_advance=len(students_advance), advance_left_students=len(students_left_advance),
+            advance_text=tx.advance_card_text(len(students_advance), len(students_left_advance)), memberships_with_debt=with_debt,
             accounting_start_date=loader.settings.accounting_start,
             paused=counts[ps.PAUSED],
             buckets=PaymentsBuckets(**{k: len(v) for k, v in bucket_students.items()}), bucket_rows=PaymentsBuckets(**buckets), price_missing=price_missing, students_paused=len(students_paused),
@@ -1221,6 +1228,16 @@ class PaymentService:
         def name(e: ls.MembershipLedger):
             return (person_name(e.student.last_name, e.student.first_name) or "").lower(), e.group.name.lower(), str(e.membership.id)
 
+        if bucket == pv.BUCKET_ADVANCE:          # PAY-TAILS Б1.1: the closed memberships first (the freshest leaving on top, the archive after them), then the open ones by the advance, the biggest first
+            def advance_key(e: ls.MembershipLedger):
+                gone = pv.left_on(e)
+                return (not pv.is_closed(e), -(gone.toordinal() if gone else 0), -e.ledger.advance, *name(e))
+            return advance_key
+        if bucket == pv.BUCKET_LEFT_OPEN:        # the debt first (the biggest), then «к оплате», then the advance (the biggest), then the name
+            def settled_key(e: ls.MembershipLedger):
+                weight = 0 if e.due.debt_amount > 0 else 1 if e.due.due_amount > 0 else 2
+                return (weight, -(e.ledger.advance if weight == 2 else e.due.unpaid), *name(e))
+            return settled_key
         if bucket == pv.BUCKET_TO_PAY:           # the nearest term first; the same term - by the name (stable pages)
             return lambda e: (e.due.due_until or date.max, *name(e))
         if by_debt or bucket == pv.BUCKET_DEBTORS:       # the biggest debt first, then the oldest (K)
@@ -1246,24 +1263,30 @@ class PaymentService:
         offset: int = 0,
         sort: Optional[str] = None,
         age: Optional[str],
+        left_only: bool = False,
     ) -> PaymentStatusPage:
         loader = self._loader(org_id)
         if bucket == pv.BUCKET_DEBT_ALIAS:                   # the old name of the debtors tab
             bucket = pv.BUCKET_DEBTORS
-        scope = "all" if bucket in pv.UNPAID_TABS else "tracked"      # the tabs of an unpaid sum include a student who left / a closed participation
+        scope = "all" if bucket in pv.CLOSED_TABS else "tracked"      # the tabs of an unpaid sum, of the advance and of a group's closed memberships include a student who left / a closed participation
         entries = loader.load(group_id=group_id, teacher_id=teacher_id, search=search, scope=scope)
-        if bucket in (pv.BUCKET_DEBTORS, pv.BUCKET_TO_PAY, pv.BUCKET_EXPIRING, pv.BUCKET_ACTIVE, pv.BUCKET_PAUSED):
+        if bucket in (pv.BUCKET_DEBTORS, pv.BUCKET_TO_PAY, pv.BUCKET_EXPIRING, pv.BUCKET_ACTIVE, pv.BUCKET_PAUSED, pv.BUCKET_ADVANCE, pv.BUCKET_LEFT_OPEN):
             picked = [e for e in entries if pv.in_tab(e, bucket)]
         else:
             picked = [e for e in entries if ps.in_bucket(e.ledger.status.status, bucket)]
         if age is not None:                                  # Money-2 T18: the basket of the age of the debt (a row without a debt is in none)
             picked = [e for e in picked if e.due.debt_amount > 0 and pv.debt_age_basket(e.due.overdue_days) == age]
+        left_students = len({e.student.id for e in picked if pv.is_closed(e)}) if bucket == pv.BUCKET_ADVANCE else 0      # counted BEFORE ``left_only``: the toggle keeps its number
+        if left_only and bucket == pv.BUCKET_ADVANCE:
+            picked = [e for e in picked if pv.is_closed(e)]
         picked.sort(key=self._sort_key(bucket, sort == "debt"))
         page = picked[offset : offset + limit]
-        part = (lambda e: e.due.debt_amount) if bucket == pv.BUCKET_DEBTORS else (lambda e: e.due.due_amount) if bucket == pv.BUCKET_TO_PAY else (lambda e: 0)
+        part = ((lambda e: e.due.debt_amount) if bucket == pv.BUCKET_DEBTORS else (lambda e: e.due.due_amount) if bucket == pv.BUCKET_TO_PAY
+                else (lambda e: e.ledger.advance) if bucket == pv.BUCKET_ADVANCE else (lambda e: 0))
         return PaymentStatusPage(
-            items=self._rows(page), total=len(picked), limit=limit, offset=offset, as_of=loader.today.isoformat(),
+            items=self._rows(page, bucket), total=len(picked), limit=limit, offset=offset, as_of=loader.today.isoformat(),
             students=len({e.student.id for e in picked}), amount_total=sum(part(e) for e in picked),
+            left_students=left_students, left_count=len(picked) if bucket == pv.BUCKET_LEFT_OPEN else 0,
         )
 
     def student_memberships(self, org_id: str, student_id: UUID) -> List[MembershipPaymentRow]:
@@ -2411,7 +2434,7 @@ class PaymentService:
         price = loader.books.price(membership_id, membership.group_id, today)
         due_before = loader.classify(before, membership.student_id, membership_id)
         preview = PaymentPreview(
-            as_of=today, mode=before.mode, price=PriceOut(**pricing.price_dict(price)), due=pv.due_block(before, due_before, today),
+            as_of=today, mode=before.mode, price=PriceOut(**pricing.price_dict(price)), due=pv.due_block(before, due_before, today, archived),
             suggested_amount=self._correction_ceiling(org_id, before.debt, old_payment) if archived else self._suggested(loader, membership, before, price.amount), amount=amount, result=None,
             warnings=[], recalc=self._recalc_news(membership_id, before, exclude_payment=exclude),
         )
@@ -2428,7 +2451,7 @@ class PaymentService:
             else:
                 credit = bl.Credit("preview", bl.PAYMENT, paid_on, datetime(9999, 1, 1), amount)
                 after = bl.run_ledger(replace(inp, credits=tuple(inp.credits) + (credit,)))
-            preview.result = pv.preview_result(before, after, "preview", price.amount, due_before, loader.classify(after, membership.student_id, membership_id), today)
+            preview.result = pv.preview_result(before, after, "preview", price.amount, due_before, loader.classify(after, membership.student_id, membership_id), today, archived)
             more = self._warnings(after, "preview", paid_on, today, price.amount, archived=False)
             seen = {w.code for w in warnings}
             warnings.extend(w for w in more if w.code not in seen or w.code == "price_change_ahead")
@@ -2508,9 +2531,11 @@ class PaymentService:
         )
         users = self._users([payment.created_by])
         today = ps.business_today()
-        account = self._entry_of(org_id, payment.membership_id, today).ledger
+        entry = self._entry_of(org_id, payment.membership_id, today)
+        account = entry.ledger
+        cover = pv.cover_phrase(account, entry.due, pv.is_closed(entry))          # PAY-TAILS Б1.5: a day only on the border of a period, sums inside it, nothing for a closed membership
         extra_state = ReceiptState(as_of=today, debt=account.debt, advance=account.advance, paid_until=account.status.paid_until,
-                                   text=tx.receipt_state_text(today, account.debt, account.advance, account.status.paid_until))
+                                   text=tx.receipt_state_text(today, account.debt, account.advance, cover, partial=pv.partial_words(account, entry.due, pv.is_closed(entry)) is not None))
         snap = self.db.query(PaymentReceiptSnapshot.snapshot).filter(PaymentReceiptSnapshot.payment_id == payment.id).scalar()
         extra: Dict[str, Any] = {"valid_from": payment.valid_from, "valid_to": payment.valid_to}   # legacy receipts
         if isinstance(snap, dict):
@@ -2545,7 +2570,7 @@ class PaymentService:
             created_at=_iso(payment.created_at),
             voided_at=_iso(payment.voided_at),
             void_reason=payment.void_reason,
-            issued_at=_iso(_utcnow()), state_on_issue=extra_state, is_copy=int(payment.print_count or 0) > 0, print_count=int(payment.print_count or 0),
+            issued_at=_iso(_utcnow()), state_on_issue=extra_state, receipt_state_text=cover, is_copy=int(payment.print_count or 0) > 0, print_count=int(payment.print_count or 0),
             void_note=f"Оплата отменена {tx.ddmm(bc.utc_to_business_wall(payment.voided_at).date())}" if payment.voided_at else None,
             replaced_by_receipt_no=replaced_by[0] if replaced_by else None,
             replaces_receipt_no=replaces[0] if replaces else None,

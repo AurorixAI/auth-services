@@ -388,6 +388,11 @@ class Ledger:
     recalculated: int = 0                      # their sum
     written_off_granted: int = 0                                                  # PAY-TAILS: the sum of the forgiveness rows (entered)
     forgiven_used_by: Dict[str, int] = field(default_factory=dict, repr=False)     # PAY-TAILS: id of a forgiveness -> the part of it that covered a charge
+    # PAY-TAILS Б5.4: WHAT covered the last covered period (the one word of the account that every text of «оплачено до» reads): ``money`` (a payment, a transfer from a group) / ``forgiven`` (the forgiveness that was used)
+    # / ``recalc`` (only a recalculation) / ``opening`` (the paid days of an opening balance, no covered period); ``None`` - nothing covers (a package, nothing paid, a period that costs nothing).
+    covered_by: Optional[str] = field(default=None, repr=False)
+    forgiven_in_last: int = field(default=0, repr=False)         # the used forgiveness inside that period (only when ``covered_by`` is ``money``: «из них прощено N сум»)
+    cover_partial: Optional[Tuple[int, int, int]] = field(default=None, repr=False)      # ``(money, forgiven, charge)`` of the period that is covered only in part (the date lies INSIDE it: the words say sums, not a day)
     real_pauses: Tuple[Tuple[date, date], ...] = field(default=(), repr=False)      # PAY-DUE: the pauses the student asked for (the gap of a bridged return is not one): they move the term of payment
     open_now: bool = field(default=False, repr=False)                     # PAY-DUE: the stay is open today (a closed participation owes at once: package, transfer)
     _cache: Dict = field(default_factory=dict, repr=False, compare=False)
@@ -1601,6 +1606,7 @@ def _run_ledger(inp: LedgerInput, horizon_extra: int) -> Ledger:
         bal += e.credit - e.debit - e.outflow
         stmt.append(replace(e, balance_after=bal))
 
+    covered_by, forgiven_in_last, cover_partial = _cover_words(segments, opening, mode)
     ledger = Ledger(
         mode=mode, segments=tuple(segments), allocations=tuple(allocations), net_money=net,
         refunded_from=refunded_from, transferred_from=transferred_from, charged=charged, paid=paid, transferred_in=transferred_in, written_off=written_off,
@@ -1611,8 +1617,43 @@ def _run_ledger(inp: LedgerInput, horizon_extra: int) -> Ledger:
         counted=tuple(held_lessons), calendar_windows=tuple(cal_windows), lessons_windows=tuple(les_windows),
         lesson_owner=tuple(lesson_owner), package_costs={sid: tuple(c) for sid, c in seg_costs.items()},
         pauses=tuple(pause_days), opening=opening, recalcs=tuple(recalcs), recalculated=recalculated,
-        real_pauses=tuple(real_pauses), open_now=open_now)
+        real_pauses=tuple(real_pauses), open_now=open_now, covered_by=covered_by, forgiven_in_last=forgiven_in_last, cover_partial=cover_partial)
     return ledger
+
+
+def _cover_words(segments: Sequence[Segment], opening: Optional[Opening], mode: str) -> Tuple[Optional[str], int, Optional[Tuple[int, int, int]]]:
+    """PAY-TAILS Б5.4: ``(covered_by, forgiven_in_last, cover_partial)`` of an account - read from the same prefix of covered periods as ``covered_through``.  The last covered period is the one that holds the date of
+    the coverage (a period with no covered days is not it: the one before is).  Money (a payment, a transfer in) beats the forgiveness, the forgiveness beats a recalculation; the days of an opening balance with no covered
+    period are ``opening``.  A date INSIDE a period (it is covered only in part) comes with ``cover_partial`` so that no text names that day.  Nothing here changes a sum, a day or a status."""
+    if mode == LESSONS:
+        return None, 0, None
+    last: Optional[Segment] = None
+    partial: Optional[Tuple[int, int, int]] = None
+    for s in segments:
+        if s.unpriced:
+            continue
+        if s.kind == "opening":
+            if s.unpaid > 0:
+                break
+            continue
+        if s.covered_days >= len(s.days):
+            if s.days:
+                last = s
+            continue
+        if s.covered_days > 0:
+            last = s
+            if s.begun:         # a period that has BEGUN and is paid in part has a remainder to pay: its words are sums; days paid ahead of a period that has not begun are days
+                partial = (s.money, s.forgiven, s.amount)
+        break
+    if last is None:
+        return ("opening" if opening is not None and opening.paid_until is not None else None), 0, None
+    if last.money > 0:
+        return "money", last.forgiven, partial
+    if last.forgiven > 0:
+        return "forgiven", 0, partial
+    if last.recalculated > 0:
+        return "recalc", 0, partial
+    return None, 0, partial
 
 
 def overdue_days(through: date, today: date, pauses: Sequence[Tuple[date, date]]) -> int:

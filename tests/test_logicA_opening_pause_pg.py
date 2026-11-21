@@ -1,5 +1,6 @@
 """LOGIC-A: opening balance (decision 1) and pause (decision 2) through the API on PostgreSQL - the golden chains of the spec, the matrix cells that
 are about the API (ranges, noop, replace, void, rights, audit, the roster of a lesson)."""
+from src.auth import payments_texts as tx
 from datetime import date, datetime, timedelta
 
 import pytest
@@ -70,7 +71,8 @@ def test_opening_b_debt_and_the_payment_that_closes_it_first(world, fixed_today)
     assert row["paid_until"] is None
     pv = owner(world).get(f"{API}/org/memberships/{m.id}/payments/preview", params={"amount": 300_000}).json()
     assert pv["result"]["paid_until_after"] == "2026-10-22" and pv["result"]["unpaid_after"] == 163_000
-    assert pv["result"]["summary_text"] == "Погасит долг 250 000 сум · к оплате 50 000 сум из 213 000 сум → оплачено до 22.10 · останется 163 000 сум"
+    assert pv["result"]["summary_text"] == (f"Погасит долг {tx.money(250_000)} · к оплате {tx.money(50_000)} из {tx.money(213_000)} → "
+                                            f"оплачено {tx.num(50_000)} из {tx.money(213_000)} · к оплате {tx.money(163_000)} до 25.10")      # PAY-TAILS Б1.5: 22.10 lay INSIDE the period (50 000 of 213 000): sums, not a day
     created = post_payment(world, m, amount=300_000)
     items = created["allocation"]["items"]
     assert [(a["amount"], a["bucket"], a["closes"]) for a in items] == [(250_000, "past_debt", True), (50_000, "current", False)]

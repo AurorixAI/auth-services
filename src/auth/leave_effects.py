@@ -24,6 +24,7 @@ from sqlalchemy.orm import Session
 
 from src.models.auth import Group, MembershipPriceOverride, StudentGroup
 
+from . import leave_recalc
 from . import payment_status as ps
 from . import payments_texts as tx
 from . import pricing
@@ -49,6 +50,8 @@ class Snap:
     turns: int = 0                                                            # the part that is «к оплате» now and becomes a debt BY the action (the last group, an archive, a package participation that closes)
     before_debt: int = 0                                                      # the part that is already a debt before the action
     centre: bool = True                                                       # the student stays in the centre after the action (he has another group / it is a transfer)
+    recalc: List[leave_recalc.RecalcItem] = field(default_factory=list)     # PAY-TAILS Б1.3: what the closing does to the charges (before = the list of the centre, after = the account with the stay closed)
+    others: List[str] = field(default_factory=list)                           # PAY-TAILS Б5.2: what the closing does to the OTHER groups of the student (the day is not paid twice); filled by ``others_of``
 
 
 def snapshot(db: Session, org_id: Any, memberships: Sequence[StudentGroup], day: date, *, after=None, loader=None, in_centre: Optional[bool] = None) -> List[Snap]:
@@ -63,6 +66,7 @@ def snapshot(db: Session, org_id: Any, memberships: Sequence[StudentGroup], day:
         after, loader = LeaveService(db)._after(str(org_id), [m.id for m in memberships], day)
     names = {g.id: g.name for g in db.query(Group).filter(Group.id.in_({m.group_id for m in memberships})).all()}
     pauses = PauseService(db)
+    ordinary = ordinary_ledgers(db, org_id, [m.id for m in memberships], day)
     out: List[Snap] = []
     for m in memberships:
         snap = Snap(membership_id=m.id, group_id=m.group_id, group_name=names.get(m.group_id, ""))
@@ -70,6 +74,7 @@ def snapshot(db: Session, org_id: Any, memberships: Sequence[StudentGroup], day:
             ledger, refundable = after[m.id]
             snap.debt, snap.advance, snap.refundable = int(ledger.debt), int(ledger.advance), int(refundable)
             _name_the_unpaid(snap, loader, m, ledger, in_centre)
+            snap.recalc = leave_recalc.items(ordinary.get(m.id), ledger)
         price = loader.books.price(m.id, m.group_id, day)
         if price.source == pricing.SOURCE_OVERRIDE and price.amount is not None:
             snap.price = (int(price.amount), price.valid_from, price.reason)
@@ -83,6 +88,40 @@ def snapshot(db: Session, org_id: Any, memberships: Sequence[StudentGroup], day:
             snap.billing_from = period.billing_from
         out.append(snap)
     return out
+
+
+def ordinary_ledgers(db: Session, org_id: Any, ids: Sequence[UUID], day: date) -> Dict[UUID, Any]:
+    """PAY-TAILS Б5.1: the accounts of the memberships as the LIST of the centre shows them on ``day`` - the ordinary loader, no ``closing`` (the «before» of «что было -> что станет»; the account of ``LeaveService._after``
+    is already closed today and cannot be it).  Read-only; a fresh loader, nothing shared with the closing one."""
+    from . import billing_ledger as bl
+    from . import ledger_service as ls
+
+    loader = ls.LedgerLoader(db, str(org_id), day)
+    loader.load_facts(list(ids))
+    out: Dict[UUID, Any] = {}
+    for mid in ids:
+        inp = loader.build_input(mid)
+        if inp is not None:
+            out[mid] = bl.run_ledger(inp)
+    return out
+
+
+def recalc_of(snaps: Sequence[Snap], *, done: bool = False, named: bool = False) -> Optional[Any]:
+    """The block ``recalc`` of an answer about ``snaps`` (see ``leave_recalc.lines_of``): ONE membership - its own block; several (an archive of a student) - the lines of all, each with the name of its group."""
+    if len(snaps) == 1 and not named:
+        return leave_recalc.lines_of(snaps[0].recalc, done)
+    lines: List[Dict[str, Any]] = []
+    more = 0
+    for snap in snaps:
+        block = leave_recalc.lines_of(snap.recalc, done, snap.group_name)
+        if isinstance(block, dict):
+            lines.extend(block["lines"])
+            more += block["more"]
+        elif block:
+            lines.extend(block)
+    if not lines:
+        return None
+    return {"lines": lines, "more": more} if more else lines
 
 
 def _name_the_unpaid(snap: Snap, loader: Any, membership: StudentGroup, ledger: Any, in_centre: Optional[bool]) -> None:
@@ -225,7 +264,7 @@ def _lessons_word(n: int) -> str:
     return "уроков"
 
 
-def debt_text(snap: Snap, money: bool, kind: str = "leave") -> str:
+def debt_text(snap: Snap, money: bool, kind: str = "leave", done: bool = False) -> str:
     """The words of the debt the closing leaves (PAY-DUE 10.5, by the state AFTER the action): a part that is a debt already stays a debt in the group; the part that is «к оплате» now and becomes a debt by the
     action says so BEFORE it is done (the last group, an archive of the student, a package participation that closes)."""
     g = snap.group_name
@@ -242,43 +281,45 @@ def debt_text(snap: Snap, money: bool, kind: str = "leave") -> str:
         if snap.centre:      # he stays in the centre: a package participation (or a transfer) closes, its unpaid lessons are a debt at once
             return (f"К оплате {tx.money(snap.turns)}. Участие в группе «{g}» закрывается: сумма станет долгом" if money
                     else f"В группе «{g}» есть сумма к оплате. Участие закрывается: сумма станет долгом")
-        return (f"К оплате {tx.money(snap.turns)}. Это единственная группа ученика: после ухода сумма станет долгом" if money
-                else f"В группе «{g}» есть сумма к оплате. Это единственная группа ученика: после ухода сумма станет долгом")
+        if money:           # PAY-TAILS Б1.3: the total in ONE short sentence (the sum is a debt now: «Останется долг …»)
+            return (f"Долг {tx.money(snap.named_debt)} остался за учеником: это единственная группа ученика" if done
+                    else f"Останется долг {tx.money(snap.named_debt)}: это единственная группа ученика")
+        return f"В группе «{g}» есть сумма к оплате. Это единственная группа ученика: после ухода сумма станет долгом"
     amount = snap.named_debt or snap.debt
-    if money:
-        return f"Долг {tx.money(amount)} останется за учеником в группе «{g}»: принять или простить его можно в её выписке"
+    if money:           # PAY-TAILS Б1.3: the total of the window in one short sentence of the server (what to do with it is the choice under it, not this line)
+        return f"Долг {tx.money(amount)} остался за учеником" if done else f"Останется долг {tx.money(amount)}"
     return f"В группе «{g}» останется долг: принять или простить его можно в её выписке"
 
 
-def due_text(snap: Snap, money: bool) -> str:
+def due_text(snap: Snap, money: bool, done: bool = False) -> str:
     """The sum that stays «к оплате» after the action (the student is still in the centre; the term of the part goes on)."""
     g = snap.group_name
     if money:
         until = f" до {_ddmm(snap.due_until)}" if snap.due_until else ""
-        return f"К оплате {tx.money(snap.named_due)}{until}, срок не меняется: оплатить или простить сумму можно в выписке группы «{g}»"
+        return f"К оплате {tx.money(snap.named_due)}{until} осталось за учеником" if done else f"Останется к оплате {tx.money(snap.named_due)}{until}"
     return f"В группе «{g}» останется сумма к оплате, срок не меняется: оплатить или простить её можно в выписке группы"
 
 
-def unpaid_stays(base: Dict[str, Any], s: Snap, money: bool, kind: str) -> List[Dict[str, Any]]:
+def unpaid_stays(base: Dict[str, Any], s: Snap, money: bool, kind: str, done: bool = False) -> List[Dict[str, Any]]:
     """What the closing leaves unpaid in the group, one item per NAME (the debt, the sum «к оплате»); a snapshot without a name (the account has no named part) is told as a debt."""
     out: List[Dict[str, Any]] = []
     debt = s.named_debt if (s.named_debt or s.named_due) else s.debt
     if debt > 0:
-        out.append({**base, "code": "debt", **({"amount": debt, "turns": s.turns} if money else {}), "text": debt_text(s, money, kind)})
+        out.append({**base, "code": "debt", **({"amount": debt, "turns": s.turns} if money else {}), "text": debt_text(s, money, kind, done)})
     if s.named_due > 0:
-        out.append({**base, "code": "due", **({"amount": s.named_due, "due_until": s.due_until.isoformat() if s.due_until else None} if money else {}), "text": due_text(s, money)})
+        out.append({**base, "code": "due", **({"amount": s.named_due, "due_until": s.due_until.isoformat() if s.due_until else None} if money else {}), "text": due_text(s, money, done)})
     return out
 
 
-def advance_text(snap: Snap, money: bool) -> str:
-    if money:
-        return f"Аванс {tx.money(snap.advance)} останется в группе «{snap.group_name}»: вернуть его можно сейчас или позже в её выписке"
+def advance_text(snap: Snap, money: bool, done: bool = False) -> str:
+    if money:           # PAY-TAILS Б1.3: the total in one short sentence; «ушедший с авансом» is on the tab «Аванс» (the choice under the line says what can be done)
+        return f"Аванс {tx.money(snap.advance)} остался на счёте" if done else f"Останется аванс {tx.money(snap.advance)}"
     return f"В группе «{snap.group_name}» останется оплата вперёд: вернуть её может владелец или администратор с доступом к деньгам"
 
 
 def build(
     snaps: Sequence[Snap], *, kind: str, money: bool, target_name: Optional[str] = None, carried: Optional[int] = None, package: Optional[Tuple[int, Optional[int]]] = None,
-    carried_pauses: Sequence[Tuple[date, date]] = (), carry_text: Optional[str] = None, paid_until: Optional[date] = None,
+    carried_pauses: Sequence[Tuple[date, date]] = (), carry_text: Optional[str] = None, paid_until: Optional[date] = None, done: bool = False,
 ) -> Dict[str, Any]:
     """The structure and the words (see the module docstring).  ``carried``: the sum a transfer moved (``None`` without the right to money); ``package``: ``(size, price of the new group)`` in a package centre;
     ``carried_pauses``: the pauses created in the new group; ``carry_text``: the sentence of the new account (``carry_after.text``) that a calendar centre shows; ``paid_until``: the «оплачено до» that travelled
@@ -305,9 +346,11 @@ def build(
             if s.billing_from is not None:
                 moves.append({**base, "code": "billing_from", "date": s.billing_from.isoformat(),
                               "text": f"«Оплата с {_dmy(s.billing_from)}» перейдёт в группу «{target_name or ''}»: начисление там начнётся с этого дня"})
-        stays.extend(unpaid_stays(base, s, money, kind))
+        stays.extend(unpaid_stays(base, s, money, kind, done))
         if not transfer and s.advance > 0:
-            stays.append({**base, "code": "advance", **({"amount": s.advance} if money else {}), "text": advance_text(s, money)})
+            stays.append({**base, "code": "advance", **({"amount": s.advance} if money else {}), "text": advance_text(s, money, done)})
+        if not transfer and not s.debt and not s.advance and not s.named_due:          # PAY-TAILS Б1.3: nothing is left to settle - say so (the window has no empty line)
+            stays.append({**base, "code": "none", "text": "Расчётов нет — можно убирать" if not done else "Расчётов нет"})
         if s.price is not None:
             amount, since, reason = s.price
             where = f" в группе «{s.group_name}»"

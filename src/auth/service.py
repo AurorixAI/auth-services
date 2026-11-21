@@ -2591,7 +2591,8 @@ class AuthService:
                 results.append({"student_id": str(student_id), "status": "added"})
                 students.append({"student_id": str(student_id), "billing": result.get("billing"), "individual_price_ends": bool(result.get("individual_price_ends")),
                                  "closing_prices": result.get("closing_prices") or [], "past_balances": result.get("past_balances") or [],
-                                 "leave_undo": result.get("leave_undo"), "effects": result.get("effects")})      # stage 7 М1: the same object as in the single answer (null = an ordinary adding)
+                                 "leave_undo": result.get("leave_undo"), "effects": result.get("effects"),      # stage 7 М1: the same object as in the single answer (null = an ordinary adding)
+                                 "recalc": result.get("recalc"), "others": result.get("others") or []})      # PAY-TAILS Б1.3: the same lines as in the single answer, per student
                 for warning in result.get("warnings", []):
                     warnings.append({"student_id": str(student_id), **warning})
             except ValueError as exc:
@@ -2631,6 +2632,7 @@ class AuthService:
             "dry_run": dry_run,
             "students": students,
             "immediate_total": total,
+            "upcoming_total": self._upcoming_total(students),      # PAY-TAILS Б1.4: the forecasts of the students whose charge begins later, added up BY THE SERVER (the earliest day, the sum)
         }
 
     def add_student_to_group(
@@ -2909,6 +2911,10 @@ class AuthService:
                 self.db.flush()                                  # the new membership gets its id here
                 billing["immediate"] = billing_start.immediate_charge(self.db, org_id, membership.id, ps.business_date(now_dt), charged_before)
 
+        if billing is not None and not leave_undone:      # PAY-TAILS Б1.4: the charge that has NOT begun - the forecast of the first period (the date only for a caller without the right to money); never a part of any sum
+            self.db.flush()
+            billing["upcoming"] = self._enrol_upcoming(org_id, membership, ps.business_date(now_dt), payments_detail)
+
         # N13 P2.1: a transfer carries the payments in force over to the new group.  The price is not carried
         # (#105): in the new group the student follows the price of that group.
         carried: list[dict[str, str]] = []
@@ -2969,6 +2975,8 @@ class AuthService:
             "leave_undo": leave_undo_result,      # Money-2 T6: null = an ordinary adding / return; else {undone, restored[], text} - the leaving of the same day is cancelled (or the reason it is not)
             "past_balances": past_balances,      # Money-2 T13: what is left on his closed stays in OTHER groups (add only; sums with the right to money)
             "effects": effects,                  # Money-2 T3: what moves / stays / ends (sums only for a caller with the right to money)
+            "recalc": leave_effects.recalc_of(before_close, done=not dry_run) if closing and payments_detail else None,      # PAY-TAILS Б1.3: what the closing does to the charges of the old group (lines of the server; null: no change)
+            "others": self._transfer_others(org_id, group, membership, before_close, ps.business_date(now_dt)) if closing and payments_detail else [],      # PAY-TAILS Б5.2: when the NEW group starts to charge (the day of the transfer stays with the old one) and what it does to the other groups
             "individual_price_ends": bool(closing_prices),
             "billing": billing,                  # Money-1 B1: from which day he is charged (``pay_from``) and why; null for a transfer
             "dry_run": dry_run,
@@ -2978,6 +2986,57 @@ class AuthService:
         else:
             self.db.commit()
         return result
+
+    def _enrol_upcoming(self, org_id: str, membership: StudentGroup, day: date, money: bool) -> Optional[dict]:
+        """PAY-TAILS Б1.4 / Б5.3: ``upcoming`` of a student who has just been written down (or is being probed): the forecast of his first period when it begins later than ``day`` - read from his own account of
+        this very transaction (``pay_upcoming.forecast``: the same account on a later day), or ``None``."""
+        from . import billing_ledger as bl
+        from . import ledger_service as ls
+        from . import pay_upcoming
+        from . import payments_views as pv
+
+        loader = ls.LedgerLoader(self.db, str(org_id), day)
+        loader.load_facts([membership.id])
+        inp = loader.build_input(membership.id)
+        if inp is None:
+            return None
+        price = loader.books.price(membership.id, membership.group_id, day)
+        if price.amount in (None, 0):
+            return None
+        up = pay_upcoming.forecast(inp, bl.run_ledger(inp), loader.settings.pay_due_days, loader.settings.pay_due_lessons)
+        return pv.upcoming_payload(up, day, loader.left_names.get(membership.student_id, {}).get(day, set()), money) if up is not None else None
+
+    @staticmethod
+    def _upcoming_total(students: list) -> Optional[dict]:
+        """The total of the forecasts of a bulk adding (the screen never adds them up): the earliest first day, the sum, the earliest term; ``None`` when nobody's charge begins later."""
+        found = [s["billing"]["upcoming"] for s in students if s.get("billing") and s["billing"].get("upcoming")]
+        if not found:
+            return None
+        from . import payments_texts as tx
+
+        begin = min(u["from"] for u in found)
+        amounts = [u["amount"] for u in found if u.get("amount") is not None]
+        total = sum(amounts) if amounts and len(amounts) == len(found) else None
+        until = [u["due_until"] for u in found if u.get("due_until")]
+        due = min(until) if until else None
+        return {"from": begin, "amount": total, "lessons_text": None, "due_until": due,
+                "text": f"Начисление с {tx.ddmm(begin)}: {tx.money(total)}" if total is not None else None,
+                "sub": f"платить до {tx.ddmm(due)}" if due else None, "terms_note": None}
+
+    def _transfer_others(self, org_id: str, target: Group, membership: StudentGroup, before_close: list, day: date) -> list:
+        """PAY-TAILS Б5.2 / Б1.3: the sentence about the NEW group of a transfer - the date its charge begins, read from the first billable day of ITS account inside this very probe / write (the transfer is real
+        up to the rollback of a dry run: the rule «a day is not paid twice» is already applied, no second calculation) - and the sentences about the other groups of the student that the closing moved."""
+        from . import billing_ledger as bl
+        from . import ledger_service as ls
+
+        lines = [x for sn in before_close for x in sn.others]
+        loader = ls.LedgerLoader(self.db, str(org_id), day)
+        loader.load_facts([membership.id])
+        inp = loader.build_input(membership.id)
+        ledger = bl.run_ledger(inp) if inp is not None else None
+        if ledger is not None and ledger.first_billable is not None:
+            lines.append(f"Начисление в группе «{target.name}» начнётся с {ledger.first_billable.strftime('%d.%m')}")
+        return lines
 
     def _transfer_effects(self, org_id: str, target: Group, before_close: list, carried: list, carry_after: Optional[dict], moved_pauses: list, day: date, money: bool) -> dict:
         """Money-2 T3: the structure and the words of what a transfer moves, leaves and ends (``leave_effects.build``), from the facts read before the closing and the answer of the carry-over."""

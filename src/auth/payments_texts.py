@@ -52,11 +52,15 @@ def opening_over_payments_text(total: int, covered_until: date) -> str:
     return f"У ученика уже есть оплаты на {money(total)} — покрытие станет до {ddmm(covered_until)}"
 
 
-def receipt_state_text(day: date, debt: int, advance: int, paid_until: Optional[date]) -> str:
-    """Money-1 V5: ``На 21.10.2026: не оплачено 100 000 сум, оплачено до 14.11`` (the account of the student on the day the receipt is issued)."""
+def receipt_state_text(day: date, debt: int, advance: int, cover: Optional[str] = None, partial: bool = False) -> str:
+    """Money-1 V5: ``На 21.10.2026: не оплачено 100 000 сум, оплачено до 14.11`` (the account of the student on the day the receipt is issued).  PAY-TAILS Б1.5: ``cover`` is the phrase of the coverage that the account
+    allows (``cover_phrase``: a day only on the border of a period, sums inside it, nothing for a closed membership or a forgiven period); a period paid in part (``partial``) says its own remainder, so the head is not
+    repeated: ``На 21.10.2026: оплачено 400 000 из 500 000 сум · долг 100 000 сум``."""
+    if partial and cover:
+        return f"На {day.strftime('%d.%m.%Y')}: {cover}"
     parts = [f"не оплачено {money(debt)}" if debt else (f"аванс {money(advance)}" if advance else "всё оплачено")]
-    if paid_until:
-        parts.append(f"оплачено до {ddmm(paid_until)}")
+    if cover:
+        parts.append(cover)
     return f"На {day.strftime('%d.%m.%Y')}: " + ", ".join(parts)
 
 
@@ -313,14 +317,71 @@ def debt_text(amount: int, lessons: Optional[int] = None) -> str:
     return _with_lessons(f"Долг {money(amount)}", lessons)
 
 
-def debt_sub(overdue_days: Optional[int], paid_until: Optional[date]) -> Optional[str]:
-    """PAY-DUE 10.9: ``просрочено 12 дней · оплачено до 14.11`` (each half only when it is there: a debt of a student who left before the term has no overdue words)."""
+def debt_sub(overdue_days: Optional[int], paid_until: Optional[date], kind: Optional[str] = None, left_on: Optional[date] = None) -> Optional[str]:
+    """PAY-DUE 10.9: ``просрочено 12 дней · оплачено до 14.11`` (each half only when it is there: a debt of a student who left before the term has no overdue words).  PAY-TAILS Б5.4: the word of the day is the word of
+    what covered it (``kind``: «оплачено до» / «прощено до» / «оплата не нужна до»); a day INSIDE a period and any day of a closed membership are not passed in (``paid_until`` None); a membership that left starts the line
+    with ``ушёл 20.11``."""
     parts = []
+    if left_on:
+        parts.append(left_text(left_on))
     if overdue_days:
         parts.append(f"просрочено {overdue_days} {days_word(overdue_days)}")
     if paid_until:
-        parts.append(f"оплачено до {ddmm(paid_until)}")
+        parts.append(f"{cover_words(kind).lower()} {ddmm(paid_until)}")
     return " · ".join(parts) or None
+
+
+# ---- PAY-TAILS Б5.4 / Б1.5: the words of a state (one place; every text of «оплачено до» is made here)
+
+SETTLED_TEXT = "Расчёт закрыт"          # a closed membership: something was charged, nothing is left to pay or to give back
+NO_CHARGES_TEXT = "Расчётов нет"        # a closed membership: nothing was ever charged and no money was ever entered
+
+
+def cover_words(kind: Optional[str]) -> str:
+    """The word of the date a coverage reaches: money (a payment, a transfer, the days of an opening balance) - «Оплачено до»; only the forgiveness - «Прощено до»; only a recalculation - «Оплата не нужна до»."""
+    return {"forgiven": "Прощено до", "recalc": "Оплата не нужна до"}.get(kind or "", "Оплачено до")
+
+
+def cover_text(kind: Optional[str], day: Optional[date]) -> Optional[str]:
+    return f"{cover_words(kind)} {ddmm(day)}" if day else None
+
+
+def forgiven_inside_text(amount: int) -> str:
+    """The quiet line under «Оплачено до»: ``из них прощено 300 000 сум`` (the forgiveness used in the last covered period)."""
+    return f"из них прощено {money(amount)}"
+
+
+def paid_ahead_text(amount: int) -> str:
+    """The quiet line of a membership whose charge has not begun and that already paid: ``оплачено 120 000 сум``."""
+    return f"оплачено {money(amount)}"
+
+
+def left_text(day: date) -> str:
+    return f"ушёл {ddmm(day)}"
+
+
+def advance_card_text(students: int, left_students: int) -> str:
+    """The sub-line of the card «Аванс» (PAY-TAILS Б1.1 / Б5.5): ``5 учеников · 4 ушли из группы`` / ``5 учеников`` / nothing at zero.  ``left_students`` are the students whose advance sits on a closed membership."""
+    if students <= 0:
+        return ""
+    text = f"{students} {plural(students, 'ученик', 'ученика', 'учеников')}"
+    if left_students > 0:
+        text += f" · {left_students} {'ушёл' if left_students % 10 == 1 and left_students % 100 != 11 else 'ушли'} из группы"
+    return text
+
+
+def partial_cover_text(paid: int, forgiven: int, charge: int, debt: int, due: int, due_until: Optional[date]) -> str:
+    """A period that is covered only in part says SUMS, never a day inside it: ``оплачено 100 000 из 420 000 сум · к оплате 320 000 сум до 23.11`` (or ``· долг 320 000 сум``)."""
+    parts = []
+    if paid > 0:
+        parts.append(f"оплачено {num(paid)} из {money(charge)}")
+    if forgiven > 0:
+        parts.append(f"прощено {money(forgiven)}" if paid > 0 else f"прощено {num(forgiven)} из {money(charge)}")
+    if debt > 0:
+        parts.append(f"долг {money(debt)}")
+    if due > 0:
+        parts.append(f"к оплате {money(due)}" + (f" до {ddmm(due_until)}" if due_until else ""))
+    return " · ".join(parts)
 
 
 def due_text(amount: int, lessons: Optional[int] = None) -> str:
@@ -352,16 +413,16 @@ def advance_text(amount: int) -> str:
     return f"Аванс {money(amount)}"
 
 
-def after_text(debt: int, due: int, paid_until: Optional[date], lessons_left: Optional[int] = None, advance: int = 0) -> str:
+def after_text(debt: int, due: int, paid_until: Optional[date], lessons_left: Optional[int] = None, advance: int = 0, kind: Optional[str] = None) -> str:
     """PAY-DUE 15А.2.7: the state of the account AFTER a payment in the words of the server (the screen glues nothing): ``Останется: долг 100 000 сум · к оплате 50 000 сум`` while something
-    is unpaid; otherwise ``Оплачено до 15.11`` / ``Осталось 3 урока`` / ``Аванс 21 000 сум`` / ``Всё оплачено``."""
+    is unpaid; otherwise ``Оплачено до 15.11`` / ``Осталось 3 урока`` / ``Аванс 21 000 сум`` / ``Всё оплачено``.  PAY-TAILS Б5.4: the word of the day is the word of what covered it (``kind``)."""
     parts = [f"долг {money(debt)}" if debt > 0 else None, f"к оплате {money(due)}" if due > 0 else None]
     if any(parts):
         return "Останется: " + " · ".join(p for p in parts if p)
     if lessons_left:
         return lessons_left_text(lessons_left)
     if paid_until:
-        return f"Оплачено до {ddmm(paid_until)}"
+        return f"{cover_words(kind)} {ddmm(paid_until)}"
     return advance_text(advance) if advance > 0 else "Всё оплачено"
 
 
@@ -381,11 +442,12 @@ def forecast_text(day: Optional[date]) -> str:
 
 
 def balance_text(balance: int) -> str:
-    """«Баланс» of a statement (the personal account): negative = ``Долг N``, positive = ``Аванс N``, zero = ``0``."""
+    """«Баланс» of a statement (the personal account): negative = ``Долг N сум``, positive = ``Аванс N сум``, zero = ``0``.  PAY-TAILS Б1.6: in the words of the dictionary - every sum has its «сум» (the screen
+    printed this text as it came, a sum without the unit was the one place that did not)."""
     if balance < 0:
-        return f"Долг {num(-balance)}"
+        return f"Долг {money(-balance)}"
     if balance > 0:
-        return f"Аванс {num(balance)}"
+        return f"Аванс {money(balance)}"
     return "0"
 
 
@@ -456,6 +518,8 @@ def summary_text(
     paid_until_after: Optional[date],
     advance_periods: Sequence[tuple[date, date]] = (),
     lessons: Optional[tuple[int, int]] = None,
+    kind: Optional[str] = None,
+    partial: Optional[str] = None,
 ) -> str:
     """The one-line answer to «что закроет» (calendar: ``paid_until_after``; lessons: ``(covered_after, left_after)``).  The names come from ``pay_due`` (PAY-DUE 10.10), the oldest sum is settled first:
 
@@ -484,11 +548,14 @@ def summary_text(
         if advance:
             text += f" · аванс {money(advance)}"
         return text
+    if partial:                                  # PAY-TAILS Б1.5: the period is paid in part - sums, never a day inside it (the rest is in ``partial`` itself)
+        return f"{head} → {partial}" if head else _first_upper(partial)
+    word = cover_words(kind).lower()
     if advance and paid_until_after is not None:
-        text = f"{head}, оплачено до {ddmm(paid_until_after)}"
+        text = f"{head}, {word} {ddmm(paid_until_after)}"
         return text
     if paid_until_after is not None:
-        text = f"{head} → оплачено до {ddmm(paid_until_after)}" if head else f"Оплачено до {ddmm(paid_until_after)}"
+        text = f"{head} → {word} {ddmm(paid_until_after)}" if head else f"{cover_words(kind)} {ddmm(paid_until_after)}"
     else:
         text = head
     if debt_after:

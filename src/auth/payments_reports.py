@@ -45,6 +45,7 @@ from .payments_schemas import (
     StatementMembership,
     StatementOut,
     StatementRow,
+    StatementForecast,
     StatementSummary,
 )
 from .payments_service import InvalidPeriod, PaymentService, RangeTooLong, PaymentInvalid
@@ -156,8 +157,9 @@ class PaymentsReports:
             elif e.kind == bl.WRITEOFF:
                 w = writeoffs[e.ref_id]
                 used = ledger.forgiven_used_by.get(e.ref_id, 0)
-                rows.append(StatementRow(type="writeoff", title=tx.forgiven_title(w.reason, int(w.amount)), details=StatementDetails(
-                    amount=int(w.amount), used=used, text=tx.forgiven_used_text(used, int(w.amount)),
+                said = tx.forgiven_used_text(used, int(w.amount))
+                rows.append(StatementRow(type="writeoff", title=tx.forgiven_title(w.reason, int(w.amount)), text=said, details=StatementDetails(
+                    amount=int(w.amount), used=used, text=said,
                     writeoff_id=str(w.id), reason=w.reason, created_by_name=_person(users.get(w.created_by)), recorded_on=ps.business_date(w.created_at)), **common))
             elif e.kind == bl.RECALC:      # PAY-F: derived from the cancelled lesson, nothing is stored
                 line = recalcs[e.ref_id]
@@ -187,7 +189,7 @@ class PaymentsReports:
             charged=ledger.charged, paid=ledger.paid, transferred_in=ledger.transferred_in, written_off=ledger.written_off,
             recalculated=ledger.recalculated, refunded=ledger.refunded, transferred_out=ledger.transferred_out, unpaid=ledger.debt, advance=ledger.advance,
             paid_until=ledger.status.paid_until, status=pv.unpaid_status(entry), reconciles=ledger.reconciles,
-            **pv.unpaid_fields(entry, today))
+            **self._summary_words(entry, today))
         return StatementOut(
             membership=StatementMembership(
                 membership_id=str(entry.membership.id), student_id=str(entry.student.id),
@@ -195,7 +197,24 @@ class PaymentsReports:
                 display_id=entry.student.display_id, group_id=str(entry.group.id), group_name=entry.group.name,
                 teacher_name=_person(entry.teacher), is_active=bool(entry.membership.is_active)),
             as_of=today, mode=ledger.mode, accounting_start=loader.settings.accounting_start, summary=summary, rows=rows,
-            voided=voided, upcoming=[pv.segment_out(s, entry.due) for s in ledger.segments if not s.begun and (s.money or s.forgiven or s.recalculated)])
+            voided=voided, upcoming=[pv.segment_out(s, entry.due) for s in ledger.segments if not s.begun and (s.money or s.forgiven or s.recalculated)],
+            forecast=self._forecast_of(entry))
+
+    @staticmethod
+    def _summary_words(entry, today: date) -> dict:
+        """The words of the state in the summary of a statement; a charge that has not begun says its TERM on the right («платить до 28.11»), not the forecast sum (the grey row says that)."""
+        fields = pv.unpaid_fields(entry, today)
+        if fields["state"] == pv.STATE_STARTS:
+            up, _wait = pv.starts_info(entry)
+            if up is not None:
+                fields["state_sub"] = up.sub or None
+        return fields
+
+    @staticmethod
+    def _forecast_of(entry) -> Optional[StatementForecast]:
+        """PAY-TAILS Б1.4: the grey row of a charge that has not begun (the same reading as the list: ``pv.starts_info``); never in ``rows``, never in a total."""
+        up, _wait = pv.starts_info(entry)
+        return StatementForecast(date=up.begin, title=up.row_title, sub=up.row_sub) if up is not None else None
 
     def _correction_chain(self, org_id: str, payments) -> Tuple[Dict[Any, tuple], Dict[Any, Optional[int]]]:
         """For a set of payments: ``was[id] = (receipt_no, amount)`` of the payment it corrects and ``becomes[id]`` = the receipt
@@ -535,7 +554,7 @@ class PaymentsReports:
         entries = loader.load(group_id=group_id, teacher_id=teacher_id, search=search, scope="all")
         kind = pv.BUCKET_DEBTORS if kind == pv.BUCKET_DEBT_ALIAS else kind
         if kind == "advance":
-            picked = [e for e in entries if e.ledger.advance > 0]
+            picked = [e for e in entries if pv.in_tab(e, pv.BUCKET_ADVANCE)]       # PAY-TAILS Б5.5: the one function of the tab «Аванс» (the old route is not widened)
             picked.sort(key=lambda e: (-e.ledger.advance, (person_name(e.student.last_name, e.student.first_name) or "").lower(), str(e.membership.id)))
         else:
             picked = [e for e in entries if pv.in_tab(e, kind)]

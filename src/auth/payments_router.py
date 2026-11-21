@@ -136,7 +136,7 @@ def payments_summary(user: dict = Depends(require_payments_access), db: Session 
 
 @router.get("/org/payments/status", response_model=PaymentStatusPage)
 def payments_status(
-    bucket: Literal["debtors", "debt", "to_pay", "expiring", "active", "paused", "all", "none"] = "all",
+    bucket: Literal["debtors", "debt", "to_pay", "expiring", "active", "paused", "advance", "left_open", "all", "none"] = "all",
     group_id: Optional[UUID] = None,
     teacher_id: Optional[UUID] = None,
     search: Optional[str] = Query(None, max_length=100),
@@ -144,15 +144,18 @@ def payments_status(
     offset: int = Query(0, ge=0),
     sort: Optional[Literal["debt"]] = Query(None, description="debt — по убыванию долга (PAY-2)"),
     age: Optional[Literal["to_30", "31_60", "61_90", "over_90"]] = Query(None, description="Деньги-2 Т18: корзина возраста долга в днях (до 30 / 31–60 / 61–90 / старше 90)"),
+    left_only: bool = Query(False, description="PAY-TAILS: вкладка advance — только закрытые участия (ушли, архив)"),
     user: dict = Depends(require_payments_access),
     db: Session = Depends(get_db),
 ):
     """Членства со статусом оплаты (по вкладкам), с точным ``total`` (строки). PAY-DUE: вкладки ``debtors`` Должники (есть ``debt_amount``; ``debt`` — старое имя) / ``to_pay`` К оплате (есть ``due_amount``,
     в том числе у должников) / ``expiring`` Заканчивается оплата / ``active`` Без долга / ``paused`` На паузе; обе вкладки неоплаты читают и закрытые участия. ``students`` — число разных учеников фильтра,
-    ``amount_total`` — сумма части вкладки по всем строкам фильтра. ``sort=debt`` — по убыванию ``debt_amount`` (``to_pay`` — по ближайшему сроку)."""
+    ``amount_total`` — сумма части вкладки по всем строкам фильтра. ``sort=debt`` — по убыванию ``debt_amount`` (``to_pay`` — по ближайшему сроку).
+    PAY-TAILS: ``advance`` — все участия центра с авансом (открытые, ушедшие, из архива), закрытые первыми; ``left_only=true`` — только закрытые; ``left_students`` — сколько разных учеников с авансом на закрытом участии.
+    ``left_open`` (с ``group_id``) — закрытые участия группы с любым остатком (долг, «к оплате», аванс), ``left_count`` — их число."""
     return PaymentService(db).status_page(
         user["org_id"], bucket=bucket, group_id=group_id, teacher_id=teacher_id,
-        search=search, limit=limit, offset=offset, sort=sort, age=age,
+        search=search, limit=limit, offset=offset, sort=sort, age=age, left_only=left_only,
     )
 
 

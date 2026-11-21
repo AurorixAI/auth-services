@@ -280,6 +280,7 @@ class LedgerLoader:
         self.members: Dict[UUID, Tuple[StudentGroup, Student, Group, Optional[User]]] = {}
         self.stays: Dict[UUID, List[bl.Stay]] = {}
         self.left_days: Dict[UUID, Dict[UUID, Set[date]]] = {}   # student id -> membership id -> the days he LEFT that membership (Money-1 G-8)
+        self.left_names: Dict[UUID, Dict[date, Set[str]]] = {}      # PAY-TAILS Б1.4: student id -> day -> the names of the groups he left that day (they still charged it): the note of a forecast that was moved
         self.payments: Dict[UUID, List[StudentPayment]] = {}
         self.writeoffs: Dict[UUID, List[StudentWriteoff]] = {}
         self.refunds: Dict[UUID, List[StudentRefund]] = {}
@@ -690,6 +691,7 @@ class LedgerLoader:
                 # G-8b / Р-6: the day he left belongs to that group only when it really charges the day (a stay of one day without a lesson charges nothing, G-7)
                 if run[1] is not None and not bl.lessonless_day(lambda a, b, _g=group: self._lesson_days(_g, a, b), run) and self._holds_day(group, run[1], membership.id):
                     self.left_days.setdefault(membership.student_id, {}).setdefault(membership.id, set()).add(run[1])
+                    self.left_names.setdefault(membership.student_id, {}).setdefault(run[1], set()).add(group.name)
 
     def forgiveness_to_cancel(self, mid: UUID, day: date) -> Set[UUID]:
         """Money-2 Ф1: of the live forgivenesses dated ``day`` or later of a membership whose stay of ``day`` is of NO day (the stay is already closed in the load, or is judged as closed by ``closing``) - the ids that are

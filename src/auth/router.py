@@ -1328,7 +1328,7 @@ def remove_student_from_group(
         from .leave_service import LeaveService  # lazy: pulls in the payments modules
 
         LeaveService(db).leave(user["org_id"], group_id, student_id, user["user_id"], actor_role_for_audit(user), None, money=has_payments_access(user, db))
-        return MessageResponse(message="Ученик удалён из группы")
+        return MessageResponse(message="Ученик убран из группы")
     except OperationalError as e:
         raise _concurrent_edit_or_raise(e, db)
     except PaymentError as e:

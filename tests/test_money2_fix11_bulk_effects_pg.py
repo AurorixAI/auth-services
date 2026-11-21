@@ -32,7 +32,7 @@ def test_s1_a_bulk_transfer_names_the_debt_that_stays_the_advance_that_moves_and
         by_id = {s["student_id"]: s["effects"] for s in answer["students"]}
         debt = [x for x in by_id[str(s0.id)]["stays"] if x["code"] == "debt"]
         assert len(debt) == 1 and debt[0]["amount"] == 210_000 and debt[0]["group_name"] == a.name
-        assert debt[0]["text"] == f"Долг {tx.money(210_000)} останется за учеником в группе «{a.name}»: принять или простить его можно в её выписке"
+        assert debt[0]["text"] == f"Останется долг {tx.money(210_000)}"      # PAY-TAILS Б1.3: the short sentence of the total
         assert by_id[str(s0.id)]["money_text"] is None
         assert by_id[str(s1.id)]["money_text"] == "Деньги не изменятся: в прошлой группе нет аванса и долга" and by_id[str(s1.id)]["moves"] == []
         (money,) = [m for m in by_id[str(s2.id)]["moves"] if m["code"] == "money"]

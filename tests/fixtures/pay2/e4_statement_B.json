@@ -27,6 +27,10 @@
     "due_also_text": null,
     "state": "paid",
     "state_text": "Оплачено до 04.11",
+    "state_sub": null,
+    "covered_by": "money",
+    "left_on": null,
+    "upcoming": null,
     "charged": 258000,
     "paid": 0,
     "transferred_in": 323000,
@@ -50,7 +54,8 @@
       "credit": 323000,
       "outflow": 0,
       "balance_after": 323000,
-      "balance_text": "Аванс 323 000",
+      "balance_text": "Аванс 323 000 сум",
+      "text": null,
       "open_amount": 65000,
       "open_name": "advance",
       "open_text": "Аванс 65 000 сум",
@@ -124,7 +129,8 @@
       "credit": 0,
       "outflow": 0,
       "balance_after": 65000,
-      "balance_text": "Аванс 65 000",
+      "balance_text": "Аванс 65 000 сум",
+      "text": null,
       "open_amount": 0,
       "open_name": "paid",
       "open_text": "Оплачено",
@@ -196,6 +202,7 @@
     }
   ],
   "voided": [],
+  "forecast": null,
   "upcoming": [
     {
       "id": "seg:0:2026-11-01",

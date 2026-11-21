@@ -198,7 +198,7 @@ def test_t3_a_debt_that_stays_in_the_old_group_is_named_with_its_sum_and_the_fal
     (nothing, debt) = real["stays"]                                              # R3 П5: the money does not move - a coded entry says so, then the debt
     assert nothing["code"] == "money_stays" and nothing["amount"] == 0 and nothing["group_id"] == str(a.id)
     assert debt["code"] == "debt" and debt["amount"] == 210_000 and debt["group_id"] == str(a.id) and debt["group_name"] == a.name
-    assert debt["text"] == f"Долг 210 000 сум останется за учеником в группе «{a.name}»: принять или простить его можно в её выписке"
+    assert debt["text"] == f"Останется долг {tx.money(210_000)}"      # PAY-TAILS Б1.3: the total in one short sentence (was «Долг … останется за учеником в группе «…»: принять или простить его можно в её выписке»)
     assert "нет оплат" not in (real["money_text"] or "") and real["money_text"] is None and codes(real["moves"]) == []
 
 
@@ -252,6 +252,11 @@ def test_t3_package_centre_says_lessons_at_the_price_of_the_new_group_and_the_re
     assert money["text"] == f"Перейдёт 600 000 сум в группу «{b.name}»: 18 уроков по цене новой группы и остаток 0 сум".replace(a.name, b.name)
 
 
+def untold(effects):
+    """The structure of ``effects`` without the words of the totals (the preview says «Останется …», the answer says it done)."""
+    return {**effects, "stays": [{k: v for k, v in x.items() if k != "text"} for x in effects["stays"]], "texts": None}
+
+
 def test_t3_a_leave_and_an_archiving_say_what_ends_and_what_stays_and_the_answer_equals_the_window(world, fixed_today):
     from tests.pg_world import give_price
 
@@ -266,13 +271,14 @@ def test_t3_a_leave_and_an_archiving_say_what_ends_and_what_stays_and_the_answer
     assert window["kind"] == "leave" and codes(window["stays"]) == ["advance"] and window["stays"][0]["amount"] == 225_000
     assert sorted(codes(window["ends"])) == ["individual_price", "pause"]
     done = client.post(f"{API}/org/groups/{a.id}/students/{s0.id}/leave", json={}).json()["effects"]
-    assert done == window
+    assert untold(done) == untold(window)                                       # the same facts; PAY-TAILS Б1.3: the answer says them in the PAST tense («Аванс … остался на счёте» against «Останется аванс …»)
+    assert (window["stays"][0]["text"], done["stays"][0]["text"]) == ("Останется аванс 225\u00a0000\u00a0сум", "Аванс 225\u00a0000\u00a0сум остался на счёте")
     # the same student archived (a second world student): the archive window and the answer
     s1 = world.students[1]
     joined(world, s1, a, date(2026, 11, 2))
     win = client.get(f"{API}/org/students/{s1.id}/archive-preview").json()["memberships"][0]["effects"]
     ans = client.post(f"{API}/org/students/{s1.id}/archive", json={}).json()["effects"]
-    assert win["kind"] == "archive" and ans == [win] and codes(win["stays"]) == ["debt"] and win["stays"][0]["amount"] == 210_000
+    assert win["kind"] == "archive" and [untold(x) for x in ans] == [untold(win)] and codes(win["stays"]) == ["debt"] and win["stays"][0]["amount"] == 210_000
 
 
 def test_t3_without_the_right_to_money_the_facts_come_without_sums(world, fixed_today):

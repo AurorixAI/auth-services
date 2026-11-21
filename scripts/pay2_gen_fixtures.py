@@ -277,7 +277,7 @@ def seg_parts(names: HNames, seg_id: str) -> List[SegmentPart]:
             for p in names.of(seg_id)]
 
 
-def unpaid_kwargs(names: HNames, today: date, paid_until: Optional[date] = None) -> dict:
+def unpaid_kwargs(names: HNames, today: date, paid_until: Optional[date] = None, covered_by: Optional[str] = None) -> dict:
     """The fields of ``UnpaidFields`` the way the server fills them (``payments_views.unpaid_fields``) - without ``state`` / ``state_text``."""
     pk, debt, due = names.packages, names.debt, names.due
     return dict(
@@ -287,6 +287,7 @@ def unpaid_kwargs(names: HNames, today: date, paid_until: Optional[date] = None)
         debt_sub=tx.debt_sub(names.overdue, None if pk else paid_until) if debt else None,
         due_text=tx.due_text(due, names.lessons("due") if pk else None) if due else None,
         due_sub=tx.due_sub(names.due_until, today) if due else None,
+        covered_by=covered_by,       # PAY-TAILS Б5.4: what covered the last covered period (the server's one word of the account)
     )
 
 
@@ -448,9 +449,9 @@ def pay_out(n: int, *, amount: int, paid_on: date, method: str = "cash", receipt
 def row_model(*, mid=1, student="Хасанов Азиз", display_id="N13-004", group="Математика 7А", group_id=11,
               teacher="Иванова Мария", price: PriceOut, status: str, mode="calendar", paid_until=None,
               left=None, last_payment=None, names: Optional[HNames] = None, today: date = None, unpaid=0, advance=0, partial=0,
-              refundable=0, writeoff_allowed=False, active=True, lessons=None, lessons_unpaid=0) -> MembershipPaymentRow:
+              refundable=0, writeoff_allowed=False, active=True, lessons=None, lessons_unpaid=0, inside=False, covered_by=None) -> MembershipPaymentRow:
     names = names or HNames([])
-    fields = unpaid_kwargs(names, today, paid_until)
+    fields = unpaid_kwargs(names, today, None if inside else paid_until, covered_by)      # ``inside``: the day of ``paid_until`` lies INSIDE a begun period (paid in part) - the debtor's sub-line does not tell it (PAY-TAILS Б1.5)
     shown = shown_status(status, unpaid)         # PAY-DUE 3.2: ``days_overdue`` is gone with the name of the sum (a row that owes is ``active``)
     return MembershipPaymentRow(
         membership_id=uid(mid), student_id=uid(100 + mid), student_name=student, display_id=display_id, class_level=7,
@@ -481,9 +482,18 @@ def status_of(paid_until: Optional[date], today: date, expiring: int = 3):
     return "active", None, delta
 
 
+def hand_partial(segs: List[HSeg], today: date, names: HNames) -> Optional[str]:
+    """PAY-TAILS Б1.5, by hand: a period that HAS BEGUN and is paid only in part says SUMS (``оплачено 31 000 из 500 000 сум · долг 469 000 сум``), never a day inside it."""
+    seg = next((s for s in segs if s.a <= today and 0 < s.money + s.wo < s.charge), None)
+    if seg is None:
+        return None
+    return tx.partial_cover_text(seg.money, seg.wo, seg.charge, names.debt, names.due, names.due_until if names.due else None)
+
+
 def due_model(segs: List[HSeg], t: dict, today: date, paid_until, names: HNames) -> PreviewDue:
     shown = [seg_model(s, today, names) for s in segs if s.a <= today and max(0, s.charge - s.money - s.wo) > 0]
-    return PreviewDue(unpaid=t["debt"], advance=t["advance"], segments=shown, paid_until=paid_until, **unpaid_kwargs(names, today, paid_until))
+    sub_until = None if hand_partial(segs, today, names) else paid_until          # the day inside a period is not told by the debtor's sub-line
+    return PreviewDue(unpaid=t["debt"], advance=t["advance"], segments=shown, paid_until=paid_until, **unpaid_kwargs(names, today, sub_until))
 
 
 def write(name: str, model, store: Dict[str, str]) -> None:
@@ -528,7 +538,7 @@ def e1_previews(store):
     names0 = hand_names(segs0, TODAY, sum(c.amount for c in cr0))
     assert (names0.debt, names0.due, names0.overdue) == (769_000, 0, 32)
     due0 = due_model(segs0, t0, TODAY, t0["through"], names0)
-    assert due0.debt_sub == nb("просрочено 32 дня · оплачено до 27.09")
+    assert due0.debt_sub == nb("просрочено 32 дня")                   # PAY-TAILS Б1.5: 27.09 lies INSIDE the period 15.09 - 14.10 (231 000 of 500 000): sums, not a day
     write("e1_preview_due.json", PaymentPreview(
         as_of=TODAY, mode="calendar", price=GROUP_PRICE(500_000), due=due0, suggested_amount=769_000, amount=None,
         result=None, warnings=[]), store)
@@ -564,7 +574,7 @@ def e1_previews(store):
             summary_text=tx.summary_text(
                 debt_paid=to_debt, debt_before=names0.debt, due_paid=to_due, due_before=names0.due,
                 advance=sum(a.amount for a in allocs if a.bucket == "advance"),
-                debt_after=t["debt"], paid_until_after=t["through"], advance_periods=adv_periods),
+                debt_after=t["debt"], paid_until_after=t["through"], advance_periods=adv_periods, partial=hand_partial(segs, TODAY, names)),
             price_ahead=[],
         )
         assert (names.debt, names.due) == (t["debt"], 0)       # both periods are past their term: what is left is all a debt
@@ -578,7 +588,7 @@ def e1_previews(store):
             amount=amount, result=result, warnings=[]), store)
     # the headline sentences of the design
     assert json.loads(store["e1_preview_300000.json"])["result"]["summary_text"] == (
-        nb("Погасит 300 000 сум из долга 769 000 сум → оплачено до 15.10 · останется 469 000 сум"))
+        nb("Погасит 300 000 сум из долга 769 000 сум → оплачено 31 000 из 500 000 сум · долг 469 000 сум"))      # PAY-TAILS Б1.5: was «оплачено до 15.10» (a day inside the period of 15.10 - 14.11)
     assert json.loads(store["e1_preview_790000.json"])["result"]["summary_text"] == (
         nb("Погасит долг 769 000 сум · Переплата 21 000 сум → аванс на следующий период "
            "(15.11–14.12), оплачено до 15.11"))
@@ -599,7 +609,7 @@ def e1_create_replace_void(store):
                   last=t["through"], allocation=alloc_out)
     price = GROUP_PRICE(500_000)
     row = row_model(price=price, status=status, paid_until=t["through"], last_payment=p18, names=names, today=TODAY,
-                    unpaid=469_000, advance=0, partial=14_871, writeoff_allowed=True)
+                    unpaid=469_000, advance=0, partial=14_871, writeoff_allowed=True, inside=True, covered_by="money")
     write("e1_create_300000.json", PaymentCreated(
         payment=p18,
         allocation=AllocationSummary(items=allocs, unpaid_before=769_000, unpaid_after=469_000, advance_after=0,
@@ -635,7 +645,7 @@ def e1_create_replace_void(store):
     names2 = hand_names(segs2, TODAY, sum(c.amount for c in credits2))
     assert (names2.debt, names2.due, names2.overdue) == (519_000, 0, 32)        # 19 000 of the period 15.09 (K = 32) and 500 000 of 15.10 (K = 2): all debt, the age is the oldest part's
     row2 = row_model(price=price, status=st2, paid_until=t2["through"], last_payment=p19, names=names2, today=TODAY,
-                     unpaid=519_000, advance=0, partial=14_334, writeoff_allowed=True)
+                     unpaid=519_000, advance=0, partial=14_334, writeoff_allowed=True, inside=True, covered_by="money")
     write("e8_replace_300000_by_250000.json", PaymentCreated(
         payment=p19,
         allocation=AllocationSummary(items=allocs2, unpaid_before=769_000, unpaid_after=519_000, advance_after=0,
@@ -650,7 +660,7 @@ def e1_create_replace_void(store):
                       allocation=PaymentAllocationOut(items=allocations_of(segs0, cr0, "p17"), refunded=0, net=231_000))
     names0 = hand_names(segs0, TODAY, sum(c.amount for c in cr0))
     row0 = row_model(price=price, status="expired", paid_until=t0["through"], last_payment=seg_p17, names=names0, today=TODAY,
-                     unpaid=769_000, advance=0, partial=14_334, writeoff_allowed=True)
+                     unpaid=769_000, advance=0, partial=14_334, writeoff_allowed=True, inside=True, covered_by="money")
     write("e1_void_300000.json", PaymentVoided(payment=voided, row=row0), store)
 
 
@@ -721,8 +731,8 @@ def e1_statement(store):
     add(D(2026, 10, 21), "payment", "Оплата № 18", credit=790_000, details=StatementDetails(
         payment_id=uid(18), receipt_no=18, method="cash", created_by_name="Рустам Каримов", note="аванс", allocations=a18),
         **open_of("payment", names, advance_left=21_000))      # 21 000 of the payment lies on a period that has not begun: the row says «Аванс 21 000 сум»
-    assert bal == 21_000 and rows[-1].balance_text == nb("Аванс 21 000")
-    fields = unpaid_kwargs(names, TODAY, t["through"])
+    assert bal == 21_000 and rows[-1].balance_text == nb("Аванс 21 000 сум")
+    fields = unpaid_kwargs(names, TODAY, t["through"], "money")
     summary = StatementSummary(charged=1_000_000, paid=1_021_000, transferred_in=0, written_off=0, refunded=0,
                                transferred_out=0, unpaid=0, advance=21_000, paid_until=t["through"], status="active",
                                reconciles=(1_000_000 - 1_021_000 == 0 - 21_000), **fields,
@@ -738,7 +748,7 @@ def e1_statement(store):
                   last=t["through"], allocation=PaymentAllocationOut(items=a18, refunded=0, net=790_000))
     write("e1_row_after_790000.json", row_model(
         price=GROUP_PRICE(500_000), status="active", paid_until=t["through"], left=25, last_payment=p18, names=names, today=TODAY,
-        unpaid=0, advance=21_000, partial=4_334, refundable=21_000, writeoff_allowed=False), store)
+        unpaid=0, advance=21_000, partial=4_334, refundable=21_000, writeoff_allowed=False, covered_by="money"), store)
     assert (t["through"] - TODAY).days == 25
 
 
@@ -954,15 +964,15 @@ def e4(store):
     assert (names.debt, names.due) == (0, 0)
     rows = [
         StatementRow(seq=1, date=T, type="transfer_in", title="Перенос из «Математика 7А»", debit=0, credit=x,
-                     outflow=0, balance_after=x, balance_text="Аванс 323 000", details=StatementDetails(
+                     outflow=0, balance_after=x, balance_text="Аванс 323 000 сум", details=StatementDetails(
                          from_group_name="Математика 7А", from_membership_id=uid(1), allocations=al),
                      **open_of("payment", names, advance_left=x - charge_b)),     # PAY-DUE 13.2: the transfer INTO the group brings money: «Аванс 65 000» (323 000 - 258 000 laid on the charge); a transfer out stays empty
         StatementRow(seq=2, date=D(2026, 10, 12), type="charge", title="Стоимость 01.10–31.10",
-                     debit=charge_b, credit=0, outflow=0, balance_after=x - charge_b, balance_text="Аванс 65 000",
+                     debit=charge_b, credit=0, outflow=0, balance_after=x - charge_b, balance_text="Аванс 65 000 сум",
                      details=StatementDetails(segment=sm[0]), **open_of("charge", names, segs[0].id)),
     ]
     status, _, left = status_of(t["through"], today)
-    fields = unpaid_kwargs(names, today, t["through"])
+    fields = unpaid_kwargs(names, today, t["through"], "money")
     write("e4_statement_B.json", StatementOut(
         membership=StatementMembership(
             membership_id=uid(2), student_id=uid(101), student_name="Хасанов Азиз", display_id="N13-004",
@@ -989,10 +999,10 @@ def e4(store):
     fields_a = unpaid_kwargs(names_a, today, D(2026, 10, 11))
     rows_a = [
         StatementRow(seq=1, date=D(2026, 10, 1), type="charge", title="Стоимость 01.10–11.10", debit=charge_a, credit=0,
-                     outflow=0, balance_after=-charge_a, balance_text="Долг 177 000", details=StatementDetails(segment=sma),
+                     outflow=0, balance_after=-charge_a, balance_text="Долг 177 000 сум", details=StatementDetails(segment=sma),
                      **open_of("charge", names_a, seg_a[0].id)),
         StatementRow(seq=2, date=D(2026, 10, 1), type="payment", title="Оплата № 21", debit=0, credit=500_000, outflow=0,
-                     balance_after=x, balance_text="Аванс 323 000", details=StatementDetails(
+                     balance_after=x, balance_text="Аванс 323 000 сум", details=StatementDetails(
                          payment_id=uid(21), receipt_no=21, method="cash", created_by_name="Рустам Каримов",
                          allocations=al_a)),        # 177 000 on the charge, 323 000 went to the other group: nothing is left open on the row
         StatementRow(seq=3, date=T, type="transfer_out", title="Перенос в «Алгебра 7Б»", debit=0, credit=0, outflow=x,

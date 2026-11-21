@@ -31,6 +31,7 @@ SUMMARY = ("debt_total", "debtors", "due_total", "due_students", "advance_total"
            "expiring", "ends_today", "none", "active")
 STATEMENT = ("charged", "paid", "transferred_in", "written_off", "refunded", "transferred_out", "unpaid", "advance", "debt_amount", "due_amount", "reconciles", "recalculated")
 ROW = ("date", "type", "debit", "credit", "outflow")
+OLD_TABS = ("debtors", "to_pay", "expiring", "active", "paused")
 
 
 def pick(source, keys):
@@ -63,6 +64,8 @@ def snapshot(w, day: date) -> dict:
         out["status"][bucket] = {"total": page["total"], "students": page["students"], "amount_total": page["amount_total"],
                                  "items": sorted([{**pick(i, STATUS_ROW), "who": f"{i['student_name']} | {i['group_name']}"} for i in page["items"]], key=lambda i: i["who"])}
     out["summary"] = pick(get(w, "/org/payments/summary"), SUMMARY)
+    for key in ("buckets", "bucket_rows"):         # Б1.1 added the count ``advance`` to the tabs: the five that were there are the ones frozen
+        out["summary"][key] = {k: v for k, v in out["summary"][key].items() if k in OLD_TABS}
     adv = get(w, "/org/payments/balances", kind="advance")
     out["balances_advance"] = {"total": adv["total"], "advance_total": adv.get("advance_total"), "items": sorted(f"{i['student_name']} | {i['group_name']} | {i['advance']}" for i in adv["items"])}
     income = get(w, "/org/payments/income", **{"from": "2026-10-01", "to": "2026-12-31"})

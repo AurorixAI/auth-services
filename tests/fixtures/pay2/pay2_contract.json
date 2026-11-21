@@ -197,6 +197,23 @@
             "title": "Advance",
             "type": "integer"
           },
+          "covered_by": {
+            "anyOf": [
+              {
+                "enum": [
+                  "money",
+                  "forgiven",
+                  "recalc",
+                  "opening"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Covered By"
+          },
           "debt_also_text": {
             "anyOf": [
               {
@@ -328,6 +345,18 @@
             "title": "Is Active",
             "type": "boolean"
           },
+          "left_on": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Left On"
+          },
           "membership_id": {
             "title": "Membership Id",
             "type": "string"
@@ -371,10 +400,24 @@
               "paused",
               "paid",
               "free",
-              "none"
+              "none",
+              "starts",
+              "settled",
+              "no_charges"
             ],
             "title": "State",
             "type": "string"
+          },
+          "state_sub": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "State Sub"
           },
           "state_text": {
             "anyOf": [
@@ -440,6 +483,16 @@
             "default": 0,
             "title": "Unpaid",
             "type": "integer"
+          },
+          "upcoming": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/UpcomingOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "required": [
@@ -457,6 +510,10 @@
           "due_also_text",
           "state",
           "state_text",
+          "state_sub",
+          "covered_by",
+          "left_on",
+          "upcoming",
           "membership_id",
           "student_id",
           "student_name",
@@ -653,6 +710,23 @@
             ],
             "title": "Class Level"
           },
+          "covered_by": {
+            "anyOf": [
+              {
+                "enum": [
+                  "money",
+                  "forgiven",
+                  "recalc",
+                  "opening"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Covered By"
+          },
           "days_left": {
             "anyOf": [
               {
@@ -836,6 +910,18 @@
               }
             ]
           },
+          "left_on": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Left On"
+          },
           "lessons_left": {
             "anyOf": [
               {
@@ -993,10 +1079,24 @@
               "paused",
               "paid",
               "free",
-              "none"
+              "none",
+              "starts",
+              "settled",
+              "no_charges"
             ],
             "title": "State",
             "type": "string"
+          },
+          "state_sub": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "State Sub"
           },
           "state_text": {
             "anyOf": [
@@ -1030,6 +1130,28 @@
             "title": "Student Name",
             "type": "string"
           },
+          "tab_sub": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tab Sub"
+          },
+          "tab_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tab Text"
+          },
           "teacher_id": {
             "anyOf": [
               {
@@ -1056,6 +1178,16 @@
             "default": 0,
             "title": "Unpaid",
             "type": "integer"
+          },
+          "upcoming": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/UpcomingOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "writeoff_allowed": {
             "default": false,
@@ -2711,6 +2843,16 @@
             "title": "Items",
             "type": "array"
           },
+          "left_count": {
+            "default": 0,
+            "title": "Left Count",
+            "type": "integer"
+          },
+          "left_students": {
+            "default": 0,
+            "title": "Left Students",
+            "type": "integer"
+          },
           "limit": {
             "title": "Limit",
             "type": "integer"
@@ -2842,6 +2984,11 @@
             "title": "Active",
             "type": "integer"
           },
+          "advance": {
+            "default": 0,
+            "title": "Advance",
+            "type": "integer"
+          },
           "debtors": {
             "default": 0,
             "title": "Debtors",
@@ -2884,6 +3031,16 @@
           "active": {
             "title": "Active",
             "type": "integer"
+          },
+          "advance_left_students": {
+            "default": 0,
+            "title": "Advance Left Students",
+            "type": "integer"
+          },
+          "advance_text": {
+            "default": "",
+            "title": "Advance Text",
+            "type": "string"
           },
           "advance_total": {
             "default": 0,
@@ -3991,6 +4148,17 @@
           "receipt_no": {
             "title": "Receipt No",
             "type": "integer"
+          },
+          "receipt_state_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Receipt State Text"
           },
           "replaced_by_receipt_no": {
             "anyOf": [
@@ -6005,6 +6173,31 @@
         "title": "StatementDetails",
         "type": "object"
       },
+      "StatementForecast": {
+        "description": "The forecast row of a statement (a charge that has not begun): the day, the title («Ноябрь 2026 — неполный месяц (с 24.11, 2 урока из 8)»), the sub-line («прогноз: начислится 120 000 сум»).",
+        "properties": {
+          "date": {
+            "format": "date",
+            "title": "Date",
+            "type": "string"
+          },
+          "sub": {
+            "title": "Sub",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "date",
+          "title",
+          "sub"
+        ],
+        "title": "StatementForecast",
+        "type": "object"
+      },
       "StatementMembership": {
         "properties": {
           "display_id": {
@@ -6081,6 +6274,16 @@
             "title": "As Of",
             "type": "string"
           },
+          "forecast": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/StatementForecast"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "membership": {
             "$ref": "#/components/schemas/StatementMembership"
           },
@@ -6126,6 +6329,7 @@
           "summary",
           "rows",
           "voided",
+          "forecast",
           "upcoming"
         ],
         "title": "StatementOut",
@@ -6240,6 +6444,17 @@
             "title": "Seq",
             "type": "integer"
           },
+          "text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Text"
+          },
           "title": {
             "title": "Title",
             "type": "string"
@@ -6304,6 +6519,7 @@
           "outflow",
           "balance_after",
           "balance_text",
+          "text",
           "open_amount",
           "open_name",
           "open_text",
@@ -6329,6 +6545,23 @@
             "default": 0,
             "title": "Charged",
             "type": "integer"
+          },
+          "covered_by": {
+            "anyOf": [
+              {
+                "enum": [
+                  "money",
+                  "forgiven",
+                  "recalc",
+                  "opening"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Covered By"
           },
           "debt_also_text": {
             "anyOf": [
@@ -6437,6 +6670,18 @@
             ],
             "title": "Due Until"
           },
+          "left_on": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Left On"
+          },
           "overdue_days": {
             "anyOf": [
               {
@@ -6489,10 +6734,24 @@
               "paused",
               "paid",
               "free",
-              "none"
+              "none",
+              "starts",
+              "settled",
+              "no_charges"
             ],
             "title": "State",
             "type": "string"
+          },
+          "state_sub": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "State Sub"
           },
           "state_text": {
             "anyOf": [
@@ -6534,6 +6793,16 @@
             "title": "Unpaid",
             "type": "integer"
           },
+          "upcoming": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/UpcomingOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "written_off": {
             "default": 0,
             "title": "Written Off",
@@ -6555,6 +6824,10 @@
           "due_also_text",
           "state",
           "state_text",
+          "state_sub",
+          "covered_by",
+          "left_on",
+          "upcoming",
           "charged",
           "paid",
           "transferred_in",
@@ -6569,6 +6842,94 @@
           "reconciles"
         ],
         "title": "StatementSummary",
+        "type": "object"
+      },
+      "UpcomingOut": {
+        "description": "PAY-TAILS Б1.4 / Б5.3: the FORECAST of a charge that has not begun (never a part of any sum): ``from`` - the first day of the period, ``amount`` - what the ledger will charge for it (null for a caller without the right to\nmoney: the date only), ``lessons_text`` («2 урока из 8 в ноябре»), ``due_until`` - the last day of the term (null: «долг с первого дня»), ``text`` - the sentence of the message after adding («Начисление с 24.11: 120 000 сум»),\n``sub`` - «платить до 28.11» / «долг с первого дня», ``terms_note`` - «сегодня ученик ещё числился в «Математике 7»» when another group moved the day.",
+        "properties": {
+          "amount": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Amount"
+          },
+          "due_until": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Due Until"
+          },
+          "from": {
+            "format": "date",
+            "title": "From",
+            "type": "string"
+          },
+          "lessons_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lessons Text"
+          },
+          "sub": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sub"
+          },
+          "terms_note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Terms Note"
+          },
+          "text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Text"
+          }
+        },
+        "required": [
+          "from",
+          "amount",
+          "lessons_text",
+          "due_until",
+          "text",
+          "sub",
+          "terms_note"
+        ],
+        "title": "UpcomingOut",
         "type": "object"
       },
       "ValidationError": {
@@ -8363,7 +8724,7 @@
     },
     "/org/payments/status": {
       "get": {
-        "description": "Членства со статусом оплаты (по вкладкам), с точным ``total`` (строки). PAY-DUE: вкладки ``debtors`` Должники (есть ``debt_amount``; ``debt`` — старое имя) / ``to_pay`` К оплате (есть ``due_amount``,\nв том числе у должников) / ``expiring`` Заканчивается оплата / ``active`` Без долга / ``paused`` На паузе; обе вкладки неоплаты читают и закрытые участия. ``students`` — число разных учеников фильтра,\n``amount_total`` — сумма части вкладки по всем строкам фильтра. ``sort=debt`` — по убыванию ``debt_amount`` (``to_pay`` — по ближайшему сроку).",
+        "description": "Членства со статусом оплаты (по вкладкам), с точным ``total`` (строки). PAY-DUE: вкладки ``debtors`` Должники (есть ``debt_amount``; ``debt`` — старое имя) / ``to_pay`` К оплате (есть ``due_amount``,\nв том числе у должников) / ``expiring`` Заканчивается оплата / ``active`` Без долга / ``paused`` На паузе; обе вкладки неоплаты читают и закрытые участия. ``students`` — число разных учеников фильтра,\n``amount_total`` — сумма части вкладки по всем строкам фильтра. ``sort=debt`` — по убыванию ``debt_amount`` (``to_pay`` — по ближайшему сроку).\nPAY-TAILS: ``advance`` — все участия центра с авансом (открытые, ушедшие, из архива), закрытые первыми; ``left_only=true`` — только закрытые; ``left_students`` — сколько разных учеников с авансом на закрытом участии.\n``left_open`` (с ``group_id``) — закрытые участия группы с любым остатком (долг, «к оплате», аванс), ``left_count`` — их число.",
         "parameters": [
           {
             "in": "query",
@@ -8378,6 +8739,8 @@
                 "expiring",
                 "active",
                 "paused",
+                "advance",
+                "left_open",
                 "all",
                 "none"
               ],
@@ -8500,6 +8863,18 @@
               ],
               "description": "Деньги-2 Т18: корзина возраста долга в днях (до 30 / 31–60 / 61–90 / старше 90)",
               "title": "Age"
+            }
+          },
+          {
+            "description": "PAY-TAILS: вкладка advance — только закрытые участия (ушли, архив)",
+            "in": "query",
+            "name": "left_only",
+            "required": false,
+            "schema": {
+              "default": false,
+              "description": "PAY-TAILS: вкладка advance — только закрытые участия (ушли, архив)",
+              "title": "Left Only",
+              "type": "boolean"
             }
           }
         ],

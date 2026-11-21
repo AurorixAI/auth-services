@@ -27,6 +27,10 @@
     "due_also_text": null,
     "state": "paid",
     "state_text": "Оплачено до 15.11",
+    "state_sub": null,
+    "covered_by": null,
+    "left_on": null,
+    "upcoming": null,
     "charged": 0,
     "paid": 0,
     "transferred_in": 0,
@@ -51,6 +55,7 @@
       "outflow": 0,
       "balance_after": 0,
       "balance_text": "0",
+      "text": null,
       "open_amount": null,
       "open_name": null,
       "open_text": null,
@@ -94,6 +99,7 @@
       "outflow": 0,
       "balance_after": 0,
       "balance_text": "0",
+      "text": null,
       "open_amount": null,
       "open_name": null,
       "open_text": null,
@@ -129,5 +135,6 @@
     }
   ],
   "voided": [],
+  "forecast": null,
   "upcoming": []
 }

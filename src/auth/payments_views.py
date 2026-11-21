@@ -11,6 +11,7 @@ from typing import List, Optional, Tuple
 
 from . import billing_ledger as bl
 from . import pay_due
+from . import pay_upcoming
 from . import payment_status as ps
 from . import payments_texts as tx
 from .payments_schemas import (
@@ -85,9 +86,12 @@ def shim_period(ledger: bl.Ledger, payment_id: str):
 
 
 BUCKET_DEBTORS, BUCKET_TO_PAY, BUCKET_EXPIRING, BUCKET_ACTIVE, BUCKET_PAUSED = "debtors", "to_pay", "expiring", "active", "paused"
+BUCKET_ADVANCE, BUCKET_LEFT_OPEN = "advance", "left_open"      # PAY-TAILS: the tab «Аванс» (every membership of the centre that holds an advance) and the closed memberships of a group that still have a settlement
 BUCKET_DEBT_ALIAS = "debt"      # the old name of the debtors tab: an alias of ``debtors`` on input only (a link of the old front)
 UNPAID_TABS = (BUCKET_DEBTORS, BUCKET_TO_PAY)        # the tabs of an unpaid sum: they are NOT exclusive (a student with both a debt and a sum within its term is in both) and read the closed participations too
+CLOSED_TABS = (*UNPAID_TABS, BUCKET_ADVANCE, BUCKET_LEFT_OPEN)       # the tabs that read ALL the memberships of the centre, the closed ones too
 STATE_DEBT, STATE_TO_PAY, STATE_EXPIRING, STATE_PAUSED, STATE_PAID, STATE_FREE, STATE_NONE = "debt", "to_pay", "expiring", "paused", "paid", "free", "none"
+STATE_STARTS, STATE_SETTLED, STATE_NO_CHARGES = "starts", "settled", "no_charges"       # PAY-TAILS Б5.4: the charge has not begun / a closed membership with nothing left / one that never held anything
 _MONTHS = ("январь", "февраль", "март", "апрель", "май", "июнь", "июль", "август", "сентябрь", "октябрь", "ноябрь", "декабрь")
 
 
@@ -125,16 +129,97 @@ def in_tab(e, tab: str) -> bool:
         return e.due.debt_amount > 0
     if tab == BUCKET_TO_PAY:
         return e.due.due_amount > 0
+    if tab == BUCKET_ADVANCE:                 # PAY-TAILS Б5.5: ONE function of the tab, shared by the list, the summary and the old ``balances``: the membership holds an advance (open or closed)
+        return e.ledger.advance > 0
+    if tab == BUCKET_LEFT_OPEN:               # a CLOSED membership with any settlement: a debt, a sum «к оплате» or an advance
+        return is_closed(e) and (e.due.debt_amount > 0 or e.due.due_amount > 0 or e.ledger.advance > 0)
     return calm_bucket(e) == tab
 
 
-def state_of(e) -> str:
-    """The WORST state of a membership, for the single label (PAY-DUE 10.2): debt -> to pay -> payment ends soon -> pause -> paid / advance -> free -> no price.  The screen does not choose it."""
+def is_closed(e) -> bool:
+    """PAY-TAILS Б5.4: the membership is CLOSED - it is not tracked (the student left, the group or the student is in the archive) or it is being closed by the action the window is about (``closing``).  The state of a closed
+    membership does not depend on the hour of the day: it never says «оплачено до»."""
+    return (not is_tracked(e)) or (e.loader is not None and e.membership.id in e.loader.closing)
+
+
+def left_on(e) -> Optional[date]:
+    """The day a closed membership ended (a membership that is being closed today ends today); ``None`` for an open one or when the archive, not a leaving, closed it."""
+    if e.membership.is_active:
+        return e.inp.today if (e.loader is not None and e.membership.id in e.loader.closing) else None
+    return ps.business_date(e.membership.left_at) if e.membership.left_at else None
+
+
+def nothing_happened(l: bl.Ledger) -> bool:
+    """«Расчётов нет» (PAY-TAILS Б5.4): nothing was ever charged AND no money line was ever entered (a student who paid and got everything back has «Расчёт закрыт», not this)."""
+    return not (l.charged or l.paid or l.transferred_in or l.written_off_granted or l.refunded or l.transferred_out or l.recalculated)
+
+
+def cover_until(l: bl.Ledger, closed: bool = False) -> Optional[date]:
+    """The day a text may name as «оплачено до»: the calendar coverage that stands on the BORDER of a period (a day inside a period is told in sums), and never for a closed membership."""
+    if closed or l.status.period_mode == bl.LESSONS or l.cover_partial is not None:
+        return None
+    return l.status.paid_until
+
+
+def partial_words(l: bl.Ledger, due, closed: bool = False) -> Optional[str]:
+    """The words of a period that is paid only in part (``оплачено 100 000 из 420 000 сум · к оплате 320 000 сум до 23.11``); ``None`` when the coverage is whole or the membership is closed (a closed one says its state)."""
+    if closed or l.cover_partial is None or l.mode == bl.LESSONS:
+        return None
+    paid, forgiven, charge = l.cover_partial
+    return tx.partial_cover_text(paid, forgiven, charge, due.debt_amount, due.due_amount, due.due_until)
+
+
+def cover_phrase(l: bl.Ledger, due, closed: bool = False) -> Optional[str]:
+    """The line of the RECEIPT (PAY-TAILS Б1.5): ``оплачено до 30.11`` for a period closed by money (or the days of an opening balance); sums for a period paid in part; nothing for a closed membership, a period closed by
+    the forgiveness or by a recalculation."""
+    if closed:
+        return None
+    partial = partial_words(l, due)
+    if partial:
+        return partial
+    until = cover_until(l)
+    if until is None or l.covered_by not in ("money", "opening", None):
+        return None
+    return f"{tx.cover_words(l.covered_by).lower()} {tx.ddmm(until)}"
+
+
+def starts_info(e) -> Tuple[Optional[pay_upcoming.Upcoming], Optional[dict]]:
+    """PAY-TAILS Б5.3: ``(forecast, package wait)`` of an open membership whose charge has not begun; ``(None, None)`` for everything else (a closed one, one that owes something, a pause, a free one, a student with no price).
+    Reads the ledger input of the row; builds no loader and writes nothing."""
+    l = e.ledger
+    if e.loader is None or is_closed(e) or e.due.unpaid > 0 or e.price.amount in (None, 0) or l.status.status in (ps.PAUSED, ps.FREE):
+        return None, None
+    settings = e.loader.settings
+    return (pay_upcoming.forecast(e.inp, l, settings.pay_due_days, settings.pay_due_lessons),
+            pay_upcoming.package_wait(e.inp, l, e.price.amount, settings.pay_due_lessons))
+
+
+def upcoming_payload(up: pay_upcoming.Upcoming, today: date, left_names, money: bool = True) -> dict:
+    """The forecast as the answer says it (the keys of ``UpcomingOut``); without the right to money only the date.  ``left_names``: the groups the student left TODAY with the day charged there - the reason a forecast that
+    begins tomorrow was moved («сегодня ученик ещё числился в «Математике 7»»)."""
+    names = sorted(left_names or ())
+    note = f"сегодня ученик ещё числился в «{', '.join(names)}»" if names and up.begin == today + timedelta(days=1) else None
+    if not money:
+        return {"from": up.begin, "amount": None, "lessons_text": None, "due_until": None, "text": None, "sub": None, "terms_note": None}
+    return {"from": up.begin, "amount": up.amount, "lessons_text": up.lessons_text, "due_until": up.due_until, "text": up.text, "sub": up.sub or None, "terms_note": note}
+
+
+def upcoming_dict(e, up: pay_upcoming.Upcoming, money: bool = True) -> dict:
+    today = e.inp.today
+    return upcoming_payload(up, today, e.loader.left_names.get(e.student.id, {}).get(today, set()) if e.loader is not None else (), money)
+
+
+def state_of(e, info: Tuple[Optional[pay_upcoming.Upcoming], Optional[dict]] = (None, None)) -> str:
+    """The WORST state of a membership, for the single label (PAY-DUE 10.2): debt -> to pay -> (closed: advance -> settled -> no charges) -> payment ends soon -> pause -> paid / advance -> free -> no price.  The screen does not choose it."""
     d, l = e.due, e.ledger
     if d.debt_amount > 0:
         return STATE_DEBT
     if d.due_amount > 0:
         return STATE_TO_PAY
+    if is_closed(e):                       # PAY-TAILS Б5.4: right after the debt and the sum «к оплате», whatever the day: «Аванс N» -> «Расчёт закрыт» -> «Расчётов нет»
+        return STATE_PAID if l.advance > 0 else STATE_NO_CHARGES if nothing_happened(l) else STATE_SETTLED
+    if info[0] is not None or info[1] is not None:      # PAY-TAILS Б5.3: the charge has not begun («Начнётся 24.11» / «Уроков ещё не было»); the tab and the sums do not change (``status`` is untouched)
+        return STATE_STARTS
     st = l.status.status
     if st in (ps.EXPIRING, ps.ENDS_TODAY, ps.EXPIRED):
         return STATE_EXPIRING
@@ -170,32 +255,88 @@ def unpaid_fields(e, today: date) -> dict:
     ``debt_lessons`` and the texts of both names (which of the two is the main one is the choice of the tab: a view, not a rule), ``state`` / ``state_text`` of the worst state."""
     d, l = e.due, e.ledger
     debt_n, due_n = d.lessons_said(pay_due.DEBT), d.lessons_said(pay_due.DUE)
-    paid_until = l.status.paid_until if l.status.period_mode != bl.LESSONS else None           # «оплачено до» by the CURRENT mode of the participation (17.2)
+    closed, gone = is_closed(e), left_on(e)
+    paid_until = cover_until(l, closed)           # «оплачено до» by the CURRENT mode of the participation (17.2); PAY-TAILS Б5.4: only on the border of a period, never for a closed membership
     out = {
         "debt_amount": d.debt_amount, "due_amount": d.due_amount, "due_until": d.due_until,
         "overdue_days": d.overdue_days if d.debt_amount > 0 else None,
         "due_lessons": d.due_lessons if d.due_amount > 0 or d.debt_amount > 0 else None, "debt_lessons": d.debt_lessons,
         "debt_text": tx.debt_text(d.debt_amount, debt_n) if d.debt_amount > 0 else None,
-        "debt_sub": tx.debt_sub(d.overdue_days, paid_until) if d.debt_amount > 0 else None,
+        "debt_sub": tx.debt_sub(d.overdue_days, paid_until, l.covered_by, gone) if d.debt_amount > 0 else None,
         "due_text": tx.due_text(d.due_amount, due_n) if d.due_amount > 0 else None,
-        "due_sub": tx.package_term_words(d.due_until, today, due_n, (d.due_lessons or {}).get("limit")) if d.due_amount > 0 else None,
+        "due_sub": _with_left(gone, tx.package_term_words(d.due_until, today, due_n, (d.due_lessons or {}).get("limit"))) if d.due_amount > 0 else None,
         # the second line of a row that holds BOTH sums (the tab decides which is the main one): null when the row has no second sum
         "debt_also_text": tx.debt_also_text(d.debt_amount, debt_n, d.overdue_days) if d.debt_amount > 0 and d.due_amount > 0 else None,
         "due_also_text": tx.due_also_text(d.due_amount, due_n, d.due_until, tx.package_term_words(d.due_until, today, due_n, (d.due_lessons or {}).get("limit")) if due_n else None) if d.debt_amount > 0 and d.due_amount > 0 else None,
     }
-    state = state_of(e)
+    info = starts_info(e)
+    state = state_of(e, info)
     out["state"] = state
-    out["state_text"] = state_text(e, state, out, today)
+    out["state_text"] = state_text(e, state, out, today, info)
+    out["state_sub"] = state_sub(e, state, gone, info)
+    out["upcoming"] = upcoming_dict(e, info[0]) if info[0] is not None else None
+    out["covered_by"] = l.covered_by
+    out["left_on"] = gone
     return out
 
 
-def state_text(e, state: str, fields: dict, today: date) -> Optional[str]:
+def closed_words(e, gone: Optional[date]) -> Optional[str]:
+    """Why a closed membership is closed, in words without a verb that has a gender where it can be helped: ``ушёл 28.10`` (a leaving), ``группа в архиве``, ``ученик в архиве``."""
+    if gone:
+        return tx.left_text(gone)
+    if e.group.status != "active":
+        return "группа в архиве"
+    if e.student.status == "archived":
+        return "ученик в архиве"
+    return None
+
+
+def tab_words(e, tab: str) -> Tuple[Optional[str], Optional[str]]:
+    """``(tab_text, tab_sub)`` of a row on the tab «Аванс» (PAY-TAILS Б5.5): the sum of the advance and WHY it stands there - a closed membership says it is closed, an open one how far it is paid.
+    The other tabs have none (their words are ``state_text`` / ``state_sub``)."""
+    if tab != BUCKET_ADVANCE:
+        return None, None
+    l = e.ledger
+    if is_closed(e):
+        return tx.advance_text(l.advance), closed_words(e, left_on(e))
+    if l.status.period_mode == bl.LESSONS and l.status.lessons_left is not None:
+        return tx.advance_text(l.advance), tx.lessons_left_text(l.status.lessons_left).lower()
+    until = tx.cover_text(l.covered_by, l.status.paid_until)
+    return tx.advance_text(l.advance), until[:1].lower() + until[1:] if until else None
+
+
+def _with_left(gone: Optional[date], words: Optional[str]) -> Optional[str]:
+    """``ушёл 20.11 · до 22.11``: a closed membership says it is closed before it says its term."""
+    return " · ".join(x for x in (tx.left_text(gone) if gone else None, words) if x) or None
+
+
+def state_sub(e, state: str, gone: Optional[date], info: Tuple[Optional[pay_upcoming.Upcoming], Optional[dict]] = (None, None)) -> Optional[str]:
+    """The quiet line under the words of the state (PAY-TAILS Б5.4): a closed membership - ``ушёл 28.10``; an open one covered by money and a forgiveness - ``из них прощено 300 000 сум``."""
+    l = e.ledger
+    if is_closed(e):
+        return closed_words(e, gone)
+    if state == STATE_STARTS:
+        if info[0] is not None:
+            return tx.paid_ahead_text(l.advance) if l.advance > 0 else f"≈ {tx.money(info[0].amount)}"
+        return pay_upcoming.package_text(info[1]) if info[1] else None
+    if state in (STATE_PAID, STATE_EXPIRING) and l.covered_by == "money" and l.forgiven_in_last > 0 and not (l.status.period_mode == bl.LESSONS):
+        return tx.forgiven_inside_text(l.forgiven_in_last)
+    return None
+
+
+def state_text(e, state: str, fields: dict, today: date, info: Tuple[Optional[pay_upcoming.Upcoming], Optional[dict]] = (None, None)) -> Optional[str]:
     """The single label of the worst state."""
     l = e.ledger
     if state == STATE_DEBT:
         return fields["debt_text"]
     if state == STATE_TO_PAY:
         return fields["due_text"]
+    if state == STATE_STARTS:
+        return f"Начнётся {tx.ddmm(info[0].begin)}" if info[0] is not None else "Уроков ещё не было"
+    if state == STATE_SETTLED:
+        return tx.SETTLED_TEXT
+    if state == STATE_NO_CHARGES:
+        return tx.NO_CHARGES_TEXT
     if state == STATE_FREE:
         return "Бесплатно"
     if state == STATE_NONE:
@@ -206,12 +347,14 @@ def state_text(e, state: str, fields: dict, today: date) -> Optional[str]:
     if state == STATE_EXPIRING:
         if l.status.period_mode == bl.LESSONS and l.status.lessons_left is not None:
             return tx.lessons_left_text(l.status.lessons_left)
-        return tx.paid_until_text(l.status.paid_until)
+        return tx.cover_text(l.covered_by, l.status.paid_until)
+    if state == STATE_PAID and is_closed(e) and l.advance > 0:           # a closed membership with money left: the sum, never a day
+        return tx.advance_text(l.advance)
     if l.status.period_mode == bl.LESSONS and l.status.lessons_left is not None:      # a paid package: how many lessons are left (before the advance: the money of a package IS the lessons)
         return tx.lessons_left_text(l.status.lessons_left)
     if l.advance > 0 and not l.status.paid_until:
         return tx.advance_text(l.advance)
-    return tx.paid_until_text(l.status.paid_until) if l.status.paid_until else (tx.advance_text(l.advance) if l.advance > 0 else None)
+    return tx.cover_text(l.covered_by, l.status.paid_until) if l.status.paid_until else (tx.advance_text(l.advance) if l.advance > 0 else None)
 
 
 def parts_of_segment(due, seg_id: str) -> list:
@@ -284,7 +427,7 @@ def open_of_row(kind: str, ref_id: str, ledger: bl.Ledger, due, segments: dict, 
     return none
 
 
-def due_block(before: bl.Ledger, due, today: date) -> PreviewDue:
+def due_block(before: bl.Ledger, due, today: date, closed: bool = False) -> PreviewDue:
     """PAY-DUE 10.2: what the student owes today (before the typed amount), named by ``pay_due``: the old ``past_debt`` / ``current_due`` are gone."""
     shown = [segment_out(s, due) for s in before.segments if s.begun and s.unpaid > 0]
     debt_n, due_n = due.lessons_said(pay_due.DEBT), due.lessons_said(pay_due.DUE)
@@ -292,7 +435,7 @@ def due_block(before: bl.Ledger, due, today: date) -> PreviewDue:
         unpaid=before.debt, debt_amount=due.debt_amount, due_amount=due.due_amount, due_until=due.due_until,
         overdue_days=due.overdue_days if due.debt_amount > 0 else None,
         debt_text=tx.debt_text(due.debt_amount, debt_n) if due.debt_amount > 0 else None,
-        debt_sub=tx.debt_sub(due.overdue_days, None if before.status.period_mode == bl.LESSONS else before.status.paid_until) if due.debt_amount > 0 else None,
+        debt_sub=tx.debt_sub(due.overdue_days, cover_until(before, closed), before.covered_by) if due.debt_amount > 0 else None,
         due_text=tx.due_text(due.due_amount, due_n) if due.due_amount > 0 else None,
         due_sub=tx.package_term_words(due.due_until, today, due_n, (due.due_lessons or {}).get("limit")) if due.due_amount > 0 else None,
         advance=before.advance, segments=shown, paid_until=before.status.paid_until,
@@ -353,7 +496,7 @@ def paid_by_name(due, raw_allocs) -> Tuple[int, int]:
     return to_debt, to_due
 
 
-def preview_result(before: bl.Ledger, after: bl.Ledger, credit_id: str, price_today: Optional[int], due_before, due_after, today: date) -> PreviewResult:
+def preview_result(before: bl.Ledger, after: bl.Ledger, credit_id: str, price_today: Optional[int], due_before, due_after, today: date, closed: bool = False) -> PreviewResult:
     allocs = allocations_of(after, credit_id)
     raw = [a for a in after.allocations if a.credit_id == credit_id]
     lessons = None
@@ -365,9 +508,10 @@ def preview_result(before: bl.Ledger, after: bl.Ledger, credit_id: str, price_to
     to_debt, to_due = paid_by_name(due_before, [a for a in raw if a.segment_id != bl.ADVANCE_SEGMENT])
     text = tx.summary_text(
         debt_paid=to_debt, debt_before=due_before.debt_amount, due_paid=to_due, due_before=due_before.due_amount,
-        advance=sum(a.amount for a in raw if a.bucket == bl.ADVANCE), debt_after=after.debt, paid_until_after=after.status.paid_until,
+        advance=sum(a.amount for a in raw if a.bucket == bl.ADVANCE), debt_after=after.debt, paid_until_after=None if closed else after.status.paid_until,
         advance_periods=advance_periods,
         lessons=(after.lessons.covered, after.lessons.left) if lessons else None,
+        kind=after.covered_by, partial=partial_words(after, due_after, closed),
     )
     return PreviewResult(
         allocations=allocs, unpaid_after=after.debt, debt_amount_after=due_after.debt_amount, due_amount_after=due_after.due_amount,
@@ -375,7 +519,7 @@ def preview_result(before: bl.Ledger, after: bl.Ledger, credit_id: str, price_to
         advance_after=after.advance, paid_until_before=before.status.paid_until, paid_until_after=after.status.paid_until,
         status_after=status_without_paid_until(after.status.status, after.debt),
         partial_credit_after=after.partial_credit, lessons=lessons, summary_text=text,
-        after_text=tx.after_text(due_after.debt_amount, due_after.due_amount, after.status.paid_until, after.lessons.left if lessons else None, after.advance),
+        after_text=tx.after_text(due_after.debt_amount, due_after.due_amount, cover_until(after, closed), after.lessons.left if lessons else None, after.advance, after.covered_by),
         price_ahead=price_ahead(after, credit_id, price_today),
     )
 

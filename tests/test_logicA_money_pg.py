@@ -391,7 +391,7 @@ def test_the_tabs_debt_due_soon_paid_and_the_summary_invariants(world, fixed_tod
         assert row["state"] in ("debt", "to_pay") and row["debt_amount"] + row["due_amount"] == row["unpaid"] and (row["debt_text"] or row["due_text"])
     assert by["active"][str(b.id)]["state"] == "paid"
     # the invariants of the summary
-    assert summary["buckets"] == {"debtors": pages["debtors"]["total"], "to_pay": pages["to_pay"]["total"], "expiring": 0, "active": 1, "paused": 0}
+    assert summary["buckets"] == {"debtors": pages["debtors"]["total"], "to_pay": pages["to_pay"]["total"], "expiring": 0, "active": 1, "paused": 0, "advance": 1}      # PAY-TAILS Б1.1: the tab «Аванс» is counted too (B paid ahead)
     assert summary["debtors"] == pages["debtors"]["students"] and summary["due_students"] == pages["to_pay"]["students"]
     assert summary["memberships_with_debt"] == pages["debtors"]["total"]
     assert summary["debt_total"] + summary["due_total"] == sum(i["unpaid"] for i in c.get(f"{API}/org/payments/status", params={"limit": 100}).json()["items"]) == 750_000       # A 150 000 + C 600 000

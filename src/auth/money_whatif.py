@@ -28,7 +28,7 @@ def lessons_of(ledger: bl.Ledger) -> Optional[Dict[str, int]]:
 def snapshot(ledger: bl.Ledger) -> Dict[str, Any]:
     package = ledger.mode == bl.LESSONS
     return {"charged": ledger.charged, "debt": ledger.debt, "advance": ledger.advance, "paid_until": None if package else ledger.covered_through,      # a package has no date (Д2 of the walk of 06.11)
-            "lessons": lessons_of(ledger), "package": package}
+            "covered_by": ledger.covered_by, "lessons": lessons_of(ledger), "package": package}
 
 
 def changed(before: Dict[str, Any], after: Dict[str, Any]) -> bool:
@@ -43,7 +43,8 @@ def parts_of(before: Dict[str, Any], after: Dict[str, Any]) -> List[str]:
     if before["advance"] != after["advance"]:
         parts.append(f"аванс {tx.money(before['advance'])} → {tx.money(after['advance'])}")
     if before["paid_until"] != after["paid_until"] and not after.get("package"):
-        parts.append(f"оплачено до {_ddmm(before['paid_until'])} → {_ddmm(after['paid_until'])}")
+        word = tx.cover_words(after.get("covered_by") or before.get("covered_by")).lower()      # PAY-TAILS Б5.4: the word of what covers the day («оплачено до» / «прощено до» / «оплата не нужна до»)
+        parts.append(f"{word} {_ddmm(before['paid_until'])} → {_ddmm(after['paid_until'])}")
     lb, la = before["lessons"], after["lessons"]
     if after.get("package") and not before.get("package") and la is not None:
         parts.append(f"осталось уроков: {la['left']}")                           # a calendar account becomes a package: no date, the lessons that are left

@@ -36,7 +36,7 @@ def test_the_only_group_leaving_in_the_term_says_the_sum_becomes_a_debt_and_afte
     n = m["money"]["unpaid"]
     assert n == 10_000 and (m["money"]["debt_amount"], m["money"]["due_amount"], m["money"]["becomes_debt"]) == (10_000, 0, 10_000)      # the lesson of today; all of it turns into a debt
     (stay,) = [x for x in m["effects"]["stays"] if x["code"] == "debt"]
-    assert stay["text"] == f"К оплате {tx.money(n)}. Это единственная группа ученика: после ухода сумма станет долгом" and stay["turns"] == 10_000
+    assert stay["text"] == f"Останется долг {tx.money(n)}: это единственная группа ученика" and stay["turns"] == 10_000      # PAY-TAILS Б1.3: the short sentence of the total (was «К оплате …. Это единственная группа ученика: после ухода сумма станет долгом»)
     def mine(bucket):
         rows = owner(world).get(f"{API}/org/payments/status", params={"bucket": bucket, "scope": "all"}).json()["items"]
         return [r for r in rows if r["student_id"] == str(s.id)]
@@ -58,7 +58,7 @@ def test_a_leaving_from_one_of_two_groups_keeps_the_term_of_the_sum(world, fixed
     m = preview(world, a, s)
     assert (m["money"]["debt_amount"], m["money"]["due_amount"], m["money"]["becomes_debt"], m["money"]["due_until"]) == (0, 10_000, 0, "2026-11-24")
     (stay,) = [x for x in m["effects"]["stays"] if x["code"] == "due"]
-    assert stay["text"] == f"К оплате {tx.money(10_000)} до 24.11, срок не меняется: оплатить или простить сумму можно в выписке группы «{a.name}»"
+    assert stay["text"] == f"Останется к оплате {tx.money(10_000)} до 24.11"      # PAY-TAILS Б1.3: the short sentence of the total (the choice under it says what can be done)
     assert not [x for x in m["effects"]["stays"] if x["code"] == "debt"]
 
 

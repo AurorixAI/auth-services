@@ -25,6 +25,7 @@ from . import xlsx_style as xs
 SHEET_TITLE = "Выписка"
 HEADER = ["Дата", "Операция", "Стоимость", "Оплачено", "Остаток", "Подробности"]       # the columns every statement has (the optional ones go after «Оплачено»)
 OPTIONAL = (("forgiven", "Прощено"), ("recalc", "Перерасчёт"), ("refunded", "Возвращено"), ("transferred", "Деньги в другие группы"))
+FORECAST_TITLE = "Прогноз"
 CANCELLED_TITLE = "Отменённые записи"
 CANCELLED_EMPTY = "Отменённых записей нет"
 TOTAL_LABEL = "Итого"
@@ -125,6 +126,13 @@ def build_statement_xlsx(
     # ---- the blue total row: the sums of the columns of the rows above and the balance after the last of them
     if entries:
         xs.total_row(ws, next_row(), TOTAL_LABEL, sums, last_col)
+
+    # ---- PAY-TAILS Б1.4: the forecast of a charge that has not begun - ONE line BELOW the total row, marked «прогноз» (a service band: it is in no sum of the table above, the total row holds numbers, not a range)
+    forecast = getattr(statement, "forecast", None)
+    if forecast is not None and date_from is None and date_to is None:
+        row += 1
+        band(FORECAST_TITLE, fill_rgb=xs.SERVICE_FILL)
+        band(f"{xs.date_ru(forecast.date)} · {forecast.title} · {forecast.sub}", font=xs.FONT_BODY, fill_rgb="FFFFFF")
 
     # ---- the periods to come (as the page: only for the whole statement, never for a month or a range)
     if statement.upcoming and date_from is None and date_to is None:

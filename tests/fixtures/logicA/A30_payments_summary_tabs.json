@@ -18,6 +18,8 @@
   },
   "advance_total": 200000,
   "students_with_advance": 1,
+  "advance_left_students": 0,
+  "advance_text": "",
   "memberships_with_debt": 3,
   "accounting_start_date": "2026-10-01",
   "paused": 1,
@@ -26,14 +28,16 @@
     "to_pay": 1,
     "expiring": 1,
     "active": 4,
-    "paused": 1
+    "paused": 1,
+    "advance": 0
   },
   "bucket_rows": {
     "debtors": 0,
     "to_pay": 0,
     "expiring": 0,
     "active": 0,
-    "paused": 0
+    "paused": 0,
+    "advance": 0
   },
   "price_missing": 1,
   "debt_ages": [],

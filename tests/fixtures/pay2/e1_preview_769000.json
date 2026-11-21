@@ -17,7 +17,7 @@
     "due_until": null,
     "overdue_days": 32,
     "debt_text": "Долг 769 000 сум",
-    "debt_sub": "просрочено 32 дня · оплачено до 27.09",
+    "debt_sub": "просрочено 32 дня",
     "due_text": null,
     "due_sub": null,
     "advance": 0,

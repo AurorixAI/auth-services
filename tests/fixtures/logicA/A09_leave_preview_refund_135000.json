@@ -22,7 +22,9 @@
         "keep",
         "refund"
       ],
-      "effects": null
+      "effects": null,
+      "recalc": null,
+      "others": []
     }
   ]
 }
