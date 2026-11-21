@@ -1439,6 +1439,12 @@ class PricingService:
                 out = self.override_history(org_id, membership_id)
                 out.update({"dry_run": True, "impact": impact})
                 return out
+            in_force = old_book.at(valid_from)
+            if amount is None and reason is None and not correction and (in_force is None or in_force[1] is None) and not old_book.starts_after(valid_from):
+                self.db.rollback()          # PAY-TAILS Б1.6: an EMPTY «back to the group price» (no reason) for a student who has no individual price in force (and none is scheduled) writes NOTHING - no row of the book, no line of the journal
+                out = self.override_history(org_id, membership_id)
+                out.update({"dry_run": False, "impact": impact})
+                return out
             write_override(
                 self.db, membership.id, actor_id, amount=amount, valid_from=valid_from, reason=reason,
                 seen_before=requested_at,
