@@ -42,3 +42,32 @@ def test_a_list_of_300_rows_with_a_forecast_on_every_row(world, fixed_today):
     if os.environ.get("PAYTAILS_PERF_FILE"):
         open(os.environ["PAYTAILS_PERF_FILE"], "a", encoding="utf-8").write(line + "\n")
     assert with_forecast < 60
+
+
+def test_a_list_of_300_rows_when_every_account_has_three_lessons_cancelled_by_the_centre(world, fixed_today):
+    # R4 (Б7.8 шаг 5): a cancel of a lesson is an event with its own moment, so a world is generated per moment for every account that has a cancel: 300 accounts x 3 cancels entered at three different moments,
+    # every account has a payment.  The same list as above (``timed``: the best of three, the tab of the debtors: every account owes), read on 24.11.
+    from tests.test_payments_service_pg import pay
+
+    g = world_om(world, fixed_today, today=D(2026, 11, 3))
+    g.max_students = None
+    world.db.commit()
+    assert owner(world).put(f"{API}/org/settings/payments", json={"centre_cancel_recalc": True}).status_code == 200
+    ids = [fresh_student(world, f"Ученик{i:03d}") for i in range(N)]
+    r = owner(world).post(f"{API}/org/groups/{g.id}/students/bulk", params={"mode": "add"}, json={"student_ids": [str(s.id) for s in ids]})
+    assert r.status_code == 200 and r.json()["added"] == N, r.text[:300]
+    for s in ids:
+        pay(world, s, g, amount=300_000, paid_on=D(2026, 11, 3))
+    for entered, lesson_id, day in ((D(2026, 11, 9), "s2", "2026-11-10"), (D(2026, 11, 11), "s4", "2026-11-12"), (D(2026, 11, 12), "s5", "2026-11-13")):
+        fixed_today(entered)
+        r = owner(world).post(f"{API}/org/groups/{g.id}/attendance", json={"lessonDate": day, "lessonId": lesson_id, "status": "cancelled", "records": {}, "cancellationReason": "Преподаватель заболел", "cancellationKind": "centre"})
+        assert r.status_code == 200, r.text
+    fixed_today(D(2026, 11, 24))
+    took, page = timed(world, bucket="debtors")                                  # every account owes: 600 000 - 300 000 - the deductions
+    assert page["total"] == N
+    line = f"PERF rows={N} with three cancelled lessons on every account: {took:.2f}s"
+    print(line)
+    import os
+    if os.environ.get("PAYTAILS_PERF_FILE"):
+        open(os.environ["PAYTAILS_PERF_FILE"], "a", encoding="utf-8").write(line + "\n")
+    assert took < 60
