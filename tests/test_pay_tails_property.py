@@ -183,13 +183,11 @@ def test_b7_p2_a_forgiveness_added_now_never_raises_the_debt_and_the_advance_onl
 
 
 def test_b7_p3_a_pause_entered_or_edited_now_never_raises_the_debt_nor_the_used_forgiveness_and_the_advance_stays_money():
-    # The common month: all of P3 / P3e.  The personal period: the same except «the advance grows by no more than the money the cut freed, period by period» (by the ID of the period): a pause on the whole
-    # first period moves the personal chain one month back (the periods change their id), 741 of 500 000 additions - the same bound by the TOTAL charge (P3c) holds and is asserted (the tool prints both).
-    # The packages (the world of a package cannot be rebuilt from the input - the lessons come already without the days of a pause): only «the advance is money»; the debt and the advance of a pause in
-    # the middle of a package are the OPEN residuals of the report (a forgiveness entered while the package had begun can lose its package when the pause moves the lessons).
+    # The common month and the personal period: all of P3 / P3e.  «The advance grows by no more than the money the cut freed» is counted period by period BY THE KEY OF THE MODEL (the slot of a period: the cell
+    # of a common month, the piece of the stay and the number in the chain of a personal period; Б7.8 п. 1): a pause on the whole first personal period moves the chain one month back and the money
+    # that lay on the third period, which has not begun now, is freed (an advance in money, the right one).  The packages: only «the advance is money»; the rest is step 4.2.
     keys = ("P3 used", "P3 debt", "P3 advance", "P3 advance<=money", "P3e used", "P3e debt", "P3e advance", "P3e advance<=money", "P3c advance", "P3ec advance")
-    _zero(keys, modes=("common",))
-    _zero(tuple(k for k in keys if k != "P3 advance"), modes=("personal",))
+    _zero(keys, modes=("common", "personal"))
     _zero(("P3 advance<=money", "P3e advance<=money"), modes=("packages",))
 
 

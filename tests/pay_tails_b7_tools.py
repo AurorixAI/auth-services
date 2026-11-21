@@ -281,6 +281,11 @@ def oracle_p4(inp):
     return bad, lost
 
 
+def period_key(s):
+    """Б7.8 4.1: the key of a period is the one of the MODEL: a common month / a personal period - its ``slot`` (start of the cell; piece of the stay and the number in the chain); a package - its number."""
+    return s.slot if s.slot is not None else (s.kind, s.package_no, s.id if s.package_no is None else "")
+
+
 def violations(inp, x):
     """The names of the properties that the addition of ``x`` (a payment, a forgiveness, a pause or an edit of a pause - all entered now) breaks."""
     before = bl.run_ledger(inp)
@@ -299,8 +304,8 @@ def violations(inp, x):
             bad.append(f"{tag} used")
         if after.debt > before.debt:
             bad.append(f"{tag} debt")
-        after_cost = {s.id: s.amount for s in after.segments if s.begun}       # what a period costs NOW: a period that has not begun costs nothing
-        freed = sum(max(0, s.money - after_cost.get(s.id, 0)) for s in before.segments)
+        after_cost = {period_key(s): s.amount for s in after.segments if s.begun}       # what a period costs NOW (by the KEY of the model): a period that has not begun costs nothing
+        freed = sum(max(0, s.money - after_cost.get(period_key(s), 0)) for s in before.segments)
         if after.advance - before.advance > freed:
             bad.append(f"{tag} advance")
         if after.advance - before.advance > max(0, before.charged - after.charged):       # information: the same bound by the TOTAL charge (a period changes its place on a personal chain, the id of a period is not the same after)
