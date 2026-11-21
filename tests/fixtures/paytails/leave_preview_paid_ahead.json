@@ -1,0 +1,65 @@
+{
+ "as_of": "2026-11-11",
+ "memberships": [
+  {
+   "allowed": [
+    "keep",
+    "refund"
+   ],
+   "effects": {
+    "ends": [],
+    "kind": "leave",
+    "money_text": null,
+    "moves": [],
+    "stays": [
+     {
+      "amount": 700000,
+      "code": "advance",
+      "group_id": "id-2",
+      "group_name": "Общий",
+      "membership_id": "id-1",
+      "text": "Останется аванс 700 000 сум"
+     }
+    ],
+    "texts": [
+     "Останется аванс 700 000 сум"
+    ]
+   },
+   "group_id": "id-2",
+   "group_name": "Общий",
+   "has_open_balance": true,
+   "membership_id": "id-1",
+   "money": {
+    "advance": 700000,
+    "becomes_debt": 0,
+    "charged_after_leave": 200000,
+    "debt_amount": 0,
+    "due_amount": 0,
+    "due_until": null,
+    "individual_price_ends": false,
+    "paid_until": "2026-11-11",
+    "refundable": 700000,
+    "unpaid": 0
+   },
+   "others": [],
+   "recalc": [
+    {
+     "after": 200000,
+     "basis_text": "пересчёт по день ухода · 4 урока из 12",
+     "before": 600000,
+     "done": false,
+     "label": "Ноябрь",
+     "text": "Ноябрь: 600 000 → 200 000 сум"
+    },
+    {
+     "after": 300000,
+     "basis_text": null,
+     "before": null,
+     "done": false,
+     "label": "Декабрь",
+     "text": "Декабрь не начнётся: 300 000 сум останутся авансом"
+    }
+   ]
+  }
+ ]
+}

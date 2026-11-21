@@ -1,0 +1,84 @@
+{
+ "added": 2,
+ "dry_run": true,
+ "group_id": "id-1",
+ "immediate_total": null,
+ "results": [
+  {
+   "status": "added",
+   "student_id": "id-2"
+  },
+  {
+   "status": "added",
+   "student_id": "id-3"
+  }
+ ],
+ "skipped": 0,
+ "skipped_details": [],
+ "students": [
+  {
+   "billing": {
+    "default_pay_from": "2026-11-24",
+    "explicit": false,
+    "first_lesson": "2026-11-24",
+    "immediate": null,
+    "pay_from": "2026-11-24",
+    "text": "Оплата считается с 24.11.2026 — с первого занятия группы",
+    "upcoming": {
+     "amount": 150000,
+     "due_until": "2026-11-28",
+     "from": "2026-11-24",
+     "lessons_text": "3 урока из 12 в ноябре",
+     "sub": "платить до 28.11",
+     "terms_note": null,
+     "text": "Начисление с 24.11: 150 000 сум"
+    }
+   },
+   "closing_prices": [],
+   "effects": null,
+   "individual_price_ends": false,
+   "leave_undo": null,
+   "others": [],
+   "past_balances": [],
+   "recalc": null,
+   "student_id": "id-2"
+  },
+  {
+   "billing": {
+    "default_pay_from": "2026-11-24",
+    "explicit": false,
+    "first_lesson": "2026-11-24",
+    "immediate": null,
+    "pay_from": "2026-11-24",
+    "text": "Оплата считается с 24.11.2026 — с первого занятия группы",
+    "upcoming": {
+     "amount": 150000,
+     "due_until": "2026-11-28",
+     "from": "2026-11-24",
+     "lessons_text": "3 урока из 12 в ноябре",
+     "sub": "платить до 28.11",
+     "terms_note": null,
+     "text": "Начисление с 24.11: 150 000 сум"
+    }
+   },
+   "closing_prices": [],
+   "effects": null,
+   "individual_price_ends": false,
+   "leave_undo": null,
+   "others": [],
+   "past_balances": [],
+   "recalc": null,
+   "student_id": "id-3"
+  }
+ ],
+ "upcoming_total": {
+  "amount": 300000,
+  "due_until": "2026-11-28",
+  "from": "2026-11-24",
+  "lessons_text": null,
+  "sub": "платить до 28.11",
+  "terms_note": null,
+  "text": "Начисление с 24.11: 300 000 сум"
+ },
+ "warnings": []
+}

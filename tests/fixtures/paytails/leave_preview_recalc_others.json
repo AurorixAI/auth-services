@@ -1,0 +1,60 @@
+{
+ "as_of": "2026-11-20",
+ "memberships": [
+  {
+   "allowed": [
+    "keep",
+    "writeoff"
+   ],
+   "effects": {
+    "ends": [],
+    "kind": "leave",
+    "money_text": null,
+    "moves": [],
+    "stays": [
+     {
+      "amount": 450000,
+      "code": "debt",
+      "group_id": "id-2",
+      "group_name": "Математика 7",
+      "membership_id": "id-1",
+      "text": "Останется долг 450 000 сум",
+      "turns": 0
+     }
+    ],
+    "texts": [
+     "Останется долг 450 000 сум"
+    ]
+   },
+   "group_id": "id-2",
+   "group_name": "Математика 7",
+   "has_open_balance": true,
+   "membership_id": "id-1",
+   "money": {
+    "advance": 0,
+    "becomes_debt": 0,
+    "charged_after_leave": 450000,
+    "debt_amount": 450000,
+    "due_amount": 0,
+    "due_until": null,
+    "individual_price_ends": false,
+    "paid_until": "2026-11-02",
+    "refundable": 0,
+    "unpaid": 450000
+   },
+   "others": [
+    "В группе «Английский 7»: 500 000 → 400 000 сум — сегодняшний урок оплачен в группе «Математика 7»"
+   ],
+   "recalc": [
+    {
+     "after": 450000,
+     "basis_text": "пересчёт по день ухода · 9 уроков из 12",
+     "before": 600000,
+     "done": false,
+     "label": "Ноябрь",
+     "text": "Ноябрь: 600 000 → 450 000 сум"
+    }
+   ]
+  }
+ ]
+}

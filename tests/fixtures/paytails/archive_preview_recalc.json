@@ -1,0 +1,108 @@
+{
+ "as_of": "2026-11-20",
+ "memberships": [
+  {
+   "allowed": [
+    "keep",
+    "writeoff"
+   ],
+   "effects": {
+    "ends": [],
+    "kind": "archive",
+    "money_text": null,
+    "moves": [],
+    "stays": [
+     {
+      "amount": 450000,
+      "code": "debt",
+      "group_id": "id-2",
+      "group_name": "Математика 7",
+      "membership_id": "id-1",
+      "text": "Останется долг 450 000 сум",
+      "turns": 0
+     }
+    ],
+    "texts": [
+     "Останется долг 450 000 сум"
+    ]
+   },
+   "group_id": "id-2",
+   "group_name": "Математика 7",
+   "has_open_balance": true,
+   "membership_id": "id-1",
+   "money": {
+    "advance": 0,
+    "becomes_debt": 0,
+    "charged_after_leave": 450000,
+    "debt_amount": 450000,
+    "due_amount": 0,
+    "due_until": null,
+    "individual_price_ends": false,
+    "paid_until": "2026-11-02",
+    "refundable": 0,
+    "unpaid": 450000
+   },
+   "others": [],
+   "recalc": [
+    {
+     "after": 450000,
+     "basis_text": "пересчёт по день ухода · 9 уроков из 12",
+     "before": 600000,
+     "done": false,
+     "label": "Ноябрь",
+     "text": "Ноябрь: 600 000 → 450 000 сум"
+    }
+   ]
+  },
+  {
+   "allowed": [
+    "keep"
+   ],
+   "effects": {
+    "ends": [],
+    "kind": "archive",
+    "money_text": null,
+    "moves": [],
+    "stays": [
+     {
+      "code": "none",
+      "group_id": "id-4",
+      "group_name": "Английский 7",
+      "membership_id": "id-3",
+      "text": "Расчётов нет — можно убирать"
+     }
+    ],
+    "texts": [
+     "Расчётов нет — можно убирать"
+    ]
+   },
+   "group_id": "id-4",
+   "group_name": "Английский 7",
+   "has_open_balance": false,
+   "membership_id": "id-3",
+   "money": {
+    "advance": 0,
+    "becomes_debt": 0,
+    "charged_after_leave": 0,
+    "debt_amount": 0,
+    "due_amount": 0,
+    "due_until": null,
+    "individual_price_ends": false,
+    "paid_until": null,
+    "refundable": 0,
+    "unpaid": 0
+   },
+   "others": [],
+   "recalc": [
+    {
+     "after": 0,
+     "basis_text": null,
+     "before": 500000,
+     "done": false,
+     "label": "Ноябрь",
+     "text": "Ноябрь: 500 000 → 0 сум"
+    }
+   ]
+  }
+ ]
+}

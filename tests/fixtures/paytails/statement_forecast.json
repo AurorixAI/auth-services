@@ -1,0 +1,63 @@
+{
+ "accounting_start": "2026-10-01",
+ "as_of": "2026-11-21",
+ "forecast": {
+  "date": "2026-11-24",
+  "sub": "прогноз: начислится 150 000 сум",
+  "title": "Ноябрь 2026 — неполный месяц (с 24.11, 3 урока из 12)"
+ },
+ "membership": {
+  "display_id": "AL-001",
+  "group_id": "id-3",
+  "group_name": "Физика 7",
+  "is_active": true,
+  "membership_id": "id-1",
+  "student_id": "id-2",
+  "student_name": "Ученик Один",
+  "teacher_name": "Пётр Teacher"
+ },
+ "mode": "calendar",
+ "rows": [],
+ "summary": {
+  "advance": 0,
+  "charged": 0,
+  "covered_by": null,
+  "debt_also_text": null,
+  "debt_amount": 0,
+  "debt_lessons": 0,
+  "debt_sub": null,
+  "debt_text": null,
+  "due_also_text": null,
+  "due_amount": 0,
+  "due_lessons": null,
+  "due_sub": null,
+  "due_text": null,
+  "due_until": null,
+  "left_on": null,
+  "overdue_days": null,
+  "paid": 0,
+  "paid_until": null,
+  "recalculated": 0,
+  "reconciles": true,
+  "refunded": 0,
+  "state": "starts",
+  "state_sub": "платить до 28.11",
+  "state_text": "Начнётся 24.11",
+  "status": "none",
+  "transferred_in": 0,
+  "transferred_out": 0,
+  "unpaid": 0,
+  "upcoming": {
+   "amount": 150000,
+   "due_until": "2026-11-28",
+   "from": "2026-11-24",
+   "lessons_text": "3 урока из 12 в ноябре",
+   "sub": "платить до 28.11",
+   "terms_note": null,
+   "text": "Начисление с 24.11: 150 000 сум"
+  },
+  "written_off": 0
+ },
+ "upcoming": [],
+ "voided": []
+}

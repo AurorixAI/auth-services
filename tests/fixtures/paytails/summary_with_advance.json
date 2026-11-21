@@ -1,0 +1,70 @@
+{
+ "accounting_start_date": "2026-10-01",
+ "active": 1,
+ "advance_left_students": 2,
+ "advance_text": "3 ученика · 2 ушли из группы",
+ "advance_total": 910000,
+ "as_of": "2026-11-21",
+ "bucket_rows": {
+  "active": 1,
+  "advance": 3,
+  "debtors": 1,
+  "expiring": 0,
+  "paused": 0,
+  "to_pay": 0
+ },
+ "buckets": {
+  "active": 1,
+  "advance": 3,
+  "debtors": 1,
+  "expiring": 0,
+  "paused": 0,
+  "to_pay": 0
+ },
+ "debt_ages": [
+  {
+   "bucket": "to_30",
+   "debt_total": 168000,
+   "memberships": 1,
+   "students": 1
+  },
+  {
+   "bucket": "31_60",
+   "debt_total": 0,
+   "memberships": 0,
+   "students": 0
+  },
+  {
+   "bucket": "61_90",
+   "debt_total": 0,
+   "memberships": 0,
+   "students": 0
+  },
+  {
+   "bucket": "over_90",
+   "debt_total": 0,
+   "memberships": 0,
+   "students": 0
+  }
+ ],
+ "debt_total": 168000,
+ "debtors": 1,
+ "due_nearest": null,
+ "due_students": 0,
+ "due_total": 0,
+ "ends_today": 0,
+ "expiring": 0,
+ "free": 0,
+ "lessons_per_payment": 12,
+ "memberships_with_debt": 1,
+ "none": 3,
+ "paused": 0,
+ "pay_due_days": 5,
+ "pay_due_lessons": 2,
+ "pay_due_package_max_days": 14,
+ "period_mode": "calendar",
+ "price_missing": 3,
+ "students_paused": 0,
+ "students_with_advance": 3,
+ "tracked_total": 4
+}
