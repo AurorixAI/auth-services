@@ -31,7 +31,7 @@ FIXED1 = bl.Regime(anchor=ps.FIXED_DAY, billing_day=1)
 BOOKS = D(2026, 9, 1)
 EARLIEST = D(2026, 9, 15)                # the earliest date the generator gives a payment / a forgiveness (the product allows 3 years)
 CANCELS = os.environ.get("B7_CANCELS", "")        # "" = mixed, "none" = no cancelled lessons, "with" = every world has one
-PROPERTIES = ("P1 debt", "P1 used", "P1 advance", "P1 advance<=money", "P1 identity", "P2 debt", "P2 advance<=money", "P2 advance today", "P2 advance back")
+PROPERTIES = ("P1 debt", "P1 used", "P1 advance", "P1 advance<=money", "P1 identity", "P2 debt", "P2 advance<=money", "P2 advance today", "P2 advance back", "P3 used", "P3 debt", "P3 advance")
 
 
 def _debt_on(inp, day, entered_before):
@@ -108,6 +108,13 @@ def new_forgiveness(rng, inp, name="extra"):
     return bl.Credit(name, bl.WRITEOFF, on, T0 + timedelta(minutes=5000), min(debt, rng.choice([100_000, 150_000, 200_000, 300_000, 420_000, 600_000])), entered_on=inp.today)
 
 
+def new_pause(rng, inp, name=None):
+    """Б7.5 P3: a pause entered NOW (today); the days of it any day from the first of October to today."""
+    first = D(2026, 10, 1) + timedelta(days=rng.randint(0, max(0, (inp.today - D(2026, 10, 1)).days - 1)))
+    last = min(inp.today, first + timedelta(days=rng.randint(1, 25)))
+    return bl.Pause(first, last, created_on=inp.today)
+
+
 def money_of(inp):
     return sum(c.amount for c in inp.credits if c.kind != bl.WRITEOFF)
 
@@ -115,6 +122,20 @@ def money_of(inp):
 def violations(inp, x):
     """The names of the properties that the addition of ``x`` (a payment or a forgiveness entered today) breaks."""
     before = bl.run_ledger(inp)
+    if isinstance(x, bl.Pause):                       # Б7.5 P3: a pause entered now
+        after = bl.run_ledger(replace(inp, pauses=(*inp.pauses, x)))
+        bad = []
+        if after.flags or not after.reconciles:
+            bad.append("flags")
+        if after.written_off > before.written_off:
+            bad.append("P3 used")
+        if after.debt > before.debt:
+            bad.append("P3 debt")
+        after_cost = {s.id: s.amount for s in after.segments if s.begun}       # what a period costs NOW: a period that has not begun costs nothing
+        freed = sum(max(0, s.money - after_cost.get(s.id, 0)) for s in before.segments)
+        if after.advance - before.advance > freed:
+            bad.append("P3 advance")
+        return bad
     new = replace(inp, credits=(*inp.credits, x))
     after = bl.run_ledger(new)
     bad = []
@@ -161,30 +182,22 @@ def explain(inp):
     finally:
         bl._place_credits = real
     (segments, credits, net, recalcs), placed = captured[-1]
-    tied = {c.id: {s.id: 0 for s in segments} for c in credits}
-    filled = {s.id: 0 for s in segments}
-    for c in credits:                      # the same greedy as the tying of ``_place_credits`` (read-only copy, for the table)
-        entered = c.entered_on or c.on
-        rest = net[c.id]
-        for s in segments:
-            if rest <= 0:
-                break
-            part = min(rest, max(0, s.capacity(entered) - filled[s.id]))
-            tied[c.id][s.id] += part
-            filled[s.id] += part
-            rest -= part
+    alive = bl._alive_forgiveness(segments, credits, net)
+    amounts = {c.id: (alive[c.id] if c.kind == bl.WRITEOFF else net[c.id]) for c in credits}
+    main, _ = bl._tie(segments, credits, amounts, lambda s: s.capacity(date.max))
+    tied = {c.id: {s.id: sum(a for cc, a in main[s.id] if cc.id == c.id) for s in segments} for c in credits}
     lines = [f"today {inp.today}  charged {L.charged}  debt {L.debt}  advance {L.advance}  used {L.written_off} of {L.written_off_granted}  covered_through {L.covered_through}"]
     lines.append("  pauses: " + (", ".join(f"{p.first}..{p.last} entered {p.created_on}" for p in inp.pauses) or "-") + "   centre cancels: " + (", ".join(str(c.day) for c in inp.centre_cancels) or "-"))
-    head = "  credit (kind, date, entered, amount)".ljust(52) + "".join(f"| {s.period_start} (charge {s.amount}, {'begun' if s.begun else 'future'})".ljust(46) for s in segments) + "| burned / leftover"
+    head = "  credit (kind, date, entered, amount)".ljust(52) + "".join(f"| {s.period_start} (charge {s.amount}, first day {s.days[0] if s.days else '-'})".ljust(46) for s in segments) + "| burned / leftover"
     lines.append(head)
     for c in credits:
         cells = []
         for s in segments:
             got = placed.parts.get((s.id, c.id), 0)
-            cells.append(f"| cap {s.capacity(c.entered_on or c.on)} tied {tied[c.id][s.id]} placed {got}".ljust(46))
+            cells.append(f"| cap {s.capacity(date.max)} tied {tied[c.id][s.id]} placed {got}".ljust(46))
         gone = net[c.id] - sum(placed.parts.get((s.id, c.id), 0) for s in segments) - sum(a for cid, a in placed.leftover if cid == c.id)
         left = sum(a for cid, a in placed.leftover if cid == c.id)
-        lines.append(f"  {c.id:5s} {c.kind[:3]} {c.on} {c.entered_on or c.on} {net[c.id]}".ljust(52) + "".join(cells) + f"| burned {gone}, leftover {left}")
+        lines.append(f"  {c.id:5s} {c.kind[:3]} {c.on} {c.entered_on or c.on} {net[c.id]}{' alive ' + str(alive[c.id]) if c.kind == bl.WRITEOFF and alive[c.id] != net[c.id] else ''}".ljust(52) + "".join(cells) + f"| burned {gone}, leftover {left}")
     for what, key in (("money", placed.money), ("forgiven", placed.forgiven), ("recalc", placed.recalculated)):
         lines.append(f"  {what:9s}".ljust(52) + "".join(f"| {key[s.id]}".ljust(46) for s in segments))
     lines.append("  unpaid".ljust(52) + "".join(f"| {s.amount - placed.money[s.id] - placed.forgiven[s.id] - placed.recalculated[s.id]}".ljust(46) for s in segments))
@@ -215,10 +228,11 @@ def shrink(inp, x, prop):
                     steps.append((replace(inp, credits=inp.credits[:k] + (replace(c, amount=amount),) + inp.credits[k + 1:]), x))
             if (c.entered_on or c.on) != c.on:
                 steps.append((replace(inp, credits=inp.credits[:k] + (replace(c, entered_on=c.on),) + inp.credits[k + 1:]), x))
-        for amount in (100_000, 200_000, 300_000, 420_000):
-            if amount < x.amount:
-                steps.append((inp, replace(x, amount=amount)))
-        steps.append((inp, replace(x, on=inp.today)))
+        if isinstance(x, bl.Credit):
+            for amount in (100_000, 200_000, 300_000, 420_000):
+                if amount < x.amount:
+                    steps.append((inp, replace(x, amount=amount)))
+            steps.append((inp, replace(x, on=inp.today)))
         for step_inp, step_x in steps:
             if step_inp.credits and (step_inp, step_x) != (inp, x) and ok(step_inp, step_x):
                 inp, x = step_inp, step_x
@@ -231,7 +245,10 @@ def describe(inp, x):
     lines = [f"regime {inp.regimes[0].anchor}, price {inp.price_at(inp.today).amount if callable(inp.price_at) else '?'}, stay from {inp.stays[0].first}, books from {BOOKS}, lessons Tue/Thu/Fri, today {inp.today}"]
     for c in inp.credits:
         lines.append(f"  credit {c.id}: {c.kind} {c.amount} dated {c.on} entered {c.entered_on} (order {int((c.created_at - T0).total_seconds() // 60)})")
-    lines.append(f"  ADDED  {x.id}: {x.kind} {x.amount} dated {x.on} entered {x.entered_on}")
+    if isinstance(x, bl.Pause):
+        lines.append(f"  ADDED  pause {x.first}..{x.last} entered {x.created_on}")
+    else:
+        lines.append(f"  ADDED  {x.id}: {x.kind} {x.amount} dated {x.on} entered {x.entered_on}")
     return "\n".join(lines)
 
 
@@ -244,8 +261,8 @@ def run_counts(seed, n):
     for _ in range(n):
         inp = allowed_world(rng)
         worlds += 1
-        for kind in (bl.PAYMENT, bl.WRITEOFF):
-            x = new_payment(rng, inp) if kind == bl.PAYMENT else new_forgiveness(rng, inp)
+        for kind in (bl.PAYMENT, bl.WRITEOFF, "pause"):
+            x = new_payment(rng, inp) if kind == bl.PAYMENT else new_forgiveness(rng, inp) if kind == bl.WRITEOFF else new_pause(rng, inp)
             if x is None:
                 continue
             pays += kind == bl.PAYMENT
@@ -281,7 +298,7 @@ def main(argv):
         _, small, sx = best
         print(describe(small, sx))
         print("BEFORE\n" + explain(small))
-        print("AFTER\n" + explain(replace(small, credits=(*small.credits, sx))))
+        print("AFTER\n" + explain(replace(small, pauses=(*small.pauses, sx)) if isinstance(sx, bl.Pause) else replace(small, credits=(*small.credits, sx))))
         print("broken:", violations(small, sx))
 
 
