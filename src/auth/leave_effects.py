@@ -16,7 +16,7 @@ without a sum.  The preview and the real answer are built by this one function f
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, timedelta
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 from uuid import UUID
 
@@ -28,6 +28,9 @@ from . import leave_recalc
 from . import payment_status as ps
 from . import payments_texts as tx
 from . import pricing
+
+
+PROBE_DAYS = 93          # the common month that holds today is read on a later day (a stay that begins tomorrow has not begun today)
 
 
 @dataclass
@@ -87,6 +90,8 @@ def snapshot(db: Session, org_id: Any, memberships: Sequence[StudentGroup], day:
         if period is not None and period.billing_from is not None and period.billing_from > day:
             snap.billing_from = period.billing_from
         out.append(snap)
+    if in_centre is None and out:           # a leaving / an archive: the other groups of the student that began TODAY are moved by the day this closing keeps (Б5.2)
+        out[0].others = second_groups(db, org_id, memberships, day, loader)
     return out
 
 
@@ -103,6 +108,57 @@ def ordinary_ledgers(db: Session, org_id: Any, ids: Sequence[UUID], day: date) -
         inp = loader.build_input(mid)
         if inp is not None:
             out[mid] = bl.run_ledger(inp)
+    return out
+
+
+def second_groups(db: Session, org_id: Any, closing: Sequence[StudentGroup], day: date, loader: Any) -> List[str]:
+    """PAY-TAILS Б5.2 (the rule «a day is not paid twice»): the closing of A keeps ``day`` for A, so another open group B of the same student that BEGAN today starts a day later.  ONE sentence per such group, with the
+    money: before = the ordinary loader (what the list says), after = the loader with ``closing`` (the very account of the write).  Three modes: the common month - the sum falls; the personal period - the
+    period begins the next day (the sum is the same); a package - today's lesson is not paid.  Nothing when B does not move (it began earlier, or the day is not a day of B)."""
+    from . import billing_ledger as bl
+
+    closing_ids = {m.id for m in closing}
+    students = {m.student_id for m in closing}
+    rows = (db.query(StudentGroup, Group).join(Group, Group.id == StudentGroup.group_id)
+            .filter(StudentGroup.student_id.in_(students), StudentGroup.is_active.is_(True), Group.org_id == org_id, Group.status == "active", StudentGroup.id.notin_(closing_ids)).all())
+    started = []
+    for b, g in rows:
+        period = next((p for p in b.periods if p.left_at is None), None)
+        if period is not None and period.joined_at is not None and ps.business_date(period.joined_at) == day:
+            started.append((b, g))
+    if not started:
+        return []
+    from dataclasses import replace as _replace
+
+    from . import ledger_service as ls
+
+    ids = [b.id for b, _ in started]
+    plain = ls.LedgerLoader(db, str(org_id), day)
+    plain.load_facts(ids)
+    loader.load_facts(ids)
+    holders = sorted({loader.members[mid][2].name for mid in closing_ids if mid in loader.members and day in loader.left_days.get(loader.members[mid][1].id, {}).get(mid, set())})
+    where = ", ".join(f"«{n}»" for n in holders) or "другой группе"
+    out: List[str] = []
+
+    def period_of_today(ledger: Any) -> Optional[Any]:
+        return next((x for x in ledger.segments if x.kind == "period" and x.period_start <= day <= x.period_end), None)
+
+    for b, g in sorted(started, key=lambda x: x[1].name):
+        was_inp, now_inp = plain.build_input(b.id), loader.build_input(b.id)
+        if was_inp is None or now_inp is None:
+            continue
+        was, now = bl.run_ledger(was_inp), bl.run_ledger(now_inp)
+        if now.mode == bl.LESSONS:
+            if any(c.day == day for c in was.counted) and not any(c.day == day for c in now.counted):
+                out.append(f"Сегодняшний урок в группе «{g.name}» не оплачивается: день оплачен в группе {where}")
+            continue
+        if any(s.by_cell for s in now.segments):          # the common month: the sum of the month that holds today (read when it has begun: the shifted stay may begin tomorrow)
+            later = day + timedelta(days=PROBE_DAYS)
+            was_seg, now_seg = period_of_today(bl.run_ledger(_replace(was_inp, today=later))), period_of_today(bl.run_ledger(_replace(now_inp, today=later)))
+            if was_seg is not None and now_seg is not None and was_seg.amount != now_seg.amount:
+                out.append(f"В группе «{g.name}»: {tx.num(was_seg.amount)} → {tx.money(now_seg.amount)} — сегодняшний урок оплачен в группе {where}")
+        elif now.first_billable is not None and was.first_billable is not None and now.first_billable != was.first_billable:
+            out.append(f"В группе «{g.name}» период начнётся с {_ddmm(now.first_billable)}: сегодняшний день оплачен в группе {where}")
     return out
 
 

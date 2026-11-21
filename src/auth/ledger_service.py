@@ -686,7 +686,7 @@ class LedgerLoader:
         if self._needs_lessons():
             self._load_counted([(m, None, g) for m, g in rows if m.id not in self.counted])
         for membership, group in rows:
-            runs = bl.merge_stays(stays_of_membership(membership, periods.get(membership.id, []), self.marked_of(membership.id)))
+            runs = bl.merge_stays(stays_of_membership(membership, periods.get(membership.id, []), self.marked_of(membership.id), self.today if membership.id in self.closing else None))      # PAY-TAILS Б5.2: the stay that is being closed TODAY holds today (the window sees what the record will see: the day is not paid twice)
             for run in runs:
                 # G-8b / Р-6: the day he left belongs to that group only when it really charges the day (a stay of one day without a lesson charges nothing, G-7)
                 if run[1] is not None and not bl.lessonless_day(lambda a, b, _g=group: self._lesson_days(_g, a, b), run) and self._holds_day(group, run[1], membership.id):

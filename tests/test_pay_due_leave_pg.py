@@ -63,17 +63,35 @@ def test_a_leaving_from_one_of_two_groups_keeps_the_term_of_the_sum(world, fixed
 
 
 def test_the_archive_of_a_student_says_the_whole_unpaid_sum_of_every_group_becomes_a_debt(world, fixed_today):
+    # PAY-TAILS Б5.2 (a change of the outcome, LESSONS 143): B was joined BEFORE today, A today (a lesson of both today is marked).  The archive closes both today; the day is charged ONCE (a day is not paid twice): B keeps
+    # the lesson of today (10 000), A - written down the same day - charges nothing; the probe now says what the record writes (the probe charged both before and the write charged one)
     a, b, c = groups3(world, fixed_today)
     s = fresh_student(world, "Уходит")
+    fixed_today(date(2026, 11, 19))                                                # yesterday: the term of B (5 days) is still running today
+    add(world, s, group=b, mode="add")
+    fixed_today(TODAY)
+    add(world, s, group=a, mode="add")
+    hold_lessons(world, s, [TODAY], group=a)
+    hold_lessons(world, s, [TODAY], group=b)
+    got = archive_preview(world, s)
+    (stay,) = [x for x in got[b.name]["effects"]["stays"] if x["code"] == "debt"]
+    n = got[b.name]["money"]["unpaid"]
+    assert stay["text"] == f"Ученик уходит из центра: вся неоплаченная сумма {tx.money(n)} в группе «{b.name}» станет долгом" and stay["turns"] == n > 0
+    assert [x["code"] for x in got[a.name]["effects"]["stays"]] == ["none"] and got[a.name]["money"]["unpaid"] == 0
+
+
+def test_two_groups_written_down_and_closed_on_one_day_with_lessons_both_charge_nothing_as_the_record_does(world, fixed_today):
+    # PAY-TAILS Б5.2, the known edge «как есть»: each group holds the day for the other, a stay of one day that the other holds is nothing - so both charge 0, in the window and in the record
+    a, b, c = groups3(world, fixed_today)
+    s = fresh_student(world, "Оба сегодня")
     add(world, s, group=a, mode="add")
     add(world, s, group=b, mode="add")
     hold_lessons(world, s, [TODAY], group=a)
     hold_lessons(world, s, [TODAY], group=b)
     got = archive_preview(world, s)
-    for g in (a, b):
-        (stay,) = [x for x in got[g.name]["effects"]["stays"] if x["code"] == "debt"]
-        n = got[g.name]["money"]["unpaid"]
-        assert stay["text"] == f"Ученик уходит из центра: вся неоплаченная сумма {tx.money(n)} в группе «{g.name}» станет долгом" and stay["turns"] == n > 0
+    assert [got[g.name]["money"]["unpaid"] for g in (a, b)] == [0, 0]
+    assert owner(world).post(f"{API}/org/students/{s.id}/archive", json={}).status_code == 200
+    assert rows_of(world, s, "debtors") == [] and rows_of(world, s, "to_pay") == []                          # and the record owes nothing either
 
 
 def rows_of(w, student, bucket="all"):
