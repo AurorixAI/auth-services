@@ -855,7 +855,8 @@ class LedgerLoader:
             if p.amount and p.amount > 0 and p.id != exclude_payment:
                 credits.append(bl.Credit(str(p.id), bl.PAYMENT, p.paid_on, p.created_at or datetime.min, int(p.amount)))
         for w in self.writeoffs.get(mid, []):
-            credits.append(bl.Credit(str(w.id), bl.WRITEOFF, w.effective_on, w.created_at or datetime.min, int(w.amount)))
+            credits.append(bl.Credit(str(w.id), bl.WRITEOFF, w.effective_on, w.created_at or datetime.min, int(w.amount),
+                                     entered_on=ps.business_date(w.created_at) if w.created_at else None))      # PAY-TAILS: a forgiveness lies only on the periods that had begun by the day it was entered
         outflows: List[bl.Outflow] = []
         for r in self.refunds.get(mid, []):
             outflows.append(bl.Outflow(str(r.id), bl.REFUND, r.effective_on, r.created_at or datetime.min, int(r.amount)))

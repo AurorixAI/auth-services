@@ -95,7 +95,8 @@ GOLDEN = {"back_and_forth": "03af7157e6d9", "refund_pay": "1b1e9195ae39", "two_p
 
 def _digest(kw):
     ledger = _w(**kw)
-    return hashlib.sha1(repr(replace(ledger, statement=())).encode()).hexdigest()[:12]
+    # PAY-TAILS: the two NEW fields of the Ledger (the entered sum of the forgiveness and who used it) are not part of the old picture
+    return hashlib.sha1(repr(replace(ledger, statement=(), written_off_granted=0, forgiven_used_by={})).replace(", written_off_granted=0", "").encode()).hexdigest()[:12]
 
 
 @pytest.mark.parametrize("name,kw", list(_scenarios()))

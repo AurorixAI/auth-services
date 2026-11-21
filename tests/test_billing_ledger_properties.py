@@ -144,7 +144,10 @@ def test_invariants_hold_on_random_accounts(chunk, logic_a):
             by_credit.setdefault(a.credit_id, []).append(a)
         # I1 - per credit: the pieces are the net, the net + what went out is the amount
         for c in inp.credits:
-            assert sum(a.amount for a in by_credit.get(c.id, [])) == l.net_money[c.id], ctx
+            # PAY-TAILS: a forgiveness is placed only as far as a charge needs it (the rest is thrown away: no allocation); money is placed whole
+            placed_of = l.forgiven_used_by.get(c.id, 0) if c.kind == bl.WRITEOFF else l.net_money[c.id]
+            assert sum(a.amount for a in by_credit.get(c.id, [])) == placed_of, ctx
+            assert placed_of <= l.net_money[c.id], ctx
             assert l.net_money[c.id] + l.refunded_from[c.id] + l.transferred_from[c.id] == c.amount, ctx
             assert all(a.bucket in (bl.PAST_DEBT, bl.CURRENT, bl.ADVANCE) and a.amount > 0 for a in by_credit.get(c.id, [])), ctx
         # I2
@@ -173,8 +176,9 @@ def test_invariants_hold_on_random_accounts(chunk, logic_a):
         assert l.debt == sum(s.unpaid for s in begun), ctx
         assert l.past_debt + l.current_due == l.debt and l.past_debt >= 0 and l.current_due >= 0, ctx
         # every cent of the credit sits on a segment or in the advance
-        assert sum(l.net_money.values()) == sum(s.money + s.forgiven for s in l.segments) + sum(
-            a.amount for a in l.allocations if a.segment_id == bl.ADVANCE_SEGMENT), ctx
+        assert sum(v for k, v in l.net_money.items() if next(c.kind for c in inp.credits if c.id == k) != bl.WRITEOFF) + sum(l.forgiven_used_by.values()) == sum(
+            s.money + s.forgiven for s in l.segments) + sum(a.amount for a in l.allocations if a.segment_id == bl.ADVANCE_SEGMENT), ctx
+        assert l.written_off == sum(l.forgiven_used_by.values()) <= l.written_off_granted, ctx
         # a billable day belongs to one segment only (calendar)
         days = [d for s in l.segments if s.kind == "period" for d in s.days]
         assert len(days) == len(set(days)), ctx

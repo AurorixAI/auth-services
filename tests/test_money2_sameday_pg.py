@@ -152,7 +152,7 @@ def test_an_old_forgiveness_on_a_one_day_stay_is_an_honest_finding_of_the_night_
     world.db.add(StudentWriteoff(org_id=world.org.id, membership_id=m.id, student_id=s.id, group_id=b.id, amount=38_000, reason="Старое прощение", effective_on=TUE, created_by=world.owner.id))
     world.db.commit()
     led = account(world, m.id)
-    assert (led.charged, led.advance, led.debt) == (0, 38_000, 0)      # the statement: no charge, no debt, the forgiven sum stands as an ADVANCE (the forgiveness is an income line); the night names the row
+    assert (led.charged, led.advance, led.debt, led.written_off, led.written_off_granted) == (0, 0, 0, 0, 38_000)      # PAY-TAILS: no charge, no debt, NO advance (a forgiveness is not money): nothing of the 38 000 was used; the night still names the row (part 4 revisits)
     result = mr.run(world.db, apply=True, only=[world.org.id])
     assert [i["key"] for i in result["items"] if i["org"] == str(world.org.id) and i["invariant"] == "I-1"] == [f"membership:{m.id}:writeoff"]
 

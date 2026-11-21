@@ -247,7 +247,7 @@ def test_r3_5_half_paid_half_forgiven_gets_half_the_lesson_back():
                   credits=(credit("p", D(2026, 10, 6), 300_000), credit("w", D(2026, 10, 22), 300_000, kind=bl.WRITEOFF, minutes=5)))
     led = bl.run_ledger(inp)
     assert [l.amount for l in led.recalcs] == [bl.round_1000(300_000, 13)] == [23_000]       # the share the student really bore: (600 000 - 300 000) / 13
-    assert led.debt == 0 and led.advance == 23_000 and led.refundable == 23_000 and led.reconciles
+    assert led.debt == 0 and led.advance == 0 and led.refundable == 0 and led.reconciles      # PAY-TAILS part 2: the deduction no longer turns the FORGIVEN half into an advance (part 3 changes its price)
     # the forgiveness made AFTER the lesson was cancelled lands on the same segment: the same answer
     late = replace(inp, credits=(credit("p", D(2026, 10, 6), 300_000), credit("w", D(2026, 10, 26), 300_000, kind=bl.WRITEOFF, minutes=5)))
     assert bl.run_ledger(late).recalculated == 23_000

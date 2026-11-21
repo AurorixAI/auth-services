@@ -230,8 +230,16 @@ def test_writeoff_is_not_refundable_and_not_taken_by_refunds():
     l = bl.run_ledger(make(today=D(2026, 10, 25), stays=[bl.Stay(D(2026, 10, 1), D(2026, 10, 10))], price_at=flat(310_000),
                            regimes=[FIXED1], credits=[credit("w", D(2026, 10, 5), 200_000, bl.WRITEOFF),
                                                       credit("p", D(2026, 10, 6), 100_000)]))
-    # charge: 10 days of 31 -> 100 000; credits 300 000; 200 000 is advance but only the money part is refundable
-    assert (l.advance, l.refundable) == (200_000, 100_000)
+    # charge: 10 days of 31 -> 100 000; the period costs 310 000 without the cut: the forgiveness 200 000 and the money 100 000 are tied to it.  PAY-TAILS: money first - it covers the whole
+    # charge, the forgiveness is not needed (before: «advance 200 000, refundable 100 000» - a forgiveness that is not money showed as an advance)
+    assert (l.advance, l.refundable, l.written_off, l.written_off_granted) == (0, 0, 0, 200_000)
+    # the same with a SMALLER payment: money 60 000 + the forgiveness covers the 40 000 left; nothing is left over
+    m = bl.run_ledger(make(today=D(2026, 10, 25), stays=[bl.Stay(D(2026, 10, 1), D(2026, 10, 10))], price_at=flat(310_000),
+                           regimes=[FIXED1], credits=[credit("w", D(2026, 10, 5), 200_000, bl.WRITEOFF), credit("p", D(2026, 10, 6), 60_000)]))
+    assert (m.advance, m.refundable, m.debt, m.written_off) == (0, 0, 0, 40_000)
+    # a refund still takes money only: 100 000 paid, 100 000 charged -> nothing to refund
+    assert bl.refund_limit(make(today=D(2026, 10, 25), stays=[bl.Stay(D(2026, 10, 1), D(2026, 10, 10))], price_at=flat(310_000), regimes=[FIXED1],
+                                credits=[credit("w", D(2026, 10, 5), 200_000, bl.WRITEOFF), credit("p", D(2026, 10, 6), 100_000)]), D(2026, 10, 25)).amount == 0
 
 
 # ---- modes and regimes ---------------------------------------------------------------------------------------

@@ -59,6 +59,7 @@ ADVANCE_SEGMENT = "advance"  # the id of the "segment" that holds money no charg
 F_PRICE_MISSING = "price_missing"
 F_OUTFLOW_EXCEEDS = "outflow_exceeds_money"
 F_HORIZON = "horizon_capped"
+F_ADVANCE_EXCEEDS_MONEY = "advance_exceeds_money"      # PAY-TAILS Р4: an advance is money only - this flag means the rule is broken (a check, never a second number)
 
 
 # ================================================================================================================
@@ -112,6 +113,9 @@ class Credit:
     on: date
     created_at: datetime
     amount: int
+    # PAY-TAILS А6.1: the business day the write-off was ENTERED (``created_at``), None = unknown (an old row): ``on`` is taken.  A forgiveness lies only on the periods that
+    # had begun by that day, never on a future one.
+    entered_on: Optional[date] = None
 
 
 @dataclass(frozen=True)
@@ -228,6 +232,13 @@ class Segment:
     partial_credit: int = 0
     # PAY-DUE: the first LESSON of the group inside the billable days of a part-period of the common month (the term of payment counts from it); ``None`` = not a lessons part-period
     first_lesson: Optional[date] = field(default=None, repr=False)
+    # PAY-TAILS А6.1: what the period would cost WITHOUT the cut of a leaving, a transfer, an archive of the student or a pause (``None`` = the same as ``amount``).  Credits are tied
+    # to periods by their order on the NOMINAL line, so that "which period is this payment / forgiveness for" never depends on what happened to the stay afterwards.
+    nominal_amount: Optional[int] = field(default=None, repr=False)
+
+    @property
+    def nominal(self) -> int:
+        return self.amount if self.nominal_amount is None else max(self.nominal_amount, self.amount)
 
     @property
     def unpaid(self) -> int:
@@ -337,7 +348,7 @@ class Ledger:
     charged: int
     paid: int  # payments, gross
     transferred_in: int
-    written_off: int
+    written_off: int            # PAY-TAILS: the forgiveness USED (it covered a charge); what was entered is ``written_off_granted``
     refunded: int
     transferred_out: int
     debt: int
@@ -363,6 +374,8 @@ class Ledger:
     opening: Optional[Opening] = None
     recalcs: Tuple[RecalcLine, ...] = ()       # PAY-F: the derived deductions for lessons the centre cancelled
     recalculated: int = 0                      # their sum
+    written_off_granted: int = 0                                                  # PAY-TAILS: the sum of the forgiveness rows (entered)
+    forgiven_used_by: Dict[str, int] = field(default_factory=dict, repr=False)     # PAY-TAILS: id of a forgiveness -> the part of it that covered a charge
     real_pauses: Tuple[Tuple[date, date], ...] = field(default=(), repr=False)      # PAY-DUE: the pauses the student asked for (the gap of a bridged return is not one): they move the term of payment
     open_now: bool = field(default=False, repr=False)                     # PAY-DUE: the stay is open today (a closed participation owes at once: package, transfer)
     _cache: Dict = field(default_factory=dict, repr=False, compare=False)
@@ -585,9 +598,11 @@ class _Gen:
         return self.inp.price_at(day) if day is not None and day <= end else self.inp.price_at(first)
 
     def segment(
-        self, chain: int, start: date, end: date, days: List[date], nominal: int, *, by_lessons: bool, cell: Optional[tuple]
+        self, chain: int, start: date, end: date, days: List[date], nominal: int, *, by_lessons: bool, cell: Optional[tuple],
+        nominal_days: Optional[List[date]] = None,
     ) -> Segment:
-        """The charge of one period; ``nominal`` = days of the whole period, ``by_lessons`` = fixed billing day."""
+        """The charge of one period; ``nominal`` = days of the whole period, ``by_lessons`` = fixed billing day.  ``nominal_days`` (PAY-TAILS А6.1): the days the student WOULD have in
+        the period without the cut of a leaving / a transfer / a pause - the same formula over them gives ``nominal_amount``."""
         # The price of a period is the price on its FIRST BILLABLE day (a full period: its start; a partial first period: the day
         # the student joined / came back / the accounting began) - a price that starts mid-period still prices the part.
         first = days[0] if days else start
@@ -598,7 +613,6 @@ class _Gen:
             price = self._earliest_price(first, end)
         begun = first <= self.today
         seg_id = f"seg:{chain}:{start.isoformat()}"
-        n = len(days)
         common = dict(id=seg_id, kind="period", period_start=start, period_end=end, days=tuple(days),
                       price=price, nominal_days=nominal, begun=begun, ended=end < self.today, by_cell=by_lessons)
         if price.amount is None:
@@ -606,20 +620,27 @@ class _Gen:
         amount = price.amount
         if amount == 0:
             return Segment(amount=0, basis="zero", lessons_in_part=None, lessons_in_period=None, **common)
-        if n >= nominal:
-            return Segment(amount=amount, basis="full", lessons_in_part=None, lessons_in_period=None, **common)
-        if by_lessons:
-            regular = self.regular(cell[0])             # PAY-F: from the cut-over day only the regular schedule is counted, in both
-            held = self.lesson_days(*cell, regular=regular)             # REAL lessons: the numerator
-            whole = self.pattern_days(*cell, regular=regular)            # lessons of a full month by the schedule: the denominator
-            if whole:
-                inside = set(days)
-                in_part = sum(1 for d in held if d in inside)
-                return Segment(amount=ps.prorated(amount, in_part, len(whole)), basis="lessons",
-                               lessons_in_part=in_part, lessons_in_period=len(whole),
-                               first_lesson=min((d for d in held if d in inside), default=None), **common)
-        return Segment(amount=ps.prorated(amount, n, nominal), basis="days", lessons_in_part=None,
-                       lessons_in_period=None, **common)
+
+        def charge(day_list: List[date]):
+            """``(amount, basis, lessons_in_part, lessons_in_period, first_lesson)`` of the period for these billable days."""
+            n = len(day_list)
+            if n >= nominal:
+                return amount, "full", None, None, None
+            if by_lessons:
+                regular = self.regular(cell[0])             # PAY-F: from the cut-over day only the regular schedule is counted, in both
+                held = self.lesson_days(*cell, regular=regular)             # REAL lessons: the numerator
+                whole = self.pattern_days(*cell, regular=regular)            # lessons of a full month by the schedule: the denominator
+                if whole:
+                    inside = set(day_list)
+                    in_part = sum(1 for d in held if d in inside)
+                    return (ps.prorated(amount, in_part, len(whole)), "lessons", in_part, len(whole),
+                            min((d for d in held if d in inside), default=None))
+            return ps.prorated(amount, n, nominal), "days", None, None, None
+
+        value, basis, in_part, whole_n, first_lesson = charge(days)
+        nominal_amount = value if nominal_days is None else charge(nominal_days)[0]
+        return Segment(amount=value, basis=basis, lessons_in_part=in_part, lessons_in_period=whole_n, first_lesson=first_lesson,
+                       nominal_amount=nominal_amount, **common)
 
     # ---------------------------------------------------------------- calendar: payment date
 
@@ -632,6 +653,7 @@ class _Gen:
         for start, end, length, days in _chain_periods(lo, pauses or []):
             if hi is not None and start > hi:
                 break
+            whole_days = days                     # PAY-TAILS: the days of the whole period, before the leaving cuts it
             if hi is not None:
                 days = [d for d in days if d <= hi]
                 if not days:
@@ -646,7 +668,7 @@ class _Gen:
                             self.flags.add(F_HORIZON)
                         break
                 future += 1
-            seg = self.segment(chain, start, end, days, length, by_lessons=False, cell=None)
+            seg = self.segment(chain, start, end, days, length, by_lessons=False, cell=None, nominal_days=whole_days)
             if seg.unpriced:  # nothing is charged for it, it neither covers nor blocks; the next period is tried
                 self.unpriced_from = self.unpriced_from or start
                 if seg.begun:
@@ -659,8 +681,10 @@ class _Gen:
 
     # ---------------------------------------------------------------- calendar: fixed billing day
 
-    def fixed_day_cells(self, regime: Regime, intervals: List[Tuple[date, Optional[date]]], so_far: int) -> List[Segment]:
-        """One segment per cell of the centre's grid; days of all stays that fall into a cell are one segment."""
+    def fixed_day_cells(self, regime: Regime, intervals: List[Tuple[date, Optional[date]]], so_far: int,
+                        spans: Sequence[Tuple[date, Optional[date]]] = ()) -> List[Segment]:
+        """One segment per cell of the centre's grid; days of all stays that fall into a cell are one segment.  ``spans`` = the stays with the pauses still inside: the NOMINAL days of a
+        cell (PAY-TAILS А6.1) run from the first day of the student's participation in it to the end of the cell, whatever a leaving or a pause did to them."""
         chain = self.chain
         self.chain += 1
         day = regime.billing_day
@@ -682,8 +706,11 @@ class _Gen:
             """Append the segment (an unpriced one is recorded and skipped: it neither covers nor blocks)."""
             nonlocal cum
             end = ps.billing_period_end(cell_start, day)
-            seg = self.segment(chain, cell_start, end, sorted(set(days_in)), (end - cell_start).days + 1,
-                               by_lessons=True, cell=(cell_start, end))
+            own = sorted(set(days_in))
+            begins = [max(lo, cell_start) for lo, hi in spans if lo <= end and (hi is None or hi >= cell_start)]
+            nominal_first = min([own[0], *begins]) if own else cell_start
+            seg = self.segment(chain, cell_start, end, own, (end - cell_start).days + 1,
+                               by_lessons=True, cell=(cell_start, end), nominal_days=_day_range(nominal_first, end))
             if seg.unpriced:
                 self.unpriced_from = self.unpriced_from or cell_start
                 if seg.begun:
@@ -1109,6 +1136,125 @@ def _recalc_lines(inp: LedgerInput, gen: "_Gen", segments: Sequence[Segment], fo
     return lines
 
 
+@dataclass
+class _Placed:
+    """Where the credits of an account went (PAY-TAILS А6.1-А6.2)."""
+
+    parts: Dict[Tuple[str, str], int] = field(default_factory=dict)       # (segment id, credit id) -> the amount of that credit that covers that charge
+    money: Dict[str, int] = field(default_factory=dict)                   # per segment: payments and transfers in
+    forgiven: Dict[str, int] = field(default_factory=dict)                # per segment: the USED part of the forgiveness
+    recalculated: Dict[str, int] = field(default_factory=dict)            # per segment: the deductions for cancelled lessons
+    used_by: Dict[str, int] = field(default_factory=dict)                 # forgiveness id -> the part of it that covered a charge
+    leftover: List[Tuple[str, int]] = field(default_factory=list)         # money no charge has absorbed (the advance), by credit, in order
+
+
+def _place_credits(segments: Sequence[Segment], credits: Sequence[Credit], net: Dict[str, int], recalcs: Sequence[RecalcLine]) -> _Placed:
+    """PAY-TAILS А6.1-А6.2.  1) Every credit (payment, transfer in, forgiveness) is tied to a period by its ORDER ``(on, created_at, id)`` on the line of the NOMINAL sums of the periods
+    (what each would cost without the cut of a leaving, a transfer, an archive of the student or a pause): «which period is this credit for» never depends on what happened to the
+    stay afterwards.  2) Inside a period of the actual sum ``A``: the money first (``m = min(tied money, A)``), then the deductions for cancelled lessons, then the forgiveness
+    (``f = min(tied forgiveness, A - m - r)``): a forgiveness never covers a charge money has already paid, and what no charge needs is thrown away - it is not an advance, not a refund, not a
+    payment of another period.  A forgiveness lies only on a period that had begun by the day it was entered.  3) The money that a cut period leaves over (and a deduction that found no charge)
+    goes on, oldest first, into the unfilled part of the periods; what is still left is the advance."""
+    spans: Dict[str, Tuple[int, int]] = {}
+    pos = 0
+    for c in credits:
+        spans[c.id] = (pos, pos + net[c.id])
+        pos += net[c.id]
+    tied: Dict[str, List[Tuple[Credit, int]]] = {}
+    tied_total: Dict[str, int] = {c.id: 0 for c in credits}
+    cur = 0
+    for s in segments:
+        lo, hi = cur, cur + s.nominal
+        cur = hi
+        rows = []
+        for c in credits:
+            a, b = spans[c.id]
+            part = max(0, min(b, hi) - max(a, lo))
+            if part:
+                rows.append((c, part))
+                tied_total[c.id] += part
+        tied[s.id] = rows
+    out = _Placed(money={s.id: 0 for s in segments}, forgiven={s.id: 0 for s in segments}, recalculated={s.id: 0 for s in segments})
+    by_segment: Dict[str, List[RecalcLine]] = {}
+    for line in recalcs:
+        by_segment.setdefault(line.segment_id, []).append(line)
+    queue: List[List] = []                    # [credit id, amount, is a deduction]
+    room: Dict[str, int] = {}
+
+    def put(seg_id: str, credit_id: str, amount: int) -> None:
+        out.parts[(seg_id, credit_id)] = out.parts.get((seg_id, credit_id), 0) + amount
+
+    for s in segments:
+        left = s.amount
+        for c, a in tied[s.id]:
+            if c.kind == WRITEOFF:
+                continue
+            take = min(a, left)
+            left -= take
+            if take:
+                put(s.id, c.id, take)
+                out.money[s.id] += take
+            if a > take:
+                queue.append([c.id, a - take, False])
+        for line in by_segment.get(s.id, ()):
+            take = min(line.amount, left)
+            left -= take
+            if take:
+                put(s.id, line.id, take)
+                out.recalculated[s.id] += take
+            if line.amount > take:
+                queue.append([line.id, line.amount - take, True])
+        begin = s.days[0] if s.days else s.period_start
+        for c, a in tied[s.id]:
+            if c.kind != WRITEOFF or begin > (c.entered_on or c.on):
+                continue
+            take = min(a, left)
+            left -= take
+            if take:
+                put(s.id, c.id, take)
+                out.forgiven[s.id] += take
+                out.used_by[c.id] = out.used_by.get(c.id, 0) + take
+        room[s.id] = left
+    for c in credits:                          # money beyond the last period (the horizon holds as many periods as the credits need: normally nothing)
+        rest = net[c.id] - tied_total[c.id]
+        if rest > 0 and c.kind != WRITEOFF:
+            queue.append([c.id, rest, False])
+    for s in segments:
+        while room[s.id] > 0 and queue:
+            head = queue[0]
+            take = min(head[1], room[s.id])
+            head[1] -= take
+            room[s.id] -= take
+            put(s.id, head[0], take)
+            (out.recalculated if head[2] else out.money)[s.id] += take
+            if head[1] == 0:
+                queue.pop(0)
+    # a charge that has BEGUN and is still unfilled while money sits on a LATER period (a forgiveness that lay on it was thrown away: it was entered before the period began): the money
+    # comes back to the oldest unpaid charge, latest periods first - the debt of the periods and the totals (``debt = charged - covering``) are one picture
+    kinds = {c.id: c.kind for c in credits}
+    for index, gap in enumerate(segments):
+        if room[gap.id] <= 0 or not (gap.begun or gap.kind == "opening"):
+            continue
+        for donor in reversed(segments[index + 1:]):
+            if room[gap.id] <= 0:
+                break
+            for (seg_id, credit_id), have in sorted(out.parts.items(), reverse=True):
+                if seg_id != donor.id or have <= 0 or kinds.get(credit_id) not in (PAYMENT, TRANSFER_IN):
+                    continue
+                take = min(have, room[gap.id])
+                out.parts[(seg_id, credit_id)] = have - take
+                out.money[donor.id] -= take
+                room[donor.id] += take
+                put(gap.id, credit_id, take)
+                out.money[gap.id] += take
+                room[gap.id] -= take
+                if room[gap.id] <= 0:
+                    break
+    out.parts = {k: v for k, v in out.parts.items() if v > 0}
+    out.leftover = [(cid, amount) for cid, amount, _ in queue if amount > 0]
+    return out
+
+
 def run_ledger(inp: LedgerInput) -> Ledger:
     """The account.  The recalculation is a credit too, so the future periods are generated for the money PLUS the deductions (a second pass, only when
     there is a deduction): otherwise the credit that settles beyond the running period would not find its period (``suggested_amount`` of the next one)."""
@@ -1204,7 +1350,7 @@ def _run_ledger(inp: LedgerInput, horizon_extra: int) -> Ledger:
         first_billable = min(first_billable or date.max, min(lo for lo, _ in intervals))
         so_far = sum(s.amount for s in segments)
         if regime.anchor == ps.FIXED_DAY:
-            segments.extend(gen.fixed_day_cells(regime, intervals, so_far))
+            segments.extend(gen.fixed_day_cells(regime, intervals, so_far, span_ivs))
         else:
             for lo, hi in span_ivs:
                 so_far = sum(s.amount for s in segments)
@@ -1212,24 +1358,16 @@ def _run_ledger(inp: LedgerInput, horizon_extra: int) -> Ledger:
 
     segments.sort(key=lambda s: (s.kind != "opening", (s.days[0] if s.days else s.period_start), s.period_start, s.id))
 
-    # ---- PAY-F: the recalculation for the lessons the centre cancelled is one more credit on the money line (derived here, never stored)
+    # ---- PAY-F: the recalculation for the lessons the centre cancelled is one more credit (derived here, never stored): it belongs to ITS period
     recalcs = _recalc_lines(inp, gen, segments, _forgiven_on(segments, credits, net))
+    stored = credits
     if recalcs:
         credits = sorted([*credits, *(line.credit() for line in recalcs)], key=_credit_key)
         net, refunded_from, transferred_from, _ = apply_outflows(credits, inp.outflows)
         total_credit = sum(net.values())
 
-    # ---- the money line
-    spans: Dict[str, Tuple[int, int]] = {}
-    pos = 0
-    for c in credits:
-        spans[c.id] = (pos, pos + net[c.id])
-        pos += net[c.id]
-    cur = 0
-    seg_span: Dict[str, Tuple[int, int]] = {}
-    for s in segments:
-        seg_span[s.id] = (cur, cur + s.amount)
-        cur += s.amount
+    # ---- where the credits went (PAY-TAILS: tied to the periods by the nominal line, money before forgiveness inside a period)
+    placed = _place_credits(segments, stored, net, recalcs)
     # package costs per segment (for coverage)
     cost_cursor = 0
     seg_costs: Dict[str, List[int]] = {}
@@ -1239,21 +1377,8 @@ def _run_ledger(inp: LedgerInput, horizon_extra: int) -> Ledger:
             cost_cursor += len(s.days)
     kind_of = {c.id: c.kind for c in credits}
     final: List[Segment] = []
-    vol_by_seg_credit: Dict[Tuple[str, str], int] = {}
     for s in segments:
-        lo, hi = seg_span[s.id]
-        money = forgiven = recalculated = 0
-        for c in credits:
-            a, b = spans[c.id]
-            part = max(0, min(b, hi) - max(a, lo))
-            if part:
-                vol_by_seg_credit[(s.id, c.id)] = part
-                if kind_of[c.id] == WRITEOFF:
-                    forgiven += part
-                elif kind_of[c.id] == RECALC:
-                    recalculated += part
-                else:
-                    money += part
+        money, forgiven, recalculated = placed.money[s.id], placed.forgiven[s.id], placed.recalculated[s.id]
         vol = money + forgiven + recalculated
         covered = _cover(s, vol, seg_costs.get(s.id))
         partial = 0
@@ -1264,7 +1389,7 @@ def _run_ledger(inp: LedgerInput, horizon_extra: int) -> Ledger:
                 partial = vol - (covered * s.amount) // len(s.days)
         final.append(replace(s, money=money, forgiven=forgiven, recalculated=recalculated, covered_days=covered, partial_credit=partial))
     segments = final
-    money_total_in_segments = cur
+    segments_used = sum(s.money + s.forgiven + s.recalculated for s in segments)
 
     # ---- allocations
     allocations: List[Allocation] = []
@@ -1276,11 +1401,13 @@ def _run_ledger(inp: LedgerInput, horizon_extra: int) -> Ledger:
         if s.kind == "package":
             break
         base_offset += s.amount
-    cum_before_credit = 0
+    left_of: Dict[str, int] = {}
+    for credit_id, amount in placed.leftover:
+        left_of[credit_id] = left_of.get(credit_id, 0) + amount
+    line_pointer = segments_used
     for c in credits:
-        placed = 0
         for s in segments:
-            part = vol_by_seg_credit.get((s.id, c.id), 0)
+            part = placed.parts.get((s.id, c.id), 0)
             if not part:
                 continue
             # lessons that cost nothing (a price of a few sum per package) are covered by the first piece
@@ -1304,20 +1431,17 @@ def _run_ledger(inp: LedgerInput, horizon_extra: int) -> Ledger:
                                            package_no=s.package_no)),
                 period_start=s.period_start, period_end=s.period_end,
                 remaining_after=max(0, s.amount - running[s.id])))
-            placed += part
-        left = net[c.id] - placed
-        if left > 0:
+        left = left_of.get(c.id, 0)
+        if left > 0:        # money only: a forgiveness that no charge needed is thrown away (it has no allocation into the advance)
             extra = 0
             if prefix_all:  # lessons: how many more (not yet held) lessons this leftover pays for
-                start_line = max(cum_before_credit, money_total_in_segments)
-                end_line = cum_before_credit + net[c.id]
-                extra = max(0, bisect_right(prefix_all, end_line - base_offset) - held_count) - \
-                    max(0, bisect_right(prefix_all, start_line - base_offset) - held_count)
+                extra = max(0, bisect_right(prefix_all, line_pointer + left - base_offset) - held_count) - \
+                    max(0, bisect_right(prefix_all, line_pointer - base_offset) - held_count)
+            line_pointer += left
             label = tx.advance_label_lessons() if prefix_all else "Аванс на периоды, которые ещё не начались"
             allocations.append(Allocation(
                 credit_id=c.id, segment_id=ADVANCE_SEGMENT, amount=left, days=extra, bucket=ADVANCE, closes=False,
                 price=None, label=label, period_start=c.on, period_end=c.on))
-        cum_before_credit += net[c.id]
     if recalcs:     # a recalculation is not a payment: it keeps its place on the money line but has no allocation of its own
         derived = {line.id for line in recalcs}
         allocations = [a for a in allocations if a.credit_id not in derived]
@@ -1327,16 +1451,20 @@ def _run_ledger(inp: LedgerInput, horizon_extra: int) -> Ledger:
     charged = sum(s.amount for s in begun)
     paid = sum(c.amount for c in credits if c.kind == PAYMENT)
     transferred_in = sum(c.amount for c in credits if c.kind == TRANSFER_IN)
-    written_off = sum(c.amount for c in credits if c.kind == WRITEOFF)
+    written_off = sum(s.forgiven for s in segments)                       # the USED forgiveness
+    written_off_granted = sum(c.amount for c in credits if c.kind == WRITEOFF)
     recalculated = sum(line.amount for line in recalcs)
     refunded = sum(o.amount for o in inp.outflows if o.kind == REFUND)
     transferred_out = sum(o.amount for o in inp.outflows if o.kind == TRANSFER_OUT)
-    debt = max(0, charged - total_credit)
-    advance = max(0, total_credit - charged)
+    money_net = sum(v for k, v in net.items() if kind_of[k] not in NOT_CASH)
+    covering = money_net + recalculated + written_off            # what covers the charges: money, deductions, the forgiveness that was USED
+    debt = max(0, charged - covering)
+    advance = max(0, covering - charged)
+    refundable = advance                                         # Р4: an advance is money only (the check below, not a second number)
+    if advance > money_net:
+        flags.add(F_ADVANCE_EXCEEDS_MONEY)
     past_debt = min(sum(s.unpaid for s in begun if s.ended), debt)
     current_due = debt - past_debt
-    money_net = sum(v for k, v in net.items() if kind_of[k] not in NOT_CASH)
-    refundable = min(advance, money_net)
 
     # ---- coverage prefix ("paid until" of the opening balance is where it starts; an unpaid opening debt stops it)
     through: Optional[date] = opening.paid_until if opening is not None else None
@@ -1383,7 +1511,7 @@ def _run_ledger(inp: LedgerInput, horizon_extra: int) -> Ledger:
     lessons_view: Optional[LessonsView] = None
     held_lessons = held_all
     if mode == LESSONS or les_windows:
-        available = total_credit - base_offset
+        available = covering - base_offset
         covered_lessons = bisect_right(prefix_all, available) if available >= 0 else 0
         used = sum(lesson_priced)          # lessons held under a price (the others are neither charged nor paid)
         if mode == LESSONS:
@@ -1430,7 +1558,7 @@ def _run_ledger(inp: LedgerInput, horizon_extra: int) -> Ledger:
     entered: Dict[Tuple[bool, str], datetime] = {}       # (is an outflow, id) -> when it was entered; a derived credit (the recalculation) has datetime.min
     for c in credits:
         rank = 2 if c.kind == WRITEOFF else 1
-        events.append(StatementEvent(day=c.on, rank=rank, kind=c.kind, ref_id=c.id, credit=c.amount))
+        events.append(StatementEvent(day=c.on, rank=rank, kind=c.kind, ref_id=c.id, credit=placed.used_by.get(c.id, 0) if c.kind == WRITEOFF else c.amount))
         entered[(False, c.id)] = c.created_at
     for o in inp.outflows:
         events.append(StatementEvent(day=o.on, rank=3, kind=o.kind, ref_id=o.id, outflow=o.amount))
@@ -1456,7 +1584,7 @@ def _run_ledger(inp: LedgerInput, horizon_extra: int) -> Ledger:
     ledger = Ledger(
         mode=mode, segments=tuple(segments), allocations=tuple(allocations), net_money=net,
         refunded_from=refunded_from, transferred_from=transferred_from, charged=charged, paid=paid, transferred_in=transferred_in, written_off=written_off,
-        refunded=refunded, transferred_out=transferred_out, debt=debt, past_debt=past_debt, current_due=current_due,
+        written_off_granted=written_off_granted, forgiven_used_by=dict(placed.used_by), refunded=refunded, transferred_out=transferred_out, debt=debt, past_debt=past_debt, current_due=current_due,
         advance=advance, refundable=refundable, partial_credit=partial_credit, covered_through=through,
         covered_days_total=covered_prefix, first_billable=first_billable, unpriced_from=gen.unpriced_from,
         status=status, lessons=lessons_view, statement=tuple(stmt), flags=tuple(sorted(flags)),
