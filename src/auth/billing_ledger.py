@@ -145,6 +145,7 @@ class Pause:
     forms: Tuple[Tuple[datetime, date, date], ...] = ()
 
 
+OPENING_SLOT = ("o",)                     # PAY-TAILS Б11.3: the place of the debt of the opening balance - the first place of the account in EVERY world
 PROBE_MOMENT = datetime(9999, 1, 1)       # the stand-in credit of a window «what will happen» is entered at the end of time: after everything that is known now
 
 
@@ -1296,6 +1297,8 @@ def _slot_at(worlds: Sequence[_World], slot: tuple, moment: datetime) -> Optiona
 
 def _was_going(worlds: Sequence[_World], slot: tuple, c: Credit) -> bool:
     """R1 in the world known at the moment of ``c``: had the period begun by the day ``c`` was entered?  A period that was not there then had not."""
+    if slot == OPENING_SLOT:
+        return True                                    # the opening debt is old by its nature (А7.7)
     known = _slot_at(worlds, slot, entered_at(c))
     return known is not None and known[0] <= entered_day(c)
 
@@ -1493,7 +1496,7 @@ def _build_segments(inp: LedgerInput, total: int, flags: set) -> _Built:
         segments.append(Segment(
             id="seg:opening", kind="opening", period_start=opening.debt_on, period_end=opening.debt_on, days=(), price=NO_PRICE,
             amount=int(opening.debt_amount), basis="opening", nominal_days=0, lessons_in_part=None, lessons_in_period=None,
-            begun=True, ended=opening.debt_on < today))
+            begun=True, ended=opening.debt_on < today, slot=OPENING_SLOT))
     cal_windows: List[Tuple[date, Optional[date]]] = []
     les_windows: List[Tuple[date, Optional[date]]] = []
     lesson_costs_all: List[int] = []
