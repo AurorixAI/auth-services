@@ -1249,23 +1249,26 @@ def _worlds(inp: LedgerInput, segments: Sequence[Segment], recalcs: Sequence[Rec
     moments = sorted({m for p in inp.pauses for m, _, _ in p.forms} | cancel_moments)
     if not moments:
         return [_World(datetime.min, _slots_of(segments, recalcs))]
-    built: Dict[tuple, Tuple[Sequence[Segment], "_Gen"]] = {}
+    all_pauses = tuple(inp.pauses)
+    sets = {_pauses_known_at(inp.pauses, m) for m in [datetime.min, *moments]}
+
+    def tape(pauses: tuple, tape_total: int) -> Tuple[Sequence[Segment], "_Gen"]:
+        b = _build_segments(replace(inp, pauses=pauses), tape_total, set())
+        return b.segments, b.gen
+
+    # Б7.10: the tape of a world is the LOOKUP of «what is the place of this period in that world», so it must not be as long as the credits happen to need (the replay would then depend on a payment entered LATER:
+    # the second period of the world after a pause is missing on the tape of a forgiveness alone, and what lay on it would be cut).  Every world is generated again for the sum that reaches the end of the
+    # LONGEST first tape counted at the NOMINAL price (a period never costs more than that): a period that exists in an older world is then on the tape of a later one; not there = it does not exist (the stay ended).
+    first = {p: (segments, gen) if p == all_pauses else tape(p, total) for p in sets}
+    reach = max(sum(s.nominal for s in segs) for segs, _ in first.values())
+    built = {p: tape(p, reach) for p in sets}
 
     def known_at(moment: datetime) -> Dict[tuple, Tuple[date, int]]:
-        pauses = _pauses_known_at(inp.pauses, moment)
-        if pauses not in built:
-            if pauses == tuple(inp.pauses):                        # every pause is known: the account as it is
-                built[pauses] = (segments, gen)
-            else:
-                b = _build_segments(replace(inp, pauses=pauses), total, set())
-                built[pauses] = (b.segments, b.gen)
-        world_segments, world_gen = built[pauses]
+        world_segments, world_gen = built[_pauses_known_at(inp.pauses, moment)]
         cancels = tuple(c for c in inp.centre_cancels if cancel_entered(inp.recalc_versions, c) <= moment)
         return _slots_of(world_segments, _recalc_lines(replace(inp, centre_cancels=cancels), world_gen, world_segments))
 
-    out = [_World(m, known_at(m)) for m in [datetime.min, *moments[:-1]]]
-    out.append(_World(moments[-1], _slots_of(segments, recalcs)))
-    return out
+    return [_World(m, known_at(m)) for m in [datetime.min, *moments]]
 
 
 @dataclass(frozen=True)
