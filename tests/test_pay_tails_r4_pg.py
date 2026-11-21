@@ -24,7 +24,7 @@ def loaded(w, m):
     return loader.build_input(m.id)
 
 
-def test_the_moment_of_a_cancel_is_the_record_of_the_journal_the_setting_is_the_start_of_its_day(pg_session, clock):
+def test_the_moment_of_a_cancel_is_the_record_of_the_journal_the_setting_is_the_moment_it_was_switched_on(pg_session, clock):
     w = build_org(pg_session)
     g, s, m = month_world(w, clock)                                        # the setting is switched on 06.10 (clock 06.10 09:00)
     clock.set("2026-10-25 12:00")
@@ -37,8 +37,8 @@ def test_the_moment_of_a_cancel_is_the_record_of_the_journal_the_setting_is_the_
     (c,) = inp.centre_cancels
     assert (str(c.day), c.entered) == ("2026-10-21", cancelled_at)
     (v,) = inp.recalc_versions
-    assert (str(v.effective_from), v.on, v.entered) == ("2026-10-06", True, bc.lesson_instant_utc(datetime(2026, 10, 6).date(), 0))
-    assert v.entered == datetime(2026, 10, 5, 19, 0)                      # 06.10 00:00 in Tashkent = 05.10 19:00 UTC
+    assert (str(v.effective_from), v.on) == ("2026-10-06", True)
+    assert v.entered == datetime(2026, 10, 6, 4, 0)                       # Б7.9 п. 3: the exact moment of the switch, 06.10 09:00 in Tashkent = 04:00 UTC (an entry without ``at`` keeps the start of its day: test_payf_ledger)
 
 
 def test_a_holiday_turned_into_a_centre_cancel_has_the_moment_of_the_change(pg_session, clock):
