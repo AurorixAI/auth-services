@@ -2467,6 +2467,7 @@ class PaymentService:
         loader.load_facts([membership.id])
         stand_in = SimpleNamespace(id="preview", amount=amount, paid_on=paid_on, created_at=_utcnow().replace(tzinfo=None))
         loader.payments[membership.id] = [p for p in loader.payments.get(membership.id, []) if p.id != old.id] + [stand_in]
+        loader.first_moment["preview"] = loader.first_moment.get(old.id) or old.created_at      # Б11.1: the correction keeps the moment of the first record of the chain
         loader._x_memo.clear()
         return loader.build_input(membership.id)
 

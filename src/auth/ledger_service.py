@@ -298,6 +298,8 @@ class LedgerLoader:
         self.writeoffs: Dict[UUID, List[StudentWriteoff]] = {}
         self.refunds: Dict[UUID, List[StudentRefund]] = {}
         self.pauses: Dict[UUID, List[MembershipPause]] = {}
+        self._chained: List[StudentPayment] = []                      # the payments read, waiting for the moments of their chains (``_load_chains``)
+        self.first_moment: Dict[Any, datetime] = {}                   # payment id -> the moment of the FIRST record of its chain of corrections / restorations (Б11.1)
         self.pause_lines: Dict[str, List[Tuple[datetime, Dict[str, Any]]]] = {}       # pause id -> the lines of the journal that entered / edited it, in time (Б7.7 п. 5)
         self.openings: Dict[UUID, Optional[MembershipOpeningBalance]] = {}
         self.t_in: Dict[UUID, List[MembershipTransfer]] = {}
@@ -439,6 +441,8 @@ class LedgerLoader:
             StudentPayment.voided_at.is_(None), StudentPayment.kind == "payment",
         ):
             self.payments[payment.membership_id].append(payment)
+            self._chained.append(payment)
+        self._load_chains()
         for writeoff in self.db.query(StudentWriteoff).filter(
             StudentWriteoff.org_id == self.org_id, StudentWriteoff.membership_id.in_(found), StudentWriteoff.voided_at.is_(None)
         ):
@@ -490,6 +494,27 @@ class LedgerLoader:
             if mid in self.closing and any(p.left_at is None and p.joined_at is not None and ps.business_date(p.joined_at) == self.today
                                            and stay_of_period(p, self.marked_of(mid), self.today) is None for p in periods.get(mid, [])):
                 self._emptied.append(mid)           # Money-2 У4 / Ф1: the closing will cancel the forgiveness that would stand as an advance - judged in ``load_facts`` when the prices are there
+
+    def _load_chains(self) -> None:
+        """Б11.1: a corrected or restored payment was entered when its FIRST record was: one read of the chains of the payments just loaded (``earlier_versions``: one query per step of a chain)."""
+        from src.auth.payments_service import earlier_versions          # the reader of the chains lives with the payments (it imports this module: a local import)
+
+        rows, self._chained = self._chained, []
+        replaced = [p for p in rows if p.replaces_payment_id]
+        before = earlier_versions(self.db, self.org_id, [p.replaces_payment_id for p in replaced]) if replaced else {}
+        for p in rows:
+            self.first_moment[p.id] = self.chain_start(p, before)
+
+    @staticmethod
+    def chain_start(p: Any, before: Dict[Any, StudentPayment]) -> datetime:
+        """The moment of the first record of the chain that ends in ``p`` (``before`` = ``earlier_versions`` of it)."""
+        moments = [p.created_at or datetime.min]
+        cur, seen = before.get(p.replaces_payment_id) if p.replaces_payment_id else None, set()
+        while cur is not None and cur.id not in seen:
+            seen.add(cur.id)
+            moments.append(cur.created_at or datetime.min)
+            cur = before.get(cur.replaces_payment_id) if cur.replaces_payment_id else None
+        return bl.chain_moment(moments)
 
     def _load_cancels(self, group_ids: Set[UUID]) -> None:
         """PAY-F: the lessons the CENTRE cancelled (``cancellation_kind = 'centre'``; a holiday, a move and an old cancellation have another kind or none) - one query.
@@ -924,7 +949,7 @@ class LedgerLoader:
         credits: List[bl.Credit] = []
         for p in self.payments.get(mid, []):
             if p.amount and p.amount > 0 and p.id != exclude_payment:
-                credits.append(bl.Credit(str(p.id), bl.PAYMENT, p.paid_on, p.created_at or datetime.min, int(p.amount)))
+                credits.append(bl.Credit(str(p.id), bl.PAYMENT, p.paid_on, self.first_moment.get(p.id) or p.created_at or datetime.min, int(p.amount)))
         for w in self.writeoffs.get(mid, []):
             credits.append(bl.Credit(str(w.id), bl.WRITEOFF, w.effective_on, w.created_at or datetime.min, int(w.amount)))
         outflows: List[bl.Outflow] = []

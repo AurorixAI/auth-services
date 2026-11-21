@@ -156,6 +156,12 @@ def entered_at(item) -> datetime:
     return item.created_at
 
 
+def chain_moment(moments: Sequence[datetime]) -> datetime:
+    """PAY-TAILS Б11.1: the moment of a payment made by a correction or a restoration = the moment of the FIRST record of its chain (``replaces_payment_id``): «they paid then»; the sum and the date are the current ones.
+    ``moments`` = the ``created_at`` of every record of the chain."""
+    return min(moments)
+
+
 def entered_day(credit: "Credit") -> date:
     """The business day a credit was entered (a record without a stamp: the day it is dated)."""
     return credit.on if credit.created_at == datetime.min else ps.business_date(credit.created_at)
