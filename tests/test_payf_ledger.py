@@ -236,21 +236,25 @@ def test_r3_4_the_deduction_reaches_the_next_period_before_it_begins():
     assert pv.suggested_amount(led, 600_000) == 554_000          # not 600 000
 
 
-def test_r3_5_a_forgiven_period_gives_no_second_discount():
+def test_r3_5_a_forgiven_period_with_a_cancelled_lesson_uses_less_forgiveness_and_gives_no_cash():
+    # PAY-TAILS А6.3 (was «a forgiven period gives no second discount»: the lesson cost (600 000 - 600 000) / 13 = 0 and no line).  Now the lesson costs the period's price / 13 = 46 000 whatever was
+    # forgiven; the deduction reduces the USED forgiveness of its own period (600 000 - 46 000 = 554 000), nothing becomes money: debt 0, advance 0, refundable 0
     forgive = replace(own_month(cancels=(D(2026, 10, 21),), paid=0), credits=(credit("w", D(2026, 10, 22), 600_000, kind=bl.WRITEOFF),))
     led = bl.run_ledger(forgive)
-    assert led.recalcs == () and led.debt == 0 and led.advance == 0 and led.refundable == 0 and led.reconciles
+    assert [l.amount for l in led.recalcs] == [46_000] and (led.written_off, led.written_off_granted) == (554_000, 600_000)
+    assert led.debt == 0 and led.advance == 0 and led.refundable == 0 and led.reconciles
 
 
-def test_r3_5_half_paid_half_forgiven_gets_half_the_lesson_back():
+def test_r3_5_half_paid_half_forgiven_the_lesson_costs_the_full_share_and_the_forgiveness_pays_for_it():
     inp = replace(own_month(cancels=(D(2026, 10, 21),), paid=0),
                   credits=(credit("p", D(2026, 10, 6), 300_000), credit("w", D(2026, 10, 22), 300_000, kind=bl.WRITEOFF, minutes=5)))
     led = bl.run_ledger(inp)
-    assert [l.amount for l in led.recalcs] == [bl.round_1000(300_000, 13)] == [23_000]       # the share the student really bore: (600 000 - 300 000) / 13
-    assert led.debt == 0 and led.advance == 0 and led.refundable == 0 and led.reconciles      # PAY-TAILS part 2: the deduction no longer turns the FORGIVEN half into an advance (part 3 changes its price)
+    # was 23 000 = (600 000 - 300 000) / 13 and an advance of 23 000; now 600 000 / 13 = 46 000: money 300 000 + deduction 46 000 + used forgiveness 254 000 = 600 000
+    assert [l.amount for l in led.recalcs] == [bl.round_1000(600_000, 13)] == [46_000]
+    assert (led.debt, led.advance, led.refundable, led.written_off) == (0, 0, 0, 254_000) and led.reconciles
     # the forgiveness made AFTER the lesson was cancelled lands on the same segment: the same answer
     late = replace(inp, credits=(credit("p", D(2026, 10, 6), 300_000), credit("w", D(2026, 10, 26), 300_000, kind=bl.WRITEOFF, minutes=5)))
-    assert bl.run_ledger(late).recalculated == 23_000
+    assert bl.run_ledger(late).recalculated == 46_000 and bl.run_ledger(late).written_off == 254_000
 
 
 def test_r3_15_a_segment_covered_by_the_deduction_counts_as_covered():

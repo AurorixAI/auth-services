@@ -1070,35 +1070,19 @@ def recalc_on(versions: Sequence[RecalcVersion], day: date) -> bool:
     return on
 
 
-def _forgiven_on(segments: Sequence[Segment], credits: Sequence[Credit], net: Dict[str, int]) -> Dict[str, int]:
-    """What the write-offs cover on every segment when the credits are laid WITHOUT the recalculation (the same line as the money line below)."""
-    spans: Dict[str, Tuple[int, int]] = {}
-    pos = 0
-    for c in credits:
-        spans[c.id] = (pos, pos + net[c.id])
-        pos += net[c.id]
-    out: Dict[str, int] = {}
-    cur = 0
-    for s in segments:
-        lo, hi = cur, cur + s.amount
-        cur = hi
-        out[s.id] = sum(max(0, min(spans[c.id][1], hi) - max(spans[c.id][0], lo)) for c in credits if c.kind == WRITEOFF)
-    return out
-
-
-def _recalc_lines(inp: LedgerInput, gen: "_Gen", segments: Sequence[Segment], forgiven: Dict[str, int]) -> List[RecalcLine]:
+def _recalc_lines(inp: LedgerInput, gen: "_Gen", segments: Sequence[Segment]) -> List[RecalcLine]:
     """PAY-F: one deduction per lesson that the centre cancelled inside a charged period of a calendar mode.
 
     A lesson counts when the student was charged for its day (the day is one of the days of a period that has begun: not on a pause, not before he
     came or after he left, not in the lessons mode) and the setting was on that day.  It costs ``round_1000(what the period costs the student /
-    lessons of the period by the schedule)``: the charge minus what the centre forgave on that period (a forgiven period gives no second discount, and
-    what is paid back never exceeds what the student really bore).  A partial first period of a fixed billing day costs the same price of a lesson
+    lessons of the period by the schedule)`` - the FULL charge of the period (PAY-TAILS А6.3: a forgiveness does not cheapen the lesson; a deduction that finds no charge to
+    reduce first takes the USED forgiveness of its own period, see ``_place_credits``, and only money can come out of it as an advance).  A partial first period of a fixed billing day costs the same price of a lesson
     (``price / lessons of the full month``, scaled by the same share), so the total is the price x the lessons that were held / the lessons of the month.
     The deductions of a period never exceed that sum."""
     if not inp.centre_cancels or not any(v.on for v in inp.recalc_versions):
         return []
     owner = {d: s for s in segments if s.kind == "period" and s.begun and not s.unpriced and s.amount > 0 for d in s.days}
-    bearable = {s.id: max(0, s.amount - forgiven.get(s.id, 0)) for s in owner.values()}
+    bearable = {s.id: s.amount for s in owner.values()}
     left = dict(bearable)
     unit: Dict[str, int] = {}
     lessons_of: Dict[str, int] = {}        # the lessons the period holds (the student's own lessons of a partial one)
@@ -1154,7 +1138,9 @@ def _place_credits(segments: Sequence[Segment], credits: Sequence[Credit], net: 
     stay afterwards.  2) Inside a period of the actual sum ``A``: the money first (``m = min(tied money, A)``), then the deductions for cancelled lessons, then the forgiveness
     (``f = min(tied forgiveness, A - m - r)``): a forgiveness never covers a charge money has already paid, and what no charge needs is thrown away - it is not an advance, not a refund, not a
     payment of another period.  A forgiveness lies only on a period that had begun by the day it was entered.  3) The money that a cut period leaves over (and a deduction that found no charge)
-    goes on, oldest first, into the unfilled part of the periods; what is still left is the advance."""
+    goes on, oldest first, into the unfilled part of the periods; what is still left is the advance.  4) A last pass brings money that lies on a LATER period back to a period that has begun and is still unfilled.
+    It fires only when a forgiveness was thrown away because it was entered before its period began; a forgiveness is never larger than the debt of its own day, so in the product it lies on
+    periods that have begun and the pass moves nothing (the account does not change); it keeps the debt of the periods and the totals one picture (pinned by a test with numbers)."""
     spans: Dict[str, Tuple[int, int]] = {}
     pos = 0
     for c in credits:
@@ -1359,7 +1345,7 @@ def _run_ledger(inp: LedgerInput, horizon_extra: int) -> Ledger:
     segments.sort(key=lambda s: (s.kind != "opening", (s.days[0] if s.days else s.period_start), s.period_start, s.id))
 
     # ---- PAY-F: the recalculation for the lessons the centre cancelled is one more credit (derived here, never stored): it belongs to ITS period
-    recalcs = _recalc_lines(inp, gen, segments, _forgiven_on(segments, credits, net))
+    recalcs = _recalc_lines(inp, gen, segments)
     stored = credits
     if recalcs:
         credits = sorted([*credits, *(line.credit() for line in recalcs)], key=_credit_key)
