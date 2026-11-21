@@ -4,10 +4,10 @@ from datetime import date
 
 from src.auth import payments_texts as tx
 
-from tests.money1b_helpers import add, fresh_student
-from tests.pg_world import needs_pg, pg_session, world  # noqa: F401  (fixtures)
-from tests.test_pay2_api_pg import API, fixed_today, membership, owner  # noqa: F401  (fixtures)
-from tests.test_pay_tails_money_pg import forgive, leave, lp, om, pay, refund
+from tests.money1b_helpers import add, fresh_student, set_schedule
+from tests.pg_world import ensure_billing, give_group_price, make_group, needs_pg, pg_session, world  # noqa: F401  (fixtures)
+from tests.test_pay2_api_pg import API, fixed_today, membership, owner, settings_block  # noqa: F401  (fixtures)
+from tests.test_pay_tails_money_pg import TTF, forgive, leave, lp, om, pay, refund
 from tests.test_pay_tails_golden_pg import get
 
 pytestmark = needs_pg
@@ -144,3 +144,39 @@ def test_the_money_that_came_from_another_group_covers_as_money(world, fixed_tod
     fixed_today(D(2026, 11, 3))
     r = row(world, s, b)
     assert r["covered_by"] == "money" and r["state_text"] == "К оплате " + M(28_000)      # the money that came (ЛП: 420 000 - 2 days x 14 000 = 392 000) covers the new period in part: 420 000 - 392 000 = 28 000 left
+
+
+def pause(w, s, g, first, last):
+    r = owner(w).post(f"{API}/org/memberships/{membership(w, s, g).id}/pauses", json={"first_day": first, "last_day": last, "reason": "Болезнь"})
+    assert r.status_code == 201, r.text
+
+
+def test_b6_3_a_debtor_who_paid_nothing_never_says_paid_until(world, fixed_today):
+    # ЛП 420 000 from 01.11, nothing paid, a pause 01.11 - 10.11: the period begins 11.11 and falls due in 5 days (15.11); today 21.11: debt 420 000, overdue 21 - 15 = 6 days.  Nothing covers a single day:
+    # no «оплачено до 10.11» (was: «просрочено 6 дней · оплачено до 10.11»); ``status`` and ``paid_until`` of the row are the same as before
+    g, s = lp(world, fixed_today)
+    pause(world, s, g, "2026-11-01", "2026-11-10")
+    fixed_today(D(2026, 11, 21))
+    r = row(world, s, g)
+    assert (r["debt_amount"], r["debt_sub"], r["status"], r["paid_until"]) == (420_000, "просрочено 6 дней", "active", "2026-11-10")
+    assert "оплачено до" not in str(r).lower() and r["covered_by"] is None
+
+
+def test_b6_3_a_student_with_a_future_pause_and_nothing_paid_is_in_the_calm_tab_not_in_the_expiring_one(world, fixed_today):
+    # ОМ 600 000, Tue / Thu / Fri; enrolled Sat 21.11, a pause 26.11 - 30.11, nothing paid.  The first lesson is Tue 24.11: «Начнётся 24.11» (the forecast 50 000 = 600 000 / 12).  Nothing is paid, so nothing ENDS:
+    # the row is in «Без долга» (was: «Заканчивается оплата»); the cards of the sums are the same (debt 0, to pay 0), the status of the row is ``expiring`` as before
+    fixed_today(D(2026, 11, 21))
+    settings_block(world, accounting_start_date="2026-10-01", billing_anchor="fixed_day", billing_day=1)
+    g = make_group(world.db, world.org, world.teacher, "Общий")
+    give_group_price(world.db, g, 600_000)
+    set_schedule(world, TTF, g)
+    ensure_billing(world, g, price=None)
+    s = fresh_student(world, "Будущий")
+    add(world, s, group=g, mode="add")
+    pause(world, s, g, "2026-11-26", "2026-11-30")
+    r = row(world, s, g)
+    assert (r["state"], r["state_text"], r["status"]) == ("starts", "Начнётся 24.11", "expiring")
+    tabs = {b: get(world, "/org/payments/status", bucket=b, limit=50) for b in ("expiring", "active", "debtors", "to_pay")}
+    assert [(b, t["total"], t["amount_total"]) for b, t in tabs.items()] == [("expiring", 0, 0), ("active", 1, 0), ("debtors", 0, 0), ("to_pay", 0, 0)]
+    summary = get(world, "/org/payments/summary")
+    assert (summary["buckets"]["expiring"], summary["buckets"]["active"], summary["debt_total"], summary["due_total"]) == (0, 1, 0, 0)

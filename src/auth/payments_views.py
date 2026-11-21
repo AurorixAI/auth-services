@@ -117,7 +117,7 @@ def calm_bucket(e) -> Optional[str]:
         return None
     if l.status.status == ps.PAUSED:
         return BUCKET_PAUSED
-    if l.status.status in (ps.EXPIRING, ps.ENDS_TODAY, ps.EXPIRED):
+    if l.status.status in (ps.EXPIRING, ps.ENDS_TODAY, ps.EXPIRED) and not nothing_covered(l):       # PAY-TAILS Б6.3: nothing is paid, so nothing «ends» (a future pause / start): «Без долга»
         return BUCKET_EXPIRING
     return BUCKET_ACTIVE         # active, and «none» (nothing has fallen due yet)
 
@@ -154,9 +154,16 @@ def nothing_happened(l: bl.Ledger) -> bool:
     return not (l.charged or l.paid or l.transferred_in or l.written_off_granted or l.refunded or l.transferred_out or l.recalculated)
 
 
+def nothing_covered(l: bl.Ledger) -> bool:
+    """PAY-TAILS Б6.3: a calendar account that no money, forgiveness, recalculation or opening balance covers by a single day (a student who paid nothing and has a pause or a start in the future): there is no
+    «оплачено до» to say, and nothing that ends soon.  ``status`` and ``paid_until`` are not touched - the words and the tab only."""
+    return l.status.period_mode != bl.LESSONS and l.covered_by is None and l.covered_days_total == 0 and not (l.opening is not None and l.opening.paid_until is not None)
+
+
 def cover_until(l: bl.Ledger, closed: bool = False) -> Optional[date]:
-    """The day a text may name as «оплачено до»: the calendar coverage that stands on the BORDER of a period (a day inside a period is told in sums), and never for a closed membership."""
-    if closed or l.status.period_mode == bl.LESSONS or l.cover_partial is not None:
+    """The day a text may name as «оплачено до»: the calendar coverage that stands on the BORDER of a period (a day inside a period is told in sums), and never for a closed membership or an account that
+    nothing covers (Б6.3)."""
+    if closed or l.status.period_mode == bl.LESSONS or l.cover_partial is not None or nothing_covered(l):
         return None
     return l.status.paid_until
 
