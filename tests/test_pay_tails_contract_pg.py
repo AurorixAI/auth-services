@@ -6,7 +6,6 @@ from datetime import date
 from openpyxl import load_workbook
 
 from src.auth import payments_texts as tx
-from src.auth.payments_income import IncomeReports
 from src.auth.payments_service import AUDIT_WRITEOFF
 from tests.money1b_helpers import account
 from tests.pg_world import needs_pg, pg_session, world  # noqa: F401  (fixtures)
@@ -85,11 +84,17 @@ def test_income_receipts_and_the_journal_count_the_used_forgiveness(world, fixed
     assert dec.status_code == 200, dec.text
     (line,) = [r for r in dec.json()["rows"] if r["kind"] == AUDIT_WRITEOFF]
     assert (line["amount"], line["used"], line["used_text"]) == (220_000, 94_000, "использовано " + tx.money(94_000))      # the journal keeps the sum that was entered
-    # a role without the right to the money gets no words and no numbers about the use
-    world.db.expire_all()
-    page = IncomeReports(world.db).decisions(str(world.org.id), date(2026, 11, 1), date(2026, 11, 30), owner=False)
-    (plain,) = [r for r in page.rows if r.kind == AUDIT_WRITEOFF]
-    assert plain.used is None and plain.used_text is None
+    # А7.4: an administrator WITH the right to the money (the owner switched it on) sees the same words and numbers as the owner; the route itself is closed to anyone without that right
+    from tests.pg_world import make_client
+    from tests.test_pay2_api_pg import settings_block
+
+    settings_block(world, admin_can_manage=True)
+    admin = make_client(world, user=world.admin).get(f"{API}/org/payments/decisions", params=params)
+    assert admin.status_code == 200, admin.text
+    (seen,) = [r for r in admin.json()["rows"] if r["kind"] == AUDIT_WRITEOFF]
+    assert (seen["amount"], seen["used"], seen["used_text"]) == (220_000, 94_000, "использовано " + tx.money(94_000))
+    teacher = make_client(world, user=world.teacher).get(f"{API}/org/payments/decisions", params=params)
+    assert teacher.status_code == 403, teacher.text                          # no right to the money: no words and no numbers at all
 
 
 def test_the_excel_of_the_statement_shows_the_used_sum_in_the_forgiven_column(world, fixed_today):

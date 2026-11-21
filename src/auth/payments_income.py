@@ -894,7 +894,7 @@ class IncomeReports:
         users = self.service._users(a.actor_id for a in found)
         earliest = self.db.query(func.min(GroupAudit.created_at)).filter(GroupAudit.org_id == org_id, GroupAudit.action.in_((AUDIT_PAYMENT_VOID, AUDIT_PAYMENT_REPLACE))).scalar()
         rows = []
-        used_of = self._forgiveness_used(org_id, found) if owner else {}
+        used_of = self._forgiveness_used(org_id, found)                      # PAY-TAILS А7.4: every role that may open the journal (the route is closed by the right to money) sees it
         membership_group = self._membership_groups(org_id, {UUID(v) for a in found for k in ("from_membership_id", "to_membership_id") if (v := (a.snapshot or {}).get(k))})
         pause_group = self._pause_groups(org_id, {UUID(v) for a in found if (v := (a.snapshot or {}).get("moved_from_pause_id"))})
         for a in found:
