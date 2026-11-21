@@ -89,6 +89,10 @@ def check(w, s, g, today, *, charged, debt, advance, used, granted):
     sm = statement(w, s, g)["summary"]
     assert (sm["charged"], sm["advance"], sm["debt_amount"] + sm["due_amount"], sm["reconciles"]) == (charged, advance, debt, True)      # unpaid = debt + «к оплате»
     assert centre(w)["advance_total"] == advance
+    inc = owner(w).get(f"{API}/org/payments/income", params={"from": "2026-10-01", "to": "2026-12-31"})                    # «Поступления»: the strip never counts more advance than the centre has (И4)
+    assert inc.status_code == 200, inc.text
+    body = inc.json()
+    assert body["current"]["to_advance"] <= body["position"]["advance_total"] and all(c["left"] == c["right"] for c in body["checks"]), body["checks"]
     return L
 
 

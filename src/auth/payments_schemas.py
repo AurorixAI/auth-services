@@ -972,6 +972,8 @@ class WriteoffOut(PayModel):
     voided_by: Optional[str] = None
     voided_by_name: Optional[str] = None
     void_reason: Optional[str] = None
+    used: Optional[int] = None      # PAY-TAILS Р5: the part of ``amount`` (what was entered) that covered a charge; null when unknown (a cancelled record)
+    text: Optional[str] = None      # «использовано N сум» - only when ``used`` < ``amount`` (the server's words, the screen prints them)
 
 
 class WriteoffCreated(PayModel):
@@ -1079,6 +1081,9 @@ class StatementDetails(PayModel):
     refund_id: Optional[str] = None  # refund
     reason: Optional[str] = None  # writeoff, refund
     recorded_on: Optional[date_type] = None  # refund, writeoff: the business day the record was ENTERED (``date`` is the day it is dated)
+    amount: Optional[int] = None  # writeoff: what was ENTERED (the row's ``credit`` is what was USED)
+    used: Optional[int] = None  # writeoff: the part that covered a charge (PAY-TAILS Р5)
+    text: Optional[str] = None  # writeoff: «использовано N сум», only when ``used`` < ``amount``
     from_group_name: Optional[str] = None  # transfer_in
     from_membership_id: Optional[str] = None
     to_group_name: Optional[str] = None  # transfer_out

@@ -5732,6 +5732,17 @@
             "title": "Allocations",
             "type": "array"
           },
+          "amount": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Amount"
+          },
           "created_by_name": {
             "anyOf": [
               {
@@ -5905,6 +5916,17 @@
               }
             ]
           },
+          "text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Text"
+          },
           "to_group_name": {
             "anyOf": [
               {
@@ -5926,6 +5948,17 @@
               }
             ],
             "title": "To Membership Id"
+          },
+          "used": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Used"
           },
           "writeoff_id": {
             "anyOf": [
@@ -5951,6 +5984,9 @@
           "refund_id",
           "reason",
           "recorded_on",
+          "amount",
+          "used",
+          "text",
           "from_group_name",
           "from_membership_id",
           "to_group_name",
@@ -6774,6 +6810,28 @@
             "title": "Reason",
             "type": "string"
           },
+          "text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Text"
+          },
+          "used": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Used"
+          },
           "void_reason": {
             "anyOf": [
               {
@@ -6831,7 +6889,9 @@
           "voided_at",
           "voided_by",
           "voided_by_name",
-          "void_reason"
+          "void_reason",
+          "used",
+          "text"
         ],
         "title": "WriteoffOut",
         "type": "object"

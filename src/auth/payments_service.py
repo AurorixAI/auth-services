@@ -1963,9 +1963,10 @@ class PaymentService:
             raise PaymentNotFound("Членство не найдено")
         return found[0]
 
-    def _writeoff_out(self, w: StudentWriteoff) -> WriteoffOut:
+    def _writeoff_out(self, w: StudentWriteoff, used: Optional[int] = None) -> WriteoffOut:
         users = self._users([w.created_by, w.voided_by])
         return WriteoffOut(
+            used=used, text=tx.forgiven_used_text(used, int(w.amount)),
             id=str(w.id), membership_id=str(w.membership_id), amount=int(w.amount), reason=w.reason,
             effective_on=w.effective_on, created_by=str(w.created_by), created_by_name=_person(users.get(w.created_by)),
             created_at=_iso(w.created_at), voided_at=_iso(w.voided_at),
@@ -2103,7 +2104,7 @@ class PaymentService:
         invalidate_summary(org_id)
         logger.info("writeoff created id=%s membership=%s actor=%s", row.id, membership_id, actor_id)
         entry = self._entry_of(org_id, membership_id, today)
-        return WriteoffCreated(writeoff=self._writeoff_out(row), unpaid_before=before.debt, unpaid_after=after.debt, closes=self._closes(before, after),
+        return WriteoffCreated(writeoff=self._writeoff_out(row, after.forgiven_used_by.get(str(row.id), 0)), unpaid_before=before.debt, unpaid_after=after.debt, closes=self._closes(before, after),
                                row=self._rows([entry])[0])
 
     @deadlock_guard
@@ -2217,7 +2218,7 @@ class PaymentService:
             if moved_to:
                 return f"Аванс ученика перешёл в группу «{moved_to}» — возврат оформите там"
         if later is None:
-            return f"Вернуть можно не больше {_sum(limit.amount)}" if limit.amount else "Возвращать нечего: аванса нет"
+            return f"Вернуть можно не больше {_sum(limit.amount)}" if limit.amount else tx.NOTHING_TO_REFUND
         fact = f"уже есть {'возврат' if later.kind == bl.REFUND else 'перевод в другую группу'} от {later.on.strftime('%d.%m')} — выберите дату не раньше"
         if limit.amount:
             return f"Вернуть на эту дату можно не больше {_sum(limit.amount)}: после неё {fact}"

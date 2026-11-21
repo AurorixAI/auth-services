@@ -26,6 +26,7 @@ from . import business_clock as bc
 from . import leave_effects
 from . import ledger_service as ls
 from . import payment_status as ps
+from . import payments_texts as tx
 from . import pricing
 from .logica_service import AUDIT_OPENING_SET, AUDIT_OPENING_VOID, PauseService
 from .membership_periods import close_period
@@ -293,7 +294,7 @@ class LeaveService:
                 if not item.method:
                     raise MethodRequired("Укажите способ возврата")
                 if refundable < 1:
-                    raise PaymentInvalid("Возвращать нечего: аванса нет")
+                    raise PaymentInvalid(tx.NOTHING_TO_REFUND)
                 row = self.pay._add_refund(          # Money-1 R3 (К3 = Д5): ONE way to create a refund - the number «В-n», the receipt of a refund (LESSONS 104)
                     org_id, lambda number: StudentRefund(
                         org_id=UUID(str(org_id)), membership_id=membership.id, student_id=membership.student_id,

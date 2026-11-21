@@ -101,14 +101,16 @@ def test_r3_18_i1_the_injected_distortions_of_the_account_are_found_and_an_hones
                                  reason="Подложено", created_by=world.owner.id))
     world.db.commit()
     keys = sorted(f.subject_key for f in mr.reconcile_org(world.db, world.org.id) if f.invariant == "I-1")
-    assert f"membership:{m0}:outflow" in keys and f"membership:{m1}:writeoff" in keys               # BOTH injected defects (before the round: one of two)
+    # PAY-TAILS А6.5: the injected outflow is found; the injected forgiveness of 99 000 000 is NOT a finding any more - the calculation uses only what the charge needs (used <= charged) and the rows equal
+    # what the ledger took in; it is thrown away, it is neither money nor a distortion of the account.  (The check «used > charged» stays as a net: see the pure test below.)
+    assert f"membership:{m0}:outflow" in keys and f"membership:{m1}:writeoff" not in keys and f"membership:{m1}:writeoff_rows" not in keys
 
 
 def test_r3_18_i1_every_path_of_the_account_has_its_pure_check():
     from types import SimpleNamespace
 
     ledger = SimpleNamespace(reconciles=True, charged=450_000, paid=450_000, transferred_in=0, written_off=0, recalculated=0, refunded=0, transferred_out=0, debt=0, advance=0,
-                             statement=(SimpleNamespace(balance_after=0),))
+                             statement=(SimpleNamespace(balance_after=0),), written_off_granted=0)
     org = __import__("uuid").uuid4()
     assert mr.check_statement(org, "m", ledger) is None and mr.check_rows(org, "m", ledger, mr.RowSums(paid=450_000)) == []
     bad_statement = SimpleNamespace(**{**vars(ledger), "statement": (SimpleNamespace(balance_after=-10),)})
@@ -119,8 +121,11 @@ def test_r3_18_i1_every_path_of_the_account_has_its_pure_check():
     assert refund.details["what"] == "refund_rows"
     out = SimpleNamespace(**{**vars(ledger), "refunded": 500_000})
     assert [f.details["what"] for f in mr.check_rows(org, "m", out, mr.RowSums(paid=450_000, refunded=500_000))] == ["outflow_exceeds_inflow"]
-    assert [f.details["what"] for f in mr.check_rows(org, "m", ledger, mr.RowSums(paid=450_000, written_off=99_000_000))] == ["writeoff_exceeds_charged"]
-    assert mr.check_rows(org, "m", ledger, mr.RowSums(paid=450_000, written_off=450_000)) == []          # forgiving everything that was charged is lawful
+    assert [f.details["what"] for f in mr.check_rows(org, "m", ledger, mr.RowSums(paid=450_000, written_off=99_000_000))] == ["writeoff_rows"]      # the rows say 99 000 000, the ledger took in 0
+    big = SimpleNamespace(**{**vars(ledger), "written_off": 99_000_000, "written_off_granted": 99_000_000})
+    assert [f.details["what"] for f in mr.check_rows(org, "m", big, mr.RowSums(paid=450_000, written_off=99_000_000))] == ["writeoff_exceeds_charged"]   # the USED forgiveness above the charge: a bug of the calculation
+    whole = SimpleNamespace(**{**vars(ledger), "written_off": 450_000, "written_off_granted": 450_000})
+    assert mr.check_rows(org, "m", whole, mr.RowSums(paid=450_000, written_off=450_000)) == []          # forgiving everything that was charged is lawful
 
 
 # ============================================================================================================ I-3 (НЕТОЧНОСТЬ-3)

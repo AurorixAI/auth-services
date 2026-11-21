@@ -137,7 +137,7 @@ def open_balances(db: Session, org_id: Any, membership_ids: Sequence[UUID], *, i
     out: List[Tuple[Any, str, int, Any]] = []
     for entry in loader.run(list(membership_ids)):
         due = entry.due if in_centre is None else pay_due.classify(entry.ledger, today, loader.settings.pay_due_days, loader.settings.pay_due_lessons, in_centre)
-        for kind, amount in (("debt", due.debt_amount), ("due", due.due_amount), ("advance", min(entry.ledger.advance, entry.ledger.refundable))):
+        for kind, amount in (("debt", due.debt_amount), ("due", due.due_amount), ("advance", entry.ledger.advance)):
             if amount > 0:
                 out.append((entry, kind, int(amount), due))
     return out

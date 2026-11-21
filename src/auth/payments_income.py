@@ -468,7 +468,7 @@ class IncomeReports:
             StudentPayment.kind == "payment").all()
         refunds = scoped(StudentRefund, (StudentRefund.effective_on, StudentRefund.amount, StudentRefund.method),
                          StudentRefund.effective_on).all()
-        writeoffs = scoped(StudentWriteoff, (StudentWriteoff.effective_on, StudentWriteoff.amount),
+        writeoffs = scoped(StudentWriteoff, (StudentWriteoff.effective_on, StudentWriteoff.amount, StudentWriteoff.id, StudentWriteoff.membership_id),
                            StudentWriteoff.effective_on).all() if with_writeoffs else []
         return pay, refunds, writeoffs
 
@@ -498,9 +498,10 @@ class IncomeReports:
         for day, amount, refund_method in refund_rows:
             if p.first <= day <= p.last and (not method or (refund_method or "unknown") == method):
                 t["refunded"] += int(amount)
-        for day, amount in writeoff_rows:
-            if p.first <= day <= p.last:
-                t["written_off"] += int(amount)
+        for day, amount, wid, mid in writeoff_rows:
+            if p.first <= day <= p.last:        # PAY-TAILS Р5: the forgiveness that was USED (the whole sum when the account is not in the load)
+                entry = entries.get(mid)
+                t["written_off"] += int(entry.ledger.forgiven_used_by.get(str(wid), 0)) if entry else int(amount)
         t["net_received"] = t["received"] - t["refunded"]
         out_methods = [IncomeMethod(method=m, label=tx.method_label(m), amount=v[0], count=v[1])
                        for m, v in sorted(methods.items(), key=lambda kv: (-kv[1][0], kv[0])) if v[0] or v[1]]
@@ -893,6 +894,7 @@ class IncomeReports:
         users = self.service._users(a.actor_id for a in found)
         earliest = self.db.query(func.min(GroupAudit.created_at)).filter(GroupAudit.org_id == org_id, GroupAudit.action.in_((AUDIT_PAYMENT_VOID, AUDIT_PAYMENT_REPLACE))).scalar()
         rows = []
+        used_of = self._forgiveness_used(org_id, found) if owner else {}
         membership_group = self._membership_groups(org_id, {UUID(v) for a in found for k in ("from_membership_id", "to_membership_id") if (v := (a.snapshot or {}).get(k))})
         pause_group = self._pause_groups(org_id, {UUID(v) for a in found if (v := (a.snapshot or {}).get("moved_from_pause_id"))})
         for a in found:
@@ -904,11 +906,26 @@ class IncomeReports:
                 **self._decision_fields(kind_of, snap, a.created_at, membership_group, pause_group, groups.get(a.group_id)),
                 id=str(a.id), at=_iso(a.created_at), kind=kind_of, kind_label=DECISION_LABELS[kind_of], student_id=snap.get("student_id"),
                 student_name=person_name(student.last_name, student.first_name) or "" if student else "", group_name=groups[a.group_id].name if a.group_id in groups else None,
-                amount=int(snap.get("amount") or 0), new_amount=snap.get("new_amount"), receipt_no=snap.get("receipt_no"), reason=snap.get("reason"),
+                amount=int(snap.get("amount") or 0), new_amount=snap.get("new_amount"), used=used_of.get(str(a.id)),
+                used_text=tx.forgiven_used_text(used_of.get(str(a.id)), int(snap.get("amount") or 0)), receipt_no=snap.get("receipt_no"), reason=snap.get("reason"),
                 actor_name=_staff(users.get(a.actor_id)), debt_before=snap.get("debt_before"), debt_after=snap.get("debt_after"),
                 consequence=tx.decision_consequence(snap, owner=owner)))
         return DecisionsPage(as_of=ps.business_today(), **{"from": first}, to=last, page=page, size=size, total=total, pages=(total + size - 1) // size,
                              since=_business_moment(earliest).date() if earliest else None, rows=rows)
+
+    def _forgiveness_used(self, org_id: str, found) -> Dict[str, int]:
+        """``{audit line id: used}`` for the forgiveness lines of a page of decisions that are still live (PAY-TAILS Р5: the line keeps the sum that was entered; the words say how much of it covered a charge)."""
+        wanted = {}
+        for a in found:
+            snap = a.snapshot or {}
+            if a.action == AUDIT_WRITEOFF and snap.get("writeoff_id") and snap.get("membership_id"):
+                wanted[str(a.id)] = (snap["writeoff_id"], UUID(snap["membership_id"]))
+        if not wanted:
+            return {}
+        loader = ls.LedgerLoader(self.db, str(org_id), ps.business_today())
+        ledgers = {e.membership.id: e.ledger for e in loader.run(list({m for _, m in wanted.values()}))}
+        voided = {str(i) for (i,) in self.db.query(StudentWriteoff.id).filter(StudentWriteoff.org_id == org_id, StudentWriteoff.id.in_([UUID(w) for w, _ in wanted.values()]), StudentWriteoff.voided_at.isnot(None)).all()}
+        return {line: ledgers[m].forgiven_used_by.get(w, 0) for line, (w, m) in wanted.items() if m in ledgers and w not in voided}
 
     def _membership_groups(self, org_id: str, ids: set) -> Dict[UUID, str]:
         """``{membership id: the name of its group}`` for the lines of the journal that name memberships (a transfer: from -> to)."""

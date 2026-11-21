@@ -480,7 +480,7 @@ def test_p5_a_transfer_that_moves_no_money_says_so_in_a_structured_entry_and_the
 
 def test_t12_a_leaver_whose_advance_cannot_be_returned_does_not_block_the_archive_of_a_group_and_the_sum_is_what_can_be_returned(world, fixed_today, monkeypatch):
     # the list of the blockers has one line per debt and per advance; an advance with nothing refundable has no action (no «вернуть»), so it is not a blocker.  The ledger entries are stood in:
-    # a debt 50 000 (kept), an advance 410 000 with 410 000 refundable (kept), an advance 120 000 with 0 refundable (dropped), an advance 300 000 with 100 000 refundable (kept as 100 000).
+    # a debt 50 000 (kept), an advance 410 000 (kept), no advance (dropped), an advance 100 000 (kept).  PAY-TAILS Р4: an advance is money only, so «advance 120 000 with 0 refundable» and «300 000 of which 100 000» no longer exist.
     from types import SimpleNamespace as NS
 
     from src.auth import group_lifecycle, ledger_service, pay_due
@@ -490,7 +490,7 @@ def test_t12_a_leaver_whose_advance_cannot_be_returned_does_not_block_the_archiv
     def entry(name, debt, advance, refundable):      # R3b: the ONE rule lives in leave_effects.open_balances; the ledger loader is stood in
         return NS(student=NS(id=name, last_name=name, first_name="", ), membership=NS(id=name, left_at=None), ledger=NS(debt=debt, advance=advance, refundable=refundable), due=pay_due.DueResult(debt_amount=debt, name="debt" if debt else "none"))
 
-    entries = [entry("d", 50_000, 0, 0), entry("a1", 0, 410_000, 410_000), entry("a2", 0, 120_000, 0), entry("a3", 0, 300_000, 100_000)]
+    entries = [entry("d", 50_000, 0, 0), entry("a1", 0, 410_000, 410_000), entry("a2", 0, 0, 0), entry("a3", 0, 100_000, 100_000)]
     monkeypatch.setattr(ledger_service, "LedgerLoader", lambda *args, **kw: NS(run=lambda ids: entries, settings=NS(pay_due_days=5, pay_due_lessons=2)))
     monkeypatch.setattr(group_lifecycle, "_student_name", lambda student: student.last_name)
     out = group_lifecycle.GroupLifecycle.open_balances(NS(db=world.db), a, money=True)

@@ -787,9 +787,9 @@ class Plan:
             debt_delta=sum(after[m].debt - before[m].debt for m in scope),
             debtors_before=sum(1 for m in scope if before[m].debt > 0), debtors_after=sum(1 for m in scope if after[m].debt > 0),
             advance_delta=sum(after[m].advance - before[m].advance for m in scope),
-            refundable_delta=sum(after[m].refundable - before[m].refundable for m in scope),
+            refundable_delta=sum(after[m].advance - before[m].advance for m in scope),      # PAY-TAILS Р4: an advance is money only - one number
             indirect_changed=sum(1 for m in scope if m not in mover_ids and (
-                after[m].debt != before[m].debt or after[m].advance != before[m].advance or after[m].refundable != before[m].refundable)))
+                after[m].debt != before[m].debt or after[m].advance != before[m].advance)))
         plain = []
         for p in sorted(self.items, key=lambda x: str(x.mid)):
             def st(x):

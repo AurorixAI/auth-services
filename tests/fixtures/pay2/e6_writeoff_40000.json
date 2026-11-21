@@ -11,7 +11,9 @@
     "voided_at": null,
     "voided_by": null,
     "voided_by_name": null,
-    "void_reason": null
+    "void_reason": null,
+    "used": null,
+    "text": null
   },
   "unpaid_before": 100000,
   "unpaid_after": 60000,

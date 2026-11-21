@@ -126,8 +126,12 @@ def check_rows(org_id: UUID, membership_id: Any, ledger, rows: RowSums) -> List[
         out.append(Found(org_id, "I-1", f"membership:{sid}:refunded", sid, None, rows.refunded, ledger.refunded, {"what": "refund_rows"}))
     if ledger.refunded + ledger.transferred_out > ledger.paid + ledger.transferred_in:
         out.append(Found(org_id, "I-1", f"membership:{sid}:outflow", sid, None, ledger.paid + ledger.transferred_in, ledger.refunded + ledger.transferred_out, {"what": "outflow_exceeds_inflow"}))
-    if max(rows.written_off, ledger.written_off) > max(ledger.charged, 0):
-        out.append(Found(org_id, "I-1", f"membership:{sid}:writeoff", sid, None, ledger.charged, rows.written_off, {"what": "writeoff_exceeds_charged"}))
+    # PAY-TAILS А6.5: the rows of forgiveness against what the ledger took in (exactly), and the USED forgiveness against the charge (a forgiveness that was entered and not needed is not an error:
+    # it is thrown away by the calculation)
+    if rows.written_off != ledger.written_off_granted:
+        out.append(Found(org_id, "I-1", f"membership:{sid}:writeoff_rows", sid, None, rows.written_off, ledger.written_off_granted, {"what": "writeoff_rows"}))
+    if ledger.written_off > max(ledger.charged, 0):
+        out.append(Found(org_id, "I-1", f"membership:{sid}:writeoff", sid, None, ledger.charged, ledger.written_off, {"what": "writeoff_exceeds_charged"}))
     return out
 
 

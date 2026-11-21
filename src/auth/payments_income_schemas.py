@@ -270,6 +270,8 @@ class DecisionRow(PayModel):
     group_name: Optional[str] = None
     amount: int = 0
     new_amount: Optional[int] = None  # a corrected payment: the new sum
+    used: Optional[int] = None  # a forgiveness: the part of ``amount`` (what was entered) that covered a charge today (PAY-TAILS Р5); null on other lines and for the roles without the right to the money
+    used_text: Optional[str] = None  # «использовано N сум» - only when ``used`` < ``amount``
     receipt_no: Optional[int] = None
     reason: Optional[str] = None
     actor_name: Optional[str] = None

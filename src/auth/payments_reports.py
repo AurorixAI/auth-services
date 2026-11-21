@@ -155,7 +155,9 @@ class PaymentsReports:
                         replaced_by_receipt_no=becomes.get(p.id)), **common))
             elif e.kind == bl.WRITEOFF:
                 w = writeoffs[e.ref_id]
+                used = ledger.forgiven_used_by.get(e.ref_id, 0)
                 rows.append(StatementRow(type="writeoff", title=tx.forgiven_title(w.reason, int(w.amount)), details=StatementDetails(
+                    amount=int(w.amount), used=used, text=tx.forgiven_used_text(used, int(w.amount)),
                     writeoff_id=str(w.id), reason=w.reason, created_by_name=_person(users.get(w.created_by)), recorded_on=ps.business_date(w.created_at)), **common))
             elif e.kind == bl.RECALC:      # PAY-F: derived from the cancelled lesson, nothing is stored
                 line = recalcs[e.ref_id]
@@ -403,8 +405,9 @@ class PaymentsReports:
                 to_advance=split[bl.ADVANCE])
             bucket_of(p.paid_on)["by_method"][p.method or "unknown"] += amount
         for w, group in writeoffs:
-            totals["written_off"] += int(w.amount)
-            add(group, w.effective_on, written_off=int(w.amount))
+            used = self._used(entries, w)                  # PAY-TAILS Р5: the table counts the forgiveness that was USED
+            totals["written_off"] += used
+            add(group, w.effective_on, written_off=used)
         for r, group in refunds:
             totals["refunded"] += int(r.amount)
             add(group, r.effective_on, refunded=int(r.amount))
@@ -505,7 +508,7 @@ class PaymentsReports:
         elif column == "written_off":
             for w, group in writeoffs:
                 if in_bucket(w.effective_on):
-                    make("writeoff", w, group, w.effective_on, int(w.amount), int(w.amount))
+                    make("writeoff", w, group, w.effective_on, int(w.amount), self._used(entries, w))
         elif column == "refunded":
             for r, group in refunds:
                 if in_bucket(r.effective_on):
@@ -513,6 +516,12 @@ class PaymentsReports:
         items.sort(key=lambda x: (x[0], x[1]), reverse=True)
         page = [i[2] for i in items[offset : offset + limit]]
         return ReceiptItems(items=page, total=len(items), limit=limit, offset=offset)
+
+    @staticmethod
+    def _used(entries, w) -> int:
+        """The part of a live forgiveness that covered a charge (the whole sum when its account is not in the load)."""
+        entry = entries.get(w.membership_id)
+        return int(entry.ledger.forgiven_used_by.get(str(w.id), 0)) if entry else int(w.amount)
 
     def balances(
         self, org_id: str, *, kind: str = "debtors", group_id: Optional[UUID] = None, teacher_id: Optional[UUID] = None,

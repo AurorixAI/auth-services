@@ -168,7 +168,13 @@ def test_invariants_hold_on_random_accounts(chunk, logic_a):
                 # a partial day is less than the price of the next day (a unit of rounding apart)
                 assert s.partial_credit <= (s.amount + len(s.days) - 1) // len(s.days) + 1 or s.kind == "package", (ctx, s.id)
         # I6
-        assert l.refundable <= l.advance, ctx
+        assert l.refundable == l.advance, ctx                                   # PAY-TAILS Р4 / И1: an advance is money only - one number
+        money_net = sum(v for k, v in l.net_money.items() if next(c.kind for c in inp.credits if c.id == k) != bl.WRITEOFF)
+        assert l.advance <= money_net and bl.F_ADVANCE_EXCEEDS_MONEY not in l.flags, ctx
+        for c in inp.credits:                                                   # И2: the used forgiveness is at most what was entered, and at most what the periods hold
+            if c.kind == bl.WRITEOFF:
+                assert 0 <= l.forgiven_used_by.get(c.id, 0) <= c.amount, ctx
+        assert all(s.forgiven <= s.amount - s.money - s.recalculated for s in l.segments), ctx
         assert not (l.advance > 0 and l.debt > 0), ctx
         assert l.refundable <= sum(v for k, v in l.net_money.items() if next(c.kind for c in inp.credits if c.id == k) != bl.WRITEOFF), ctx
         # debt / advance are the begun charges against the credit, split into past and current

@@ -140,7 +140,7 @@ def test_a_package_centre_a_one_day_stay_without_a_mark_charges_nothing_and_with
     assert marked.lessons.used == 1, marked.lessons
 
 
-def test_an_old_forgiveness_on_a_one_day_stay_is_an_honest_finding_of_the_night_and_the_statement_shows_the_advance(world, fixed_today):
+def test_an_old_forgiveness_on_a_one_day_stay_is_unused_not_a_finding_of_the_night_and_not_an_advance(world, fixed_today):
     # data of the stage: the stay was charged 38 000 under the old rule and the owner forgave 38 000; now the stay charges 0: the forgiveness has no debt to cover -> I-1 «writeoff» (honest finding of old data)
     from src.models.auth import StudentWriteoff
 
@@ -152,9 +152,10 @@ def test_an_old_forgiveness_on_a_one_day_stay_is_an_honest_finding_of_the_night_
     world.db.add(StudentWriteoff(org_id=world.org.id, membership_id=m.id, student_id=s.id, group_id=b.id, amount=38_000, reason="Старое прощение", effective_on=TUE, created_by=world.owner.id))
     world.db.commit()
     led = account(world, m.id)
-    assert (led.charged, led.advance, led.debt, led.written_off, led.written_off_granted) == (0, 0, 0, 0, 38_000)      # PAY-TAILS: no charge, no debt, NO advance (a forgiveness is not money): nothing of the 38 000 was used; the night still names the row (part 4 revisits)
+    assert (led.charged, led.advance, led.debt, led.written_off, led.written_off_granted) == (0, 0, 0, 0, 38_000)      # PAY-TAILS: no charge, no debt, NO advance (a forgiveness is not money); nothing of the 38 000 was used
     result = mr.run(world.db, apply=True, only=[world.org.id])
-    assert [i["key"] for i in result["items"] if i["org"] == str(world.org.id) and i["invariant"] == "I-1"] == [f"membership:{m.id}:writeoff"]
+    # was: I-1 «writeoff» (the rows 38 000 > the charge 0).  Now the night compares the USED forgiveness with the charge (0 <= 0) and the rows with what the ledger took in (38 000 = 38 000): no finding
+    assert [i["key"] for i in result["items"] if i["org"] == str(world.org.id) and i["invariant"] == "I-1"] == []
 
 
 # ---- С2: the forecast «хватит до» of a package counts the lessons from «Оплата с», not from today -------------------------------------------------------------

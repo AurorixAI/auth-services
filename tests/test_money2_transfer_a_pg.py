@@ -695,7 +695,7 @@ def test_t8_a_refund_in_the_old_group_names_the_group_where_the_advance_went_and
     s1 = world.students[1]
     add(world, s1, group=c, mode="add")
     r = owner(world).post(f"{API}/org/memberships/{membership(world, s1, c).id}/refunds", json=body)
-    assert r.status_code == 422 and r.json()["detail"]["message"] == "Возвращать нечего: аванса нет"
+    assert r.status_code == 422 and r.json()["detail"]["message"] == "Возвращать нечего: оплаченных денег сверх начисленного нет"
 
 
 # ---------------------------------------------------------------------------------------------------- T9 a pause of a stay tied by a transfer is checked in every group it touches

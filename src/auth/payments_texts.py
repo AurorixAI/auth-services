@@ -66,6 +66,7 @@ def individual_price_ends_text(amount: int, group_name: str, new_amount: Optiona
     return f"У ученика индивидуальная цена {money(amount)} в группе «{group_name}»: в новой группе она не действует — {after}"
 
 
+NOTHING_TO_REFUND = "Возвращать нечего: оплаченных денег сверх начисленного нет"      # PAY-TAILS Р6: an advance is money only; the refusal says what is true
 NOT_FISCAL = "Не является фискальным чеком"            # Money-1 V5/V6: the receipt of the centre is an internal paper, not a cheque of the tax service (owner 04.11)
 REFUND_SIGNATURE = "Получил(а): ____________________  Подпись"
 
@@ -386,6 +387,13 @@ def balance_text(balance: int) -> str:
     if balance > 0:
         return f"Аванс {num(balance)}"
     return "0"
+
+
+def forgiven_used_text(used: Optional[int], amount: Optional[int]) -> Optional[str]:
+    """PAY-TAILS Р5: the words of a forgiveness that covered LESS than was entered: «использовано 94 000 сум» (also «использовано 0 сум»); ``None`` when all of it was used (or unknown)."""
+    if used is None or amount is None or used >= int(amount):
+        return None
+    return f"использовано {money(int(used))}"
 
 
 def forgiven_title(reason: Optional[str], amount: Optional[int] = None) -> str:
