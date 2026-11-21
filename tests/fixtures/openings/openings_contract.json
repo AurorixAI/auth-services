@@ -116,6 +116,8 @@
           },
           "refundable_delta": {
             "default": 0,
+            "deprecated": true,
+            "description": "Устарело: равно advance_delta (снимается в пакете Б)",
             "title": "Refundable Delta",
             "type": "integer"
           }

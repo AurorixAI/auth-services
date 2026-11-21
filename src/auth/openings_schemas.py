@@ -235,7 +235,7 @@ class OpeningBatchImpact(PayModel):
     debtors_before: int = 0
     debtors_after: int = 0
     advance_delta: int = 0
-    refundable_delta: int = 0
+    refundable_delta: int = Field(0, description="Устарело: равно advance_delta (снимается в пакете Б)", json_schema_extra={"deprecated": True})
     indirect_changed: int = 0
 
 

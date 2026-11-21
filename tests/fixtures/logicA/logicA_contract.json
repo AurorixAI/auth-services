@@ -31,6 +31,8 @@
           },
           "refundable_delta": {
             "default": 0,
+            "deprecated": true,
+            "description": "Устарело: равно advance (снимается в пакете Б)",
             "title": "Refundable Delta",
             "type": "integer"
           }
@@ -926,6 +928,8 @@
           },
           "refundable": {
             "default": 0,
+            "deprecated": true,
+            "description": "Устарело: равно advance (снимается в пакете Б)",
             "title": "Refundable",
             "type": "integer"
           }
@@ -1592,11 +1596,15 @@
           },
           "refundable_after": {
             "default": 0,
+            "deprecated": true,
+            "description": "Устарело: равно advance (снимается в пакете Б)",
             "title": "Refundable After",
             "type": "integer"
           },
           "refundable_before": {
             "default": 0,
+            "deprecated": true,
+            "description": "Устарело: равно advance (снимается в пакете Б)",
             "title": "Refundable Before",
             "type": "integer"
           }
@@ -1739,6 +1747,8 @@
           },
           "refundable": {
             "default": 0,
+            "deprecated": true,
+            "description": "Устарело: равно advance (снимается в пакете Б)",
             "title": "Refundable",
             "type": "integer"
           },
@@ -2808,6 +2818,8 @@
           },
           "refundable": {
             "default": 0,
+            "deprecated": true,
+            "description": "Устарело: равно advance (снимается в пакете Б)",
             "title": "Refundable",
             "type": "integer"
           },
