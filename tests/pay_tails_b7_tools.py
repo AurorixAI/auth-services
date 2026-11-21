@@ -29,11 +29,15 @@ from src.auth import billing_ledger as bl  # noqa: E402
 from src.auth import payment_status as ps  # noqa: E402
 from tests.pay2_ledger_helpers import D, at, edit_pause, flat, make, pause, weekly  # noqa: E402
 
+# Б11.8 п. 8: the generator builds the facts as the LOADER of the head under test builds them.  These switches tell the heads apart (the same file runs on dc3c8d0 and on the fixed head, B7_TREE):
+NEW_LEAVE = "left_at" in bl.Stay.__dataclass_fields__                    # a stay has the moment of the leaving; the pauses a leaving took off are kept as ``past_pauses``
+NEW_CHAIN = hasattr(bl, "chain_moment")                                  # a corrected / restored payment keeps the moment of the FIRST record of its chain
 TTF = weekly((1, 3, 4))
 FIXED1 = bl.Regime(anchor=ps.FIXED_DAY, billing_day=1)
 BOOKS = D(2026, 9, 1)
 EARLIEST = D(2026, 9, 15)                # the earliest date the generator gives a payment / a forgiveness (the product allows 3 years)
-PROPERTIES = ("P1 debt", "P1 used", "P1 advance", "P1 advance<=money", "P1 identity", "P2 debt", "P2 advance<=money", "P2 advance today", "P2 advance back",
+PROPERTIES = ("P1c debt", "P1c advance", "P1c used", "P3u advance>=", "P3u advance<=freed", "P3u advance<=money", "P3u debt", "P3u used", "P3u transfer", "P6 same", "P6 amount", "P6b restore", "P7 undo",
+              "P1 debt", "P1 used", "P1 advance", "P1 advance<=money", "P1 identity", "P2 debt", "P2 advance<=money", "P2 advance today", "P2 advance back",
               "P3 used", "P3 debt", "P3 advance", "P3 advance<=money", "P3k used", "P3k debt", "P3k advance", "P3k advance<=money", "P3e used", "P3e debt", "P3e advance", "P3e advance<=money", "P3c advance", "P3ec advance", "P4 early", "P4 today", "P5 probe")
 
 
@@ -60,6 +64,32 @@ def mk_pause(first, last, entered, minute=0):
     return pause(first, last, entered, minute)
 
 
+def mk_stay(first, last=None, joined=None, left_at=None):
+    """A stay of the membership; ``left_at`` = the moment the leaving was entered (a head older than Б11.8 has no such field)."""
+    if NEW_LEAVE:
+        return bl.Stay(first, last, joined, left_at)
+    return bl.Stay(first, last, joined)
+
+
+def leave_pauses(pauses, past, day, moment):
+    """``close_at_leave`` (logica_service.py): the pauses that begin after the day of the leaving are taken off (void_reason «ученик ушёл из группы»), the one that holds the day is cut to it - the cut is a form of
+    the pause at the moment of the leaving.  A head older than Б11.8 drops the voided ones (the loader reads only the live pauses), the fixed head keeps them as ``past_pauses`` known until the leaving."""
+    keep, gone = [], []
+    for p in pauses:
+        if p.first > day:
+            gone.append(replace(p, voided_at=moment) if NEW_LEAVE else p)
+        elif p.last > day:
+            keep.append(replace(p, last=day, forms=(*p.forms, (moment, p.first, day))) if p.forms else replace(p, last=day))
+        else:
+            keep.append(p)
+    return tuple(keep), (tuple(past) + tuple(gone) if NEW_LEAVE else ())
+
+
+def with_pauses(inp, pauses, past=()):
+    out = replace(inp, pauses=tuple(pauses))
+    return replace(out, past_pauses=tuple(past)) if NEW_LEAVE else out
+
+
 def pause_moment(p):
     return bl.entered_at(p)
 
@@ -69,9 +99,12 @@ def entered_day(c):
 
 
 def known_pauses(inp, moment):
-    """The pauses as they were known at ``moment`` (a pause entered later is not there; an edited one has the form of that moment).  Written here on its own - the oracle does not read the money code."""
+    """The pauses as they were known at ``moment`` (a pause entered later is not there; an edited one has the form of that moment; one that a leaving took off is there until the leaving).  Written here on its own - the oracle does not read the money code."""
     out = []
-    for p in inp.pauses:
+    for p in (*inp.pauses, *getattr(inp, "past_pauses", ())):
+        voided = getattr(p, "voided_at", None)
+        if voided is not None and voided <= moment:
+            continue
         if not p.forms:
             out.append(p)
             continue
@@ -82,6 +115,25 @@ def known_pauses(inp, moment):
         if form is not None:
             out.append(replace(p, first=form[0], last=form[1]))
     return tuple(out)
+
+
+def known_stays(inp, moment):
+    """Б11.8 п. 1: the stays as they were known at ``moment``: a leaving entered later is not there - the piece goes on to the next piece or is open."""
+    stays = sorted(inp.stays, key=lambda s: s.first)
+    out = []
+    for k, s in enumerate(stays):
+        left = getattr(s, "left_at", None)
+        if left is not None and left > moment:
+            nxt = stays[k + 1].first - timedelta(days=1) if k + 1 < len(stays) else None
+            out.append(replace(s, last=nxt, left_at=None))
+        else:
+            out.append(s)
+    return tuple(out)
+
+
+def known_inp(inp, moment):
+    """The input of the world KNOWN at ``moment`` (Б11.8 п. 1): the current facts without the events of truncation entered later (a pause, an edit of a pause, a leaving)."""
+    return replace(inp, pauses=known_pauses(inp, moment), stays=known_stays(inp, moment))
 
 
 def mk_cancel(day, lesson_id, moment):
@@ -123,7 +175,7 @@ def _debt_on(inp, day, entered_before, moment):
     """The debt of the account as it was on ``day``, at ``moment``: the credits entered before, the pauses known by then."""
     seen = tuple(c for c in inp.credits if entered_before(c))
     held = tuple(c for c in inp.counted_lessons if c.day <= day)                          # the lessons held BY THAT DAY (the product reads the account of the day it is entered on: no later lesson is there yet)
-    return bl.run_ledger(replace(inp, today=day, credits=seen, pauses=known_pauses(inp, moment), counted_lessons=held, centre_cancels=known_cancels(inp, moment))).debt
+    return bl.run_ledger(replace(known_inp(inp, moment), today=day, credits=seen, counted_lessons=held, centre_cancels=known_cancels(inp, moment))).debt
 
 
 def allowed(inp):
@@ -152,12 +204,29 @@ def base_world(rng, cfg=Cfg()):
     stay_last = None
     if rng.random() < 0.2:                                                                                    # a leaving, the stay is cut on a day inside the account
         stay_last = D(2026, 10, 12) + timedelta(days=rng.randint(0, max(0, (today - D(2026, 10, 13)).days)))
-    inp = make(today=today, stays=[bl.Stay(D(2026, 10, 1), stay_last)], price_at=flat(price), regimes=[regime], start=BOOKS, lesson_days=TTF)
+    left_at = at(stay_last, rng.choice([5, 25, 45, 90, 700])) if stay_last is not None and rng.random() < 0.5 else None      # Б11.8: the leaving is an event with a moment (or has none: «after all the records»)
+    stays = [mk_stay(D(2026, 10, 1), stay_last, None, left_at)]
+    back = None
+    if stay_last is not None and mode != "packages" and rng.random() < 0.3:                                   # Б11.8 п. 8: a return to the group (a second piece of the stay) after a gap
+        back = stay_last + timedelta(days=rng.randint(2, 20))
+        if back < today:
+            stays.append(mk_stay(back, None, at(back, 10)))
+        else:
+            back = None
+    inp = make(today=today, stays=stays, price_at=flat(price), regimes=[regime], start=BOOKS, lesson_days=TTF)
     if mode == "packages":
         held = [d for d in (D(2026, 10, 1) + timedelta(days=k) for k in range((today - D(2026, 10, 1)).days + 1)) if d.weekday() in (1, 3, 4) and (stay_last is None or d <= stay_last)]
         inp = replace(inp, counted_lessons=tuple(bl.CountedLesson(d, f"l{d}") for d in held))
+    roll = rng.random()
+    if roll < 0.08:                                                                                           # Б11.3: the opening balance - a debt on the start of the books, or «paid until»
+        inp = replace(inp, opening=bl.Opening(None, rng.choice([100_000, 200_000, 300_000]), D(2026, 9, 30)))
+    elif roll < 0.12 and mode != "packages":
+        inp = replace(inp, opening=bl.Opening(D(2026, 10, 14)))
     if rng.random() < 0.7:
-        last_stay = stay_last or today + timedelta(days=40)
+        moment_leave = left_at is not None and back is None                                                   # a leaving with a moment cuts / takes off the pauses itself (as ``close_at_leave``)
+        last_stay = None if moment_leave else ((stay_last if back is None else None) or today + timedelta(days=40))
+        if last_stay is None:
+            last_stay = date.max
         if rng.random() < 0.2:                                                                                # a whole month in a pause (October, or November once it has begun)
             first = D(2026, 10, 1) if rng.random() < 0.5 or today < D(2026, 11, 1) else D(2026, 11, 1)
             last = D(2026, 10, 31) if first.month == 10 else D(2026, 11, 30)
@@ -165,8 +234,14 @@ def base_world(rng, cfg=Cfg()):
             first = D(2026, 10, 5) + timedelta(days=rng.randint(0, 40))
             last = first + timedelta(days=rng.randint(2, 35))                                                 # may run past today
         first, last = min(first, last_stay), min(last, last_stay)
-        entered = D(2026, 9, 25) + timedelta(days=rng.randint(0, (today - D(2026, 9, 25)).days))        # any day, also BETWEEN the credits
-        inp = replace(inp, pauses=(mk_pause(first, last, entered, rng.choice([5, 25, 45, 90, 700])),))
+        if back is not None and first < back:                                                                 # a pause inside a piece of the stay: the second piece, or none
+            first, last = max(first, back), max(last, back)
+        entered_hi = stay_last if moment_leave else today                                                     # nobody enters a pause for a student who has left
+        entered = D(2026, 9, 25) + timedelta(days=rng.randint(0, max(0, (entered_hi - D(2026, 9, 25)).days)))        # any day, also BETWEEN the credits
+        pauses, past = (mk_pause(first, last, entered, 1 if entered == stay_last and moment_leave else rng.choice([5, 25, 45, 90, 700])),), ()
+        if moment_leave:
+            pauses, past = leave_pauses(pauses, (), stay_last, left_at)
+        inp = with_pauses(inp, pauses, past)
     return inp
 
 
@@ -233,9 +308,11 @@ def new_pause(rng, inp):
     else:
         first = D(2026, 10, 1) + timedelta(days=rng.randint(0, max(0, (inp.today - D(2026, 10, 1)).days + 10)))
         last = first + timedelta(days=rng.randint(1, 35))
-    stay_last = inp.stays[0].last
+    stay_last = inp.stays[-1].last
     if stay_last is not None:
         first, last = min(first, stay_last), min(last, stay_last)
+    first = max(first, inp.stays[-1].first)                              # a pause inside the last piece of the stay
+    last = max(first, last)
     return mk_pause(first, last, inp.today, 900)
 
 
@@ -265,7 +342,7 @@ def new_pause_edit(rng, inp):
         return None
     index = rng.randrange(len(inp.pauses))
     p = inp.pauses[index]
-    stay_last = inp.stays[0].last
+    stay_last = inp.stays[-1].last
     if rng.random() < 0.6:
         first, last = p.first - timedelta(days=rng.randint(0, 10)), p.last + timedelta(days=rng.randint(0, 15))
         if stay_last is not None:
@@ -284,6 +361,182 @@ def apply_edit(inp, e):
     pauses = list(inp.pauses)
     pauses[e.index] = edit_pause(pauses[e.index], e.first, e.last, inp.today, 900)
     return replace(inp, pauses=tuple(pauses))
+
+
+# ------------------------------------------------------------------------------------------------------------------------------ Б11.8 п. 8: a leaving, its cancel, a return, a correction of a payment
+def reopen(stay):
+    return replace(stay, last=None, left_at=None) if NEW_LEAVE else replace(stay, last=None)
+
+
+@dataclass(frozen=True)
+class Leave:
+    """A leaving entered NOW (``kind`` "leave"), or a transfer to another group (``kind`` "transfer": the same cut of the stay, and the money the account can give leaves it as ``transfer_out``)."""
+
+    kind: str = "leave"
+
+
+@dataclass(frozen=True)
+class UndoLeave:
+    """A leaving entered NOW and cancelled the same day (the return on the day of the leaving, ``leave_undo``)."""
+
+
+@dataclass(frozen=True)
+class Return:
+    """A return to the group entered NOW: a second piece of the stay (the student left earlier)."""
+
+
+@dataclass(frozen=True)
+class Correct:
+    """A payment of the world corrected NOW (``kind`` "same": nothing changes but the row; "amount": the sum becomes ``amount``) or cancelled and restored (``kind`` "restore")."""
+
+    credit_id: str
+    kind: str
+    amount: int = 0
+
+
+def chain_moment_of(first_moment, now_moment):
+    """The moment of the credit made by a correction / a restoration: the head under test says (``bl.chain_moment``: the moment of the FIRST record of the chain); an older head - NOW."""
+    return bl.chain_moment([first_moment, now_moment]) if NEW_CHAIN else now_moment
+
+
+def leave_moment(inp):
+    return at(inp.today, 900)
+
+
+def can_leave(inp):
+    last = inp.stays[-1]
+    return last.last is None and last.first < inp.today
+
+
+def apply_leave(inp, moment=None):
+    """The input after a leaving NOW as the loader of the head builds it: the open stay closed today (with the moment), the pauses cut / taken off by ``close_at_leave``."""
+    moment = moment or leave_moment(inp)
+    last = inp.stays[-1]
+    stays = (*inp.stays[:-1], mk_stay(last.first, inp.today, last.joined_at, moment))
+    pauses, past = leave_pauses(inp.pauses, getattr(inp, "past_pauses", ()), inp.today, moment)
+    return with_pauses(replace(inp, stays=stays), pauses, past)
+
+
+def apply_undo(before, moment=None):
+    """The input after the leaving was cancelled the same day.  The fixed loader erases what the leaving wrote to the pauses (Б11.8 п. 2): the input is the one BEFORE.  An older head reads the cancel as a new form
+    of every pause it restored (the moment of the cancel, the days it had before): a pause that was cut is «extended» then."""
+    if NEW_LEAVE:
+        return before
+    undo, left = at(before.today, 950), leave_moment(before)
+    pauses = []
+    for p in before.pauses:
+        if not p.forms:
+            pauses.append(p)
+        elif p.first > before.today:                                   # taken off by the leaving, brought back by the cancel: a new form (the days it had)
+            pauses.append(replace(p, forms=(*p.forms, (undo, p.first, p.last))))
+        elif p.last > before.today:                                    # cut by the leaving (a form), given its days back by the cancel (another form)
+            pauses.append(replace(p, forms=(*p.forms, (left, p.first, before.today), (undo, p.first, p.last))))
+        else:
+            pauses.append(p)
+    return replace(before, pauses=tuple(pauses))
+
+
+def apply_return(inp):
+    return replace(inp, stays=(*inp.stays, mk_stay(inp.today, None, at(inp.today, 900))))
+
+
+def can_return(inp):
+    last = inp.stays[-1]
+    return last.last is not None and last.last < inp.today and inp.regimes[0].mode != bl.LESSONS
+
+
+def new_leave(rng, inp, kind="leave"):
+    return Leave(kind) if can_leave(inp) else None
+
+
+def new_undo(rng, inp):
+    return UndoLeave() if can_leave(inp) else None
+
+
+def new_return(rng, inp):
+    return Return() if can_return(inp) else None
+
+
+def new_correct(rng, inp, kind):
+    payments = [c for c in inp.credits if c.kind == bl.PAYMENT]
+    if not payments:
+        return None
+    c = rng.choice(payments)
+    return Correct(c.id, kind, rng.choice([100_000, 200_000, 300_000, 400_000, 500_000]) if kind == "amount" else c.amount)
+
+
+def apply_correct(inp, x, *, in_place=False):
+    """The credits after the correction: the corrected payment has the moment of the chain (``chain_moment_of``); ``in_place`` = the oracle of P6 amount - the same payment of the new sum at its OWN moment."""
+    out = []
+    for c in inp.credits:
+        if c.id != x.credit_id:
+            out.append(c)
+        elif in_place:
+            out.append(replace(c, amount=x.amount))
+        else:
+            out.append(bl.Credit(c.id + "r", c.kind, c.on, chain_moment_of(c.created_at, at(inp.today, 900)), x.amount if x.kind == "amount" else c.amount))
+    return replace(inp, credits=tuple(out))
+
+
+def state_of(inp):
+    L = bl.run_ledger(inp)
+    return (L.charged, L.debt, L.advance, L.written_off, L.recalculated, L.paid, L.refundable, tuple(sorted((s.period_start, s.amount) for s in L.segments)))
+
+
+def event_violations(inp, x):
+    """The properties of the events of Б11.8 п. 8 (they are checked by ``violations``)."""
+    before = bl.run_ledger(inp)
+    bad = []
+    if isinstance(x, Leave):
+        new = apply_leave(inp)
+        outflow = None
+        if x.kind == "transfer":
+            carried = bl.refundable_at(new, inp.today)
+            outflow = bl.Outflow("out", bl.TRANSFER_OUT, inp.today, leave_moment(inp), carried) if carried > 0 else None
+            if outflow is not None:
+                new = replace(new, outflows=(*new.outflows, outflow))
+        after = bl.run_ledger(new)
+        carried = outflow.amount if outflow is not None else 0
+        if after.flags or not after.reconciles:
+            bad.append("flags")
+        if after.advance > money_of(new):
+            bad.append("P3u advance<=money")
+        if x.kind == "leave" and after.advance < before.advance:
+            bad.append("P3u advance>=")
+        if x.kind == "transfer" and after.advance + carried < before.advance:
+            bad.append("P3u transfer")
+        cut = {}
+        for line in after.recalcs:
+            cut[line.segment_id] = cut.get(line.segment_id, 0) + line.amount
+        after_cost = {period_key(s): s.amount - cut.get(s.id, 0) for s in after.segments if s.begun}
+        freed = sum(max(0, s.money - after_cost.get(period_key(s), 0)) for s in before.segments)
+        if after.advance + carried - before.advance > freed:
+            bad.append("P3u advance<=freed")
+        if after.debt > before.debt:
+            bad.append("P3u debt")
+        if after.written_off > before.written_off:
+            bad.append("P3u used")
+    elif isinstance(x, UndoLeave):                                  # P7: the leaving cancelled the same day = the account before the leaving
+        if state_of(apply_undo(inp)) != state_of(inp):
+            bad.append("P7 undo")
+    elif isinstance(x, Return):
+        after = bl.run_ledger(apply_return(inp))
+        if after.flags or not after.reconciles:
+            bad.append("flags")
+    elif isinstance(x, Correct):
+        if not any(c.id == x.credit_id for c in inp.credits):
+            return bad
+        new = apply_correct(inp, x)
+        after = bl.run_ledger(new)
+        if after.flags or not after.reconciles:
+            bad.append("flags")
+        if x.kind == "same" and state_of(new) != state_of(inp):
+            bad.append("P6 same")
+        if x.kind == "restore" and state_of(new) != state_of(inp):
+            bad.append("P6b restore")
+        if x.kind == "amount" and state_of(new) != state_of(apply_correct(inp, x, in_place=True)):
+            bad.append("P6 amount")
+    return bad
 
 
 def probe_credit(x):
@@ -329,7 +582,7 @@ def oracle_p4(inp):
             continue
         day = entered_day(c)
         if c.id not in worlds:
-            worlds[c.id] = _slot_first_days(replace(inp, pauses=known_pauses(inp, c.created_at)))
+            worlds[c.id] = _slot_first_days(known_inp(inp, c.created_at))
         key = s.package_no if packages else (s.period_start if inp.regimes[0].anchor == ps.FIXED_DAY else order[s.id])
         if key not in worlds[c.id]:
             lost += 1
@@ -370,6 +623,8 @@ def personal_slack(before, after):
 
 def violations(inp, x):
     """The names of the properties that the addition of ``x`` (a payment, a forgiveness, a pause or an edit of a pause - all entered now) breaks."""
+    if isinstance(x, (Leave, UndoLeave, Return, Correct)):
+        return event_violations(inp, x)
     before = bl.run_ledger(inp)
     if isinstance(x, (bl.Pause, PauseEdit)):                       # Б7.5 P3: a pause entered now; Б7.7: an edit of a pause is the same entry
         new = replace(inp, pauses=(*inp.pauses, x)) if isinstance(x, bl.Pause) else apply_edit(inp, x)
@@ -429,6 +684,13 @@ def violations(inp, x):
             bad.append("P1 advance<=money")
         if (before.debt - after.debt) + (after.advance - before.advance) + (before.written_off - after.written_off) + (after.charged - before.charged) != x.amount:
             bad.append("P1 identity")
+        if x.on == inp.today:                                                                # Б11.8 п. 8, П1с: a payment dated today pays the debt first, what is over is the advance; the used forgiveness stays
+            if after.debt != before.debt - min(x.amount, before.debt):
+                bad.append("P1c debt")
+            if after.advance != before.advance + max(0, x.amount - before.debt):
+                bad.append("P1c advance")
+            if after.written_off != before.written_off:
+                bad.append("P1c used")
         probe = bl.run_ledger(replace(inp, credits=(*inp.credits, probe_credit(x))))        # P5: the window shows what the record will give
         if (probe.debt, probe.advance, probe.written_off) != (after.debt, after.advance, after.written_off):
             bad.append("P5 probe")
@@ -508,8 +770,14 @@ def shrink(inp, x, prop):
             steps.append((replace(inp, pauses=()), x))
         if inp.centre_cancels:
             steps.append((replace(inp, centre_cancels=(), recalc_versions=()), x))
-        if inp.stays[0].last is not None and not isinstance(x, PauseEdit):
-            steps.append((replace(inp, stays=(replace(inp.stays[0], last=None),)), x))
+        if len(inp.stays) > 1 and not isinstance(x, PauseEdit):
+            steps.append((replace(inp, stays=inp.stays[:1]), x))
+        if len(inp.stays) == 1 and inp.stays[0].last is not None and not isinstance(x, PauseEdit):
+            steps.append((replace(inp, stays=(reopen(inp.stays[0]),)), x))
+        if inp.opening is not None:
+            steps.append((replace(inp, opening=None), x))
+        if getattr(inp, "past_pauses", ()):
+            steps.append((replace(inp, past_pauses=()), x))
         for k, c in enumerate(inp.credits):
             for amount in (100_000, 200_000, 300_000, 400_000, 420_000, 600_000):
                 if amount < c.amount:
@@ -537,7 +805,9 @@ def describe(inp, x):
         lines.append(f"  pause {p.first}..{p.last} entered {pause_moment(p):%d.%m %H:%M}")
     for c in inp.centre_cancels:
         lines.append(f"  cancel {c.day} entered {getattr(c, 'entered', datetime.min):%d.%m %H:%M}; setting " + ", ".join(f"{v.effective_from} {v.on} made {getattr(v, 'entered', datetime.min):%d.%m %H:%M}" for v in inp.recalc_versions))
-    if isinstance(x, bl.Pause):
+    if isinstance(x, (Leave, UndoLeave, Return, Correct)):
+        lines.append(f"  ADDED  {x}  (today {inp.today}; stays " + ", ".join(f"{t.first}..{t.last} left {getattr(t, 'left_at', None)}" for t in inp.stays) + f"; opening {inp.opening})")
+    elif isinstance(x, bl.Pause):
         lines.append(f"  ADDED  pause {x.first}..{x.last} entered {pause_moment(x):%d.%m %H:%M}")
     elif isinstance(x, bl.CentreCancel):
         lines.append(f"  ADDED  lesson {x.day} cancelled by the centre, entered {x.entered:%d.%m %H:%M}")
@@ -549,6 +819,14 @@ def describe(inp, x):
 
 
 def apply_x(inp, x):
+    if isinstance(x, Leave):
+        return apply_leave(inp)
+    if isinstance(x, UndoLeave):
+        return apply_undo(inp)
+    if isinstance(x, Return):
+        return apply_return(inp)
+    if isinstance(x, Correct):
+        return apply_correct(inp, x)
     if isinstance(x, bl.Pause):
         return replace(inp, pauses=(*inp.pauses, x))
     if isinstance(x, PauseEdit):
@@ -568,9 +846,11 @@ def run_counts(seed, n, cfg=Cfg()):
     for _ in range(n):
         inp = allowed_world(rng, cfg)
         worlds += 1
-        for kind in (bl.PAYMENT, bl.WRITEOFF, "pause", "edit", "cancel"):
+        for kind in (bl.PAYMENT, bl.WRITEOFF, "pause", "edit", "cancel", "leave", "transfer", "undo", "return", "same", "amount", "restore"):
             x = (new_payment(rng, inp) if kind == bl.PAYMENT else new_forgiveness(rng, inp) if kind == bl.WRITEOFF
-                 else new_pause(rng, inp) if kind == "pause" else new_pause_edit(rng, inp) if kind == "edit" else new_cancel(rng, inp) if inp.centre_cancels else None)
+                 else new_pause(rng, inp) if kind == "pause" else new_pause_edit(rng, inp) if kind == "edit" else new_cancel(rng, inp) if kind == "cancel" and inp.centre_cancels
+                 else new_leave(rng, inp, kind) if kind in ("leave", "transfer") else new_undo(rng, inp) if kind == "undo" else new_return(rng, inp) if kind == "return"
+                 else new_correct(rng, inp, kind) if kind in ("same", "amount", "restore") else None)
             if x is None:
                 continue
             pays += kind == bl.PAYMENT
