@@ -1314,22 +1314,6 @@ def _place_credits(segments: Sequence[Segment], credits: Sequence[Credit], net: 
                         out.used_by[c.id] = out.used_by.get(c.id, 0) - out.parts.pop((donor.id, c.id), 0)
                 out.forgiven[donor.id] = 0
                 room[donor.id] = lay_forgiveness(donor, donor.amount - out.money[donor.id] - out.recalculated[donor.id])
-    # PAY-TAILS Б7, the LAST step: a forgiveness that was not used on its own periods (money took its place, or its period had not begun when it was entered) closes what is STILL unpaid after all the money,
-    # only in the periods that had begun by the day it was entered (the opening balance: always), oldest first, forgivenesses in the order of the credits.  It never takes room from money: a payment
-    # never raises the debt, and a forgiveness is never an advance; what is not needed burns as before.
-    for c in credits:
-        left = net[c.id] - out.used_by.get(c.id, 0) if c.kind == WRITEOFF else 0
-        for s in segments:
-            if left <= 0:
-                break
-            if room[s.id] <= 0 or not _begun_by(s, c.entered_on or c.on):
-                continue
-            take = min(left, room[s.id])
-            left -= take
-            room[s.id] -= take
-            put(s.id, c.id, take)
-            out.forgiven[s.id] += take
-            out.used_by[c.id] = out.used_by.get(c.id, 0) + take
     out.parts = {k: v for k, v in out.parts.items() if v > 0}
     out.used_by = {k: v for k, v in out.used_by.items() if v > 0}
     out.leftover = [(cid, amount) for cid, amount, _ in queue if amount > 0]
