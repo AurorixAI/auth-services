@@ -1314,7 +1314,7 @@ def _place_credits(segments: Sequence[Segment], credits: Sequence[Credit], net: 
     happened to the stay afterwards.  2) Inside a period of the actual sum ``A``: the money first (``m = min(tied money, A)``), then the deductions for cancelled lessons, then the forgiveness
     (``f = min(tied forgiveness, A - m - r)``): a forgiveness never covers a charge money has already paid, and what no charge needs is thrown away - it is not an advance, not a refund, not a
     payment of another period.  3) The money that a cut period leaves over (and a deduction that found no charge) goes on, oldest first, into the unfilled part of the periods; what is still left is the
-    advance.  4) A last pass brings money that lies on a LATER period back to a period that has begun and is still unfilled, and the forgiveness of the donor is laid again over the room the money left."""
+    advance."""
     may = _may_lie(worlds)
     alive = _alive_forgiveness(worlds, credits, net)
     amounts = {c.id: (alive[c.id] if c.kind == WRITEOFF else net[c.id]) for c in credits}
@@ -1330,7 +1330,7 @@ def _place_credits(segments: Sequence[Segment], credits: Sequence[Credit], net: 
         out.parts[(seg_id, credit_id)] = out.parts.get((seg_id, credit_id), 0) + amount
 
     def lay_forgiveness(s: Segment, left: int) -> int:
-        """The forgiveness tied to the period covers what money and deductions left of its charge (only if the period had begun by the day it was entered); returns the room that is still free."""
+        """The forgiveness tied to the period covers what money and deductions left of its charge; returns the room that is still free."""
         for c, a in tied[s.id]:
             if c.kind != WRITEOFF:
                 continue
@@ -1377,35 +1377,6 @@ def _place_credits(segments: Sequence[Segment], credits: Sequence[Credit], net: 
             (out.recalculated if head[2] else out.money)[s.id] += take
             if head[1] == 0:
                 queue.pop(0)
-    # a charge that has BEGUN and is still unfilled while money sits on a LATER period (a forgiveness that lay on it was thrown away: it was entered before the period began): the money
-    # comes back to the oldest unpaid charge, latest periods first - the debt of the periods and the totals (``debt = charged - covering``) are one picture
-    for index, gap in enumerate(segments):
-        if room[gap.id] <= 0 or not (gap.begun or gap.kind == "opening"):
-            continue
-        for donor in reversed(segments[index + 1:]):
-            if room[gap.id] <= 0:
-                break
-            moved = 0
-            for c in reversed(credits):            # the latest payment goes first (by the key of the credit, never by the text of an id)
-                have = out.parts.get((donor.id, c.id), 0)
-                if have <= 0 or c.kind not in (PAYMENT, TRANSFER_IN):
-                    continue
-                take = min(have, room[gap.id])
-                out.parts[(donor.id, c.id)] = have - take
-                out.money[donor.id] -= take
-                room[donor.id] += take
-                moved += take
-                put(gap.id, c.id, take)
-                out.money[gap.id] += take
-                room[gap.id] -= take
-                if room[gap.id] <= 0:
-                    break
-            if moved:                              # the donor holds less money now: a forgiveness that money had pushed out of it may cover the charge after all (А7.3 в)
-                for c, _ in tied[donor.id]:
-                    if c.kind == WRITEOFF:
-                        out.used_by[c.id] = out.used_by.get(c.id, 0) - out.parts.pop((donor.id, c.id), 0)
-                out.forgiven[donor.id] = 0
-                room[donor.id] = lay_forgiveness(donor, donor.amount - out.money[donor.id] - out.recalculated[donor.id])
     out.parts = {k: v for k, v in out.parts.items() if v > 0}
     out.used_by = {k: v for k, v in out.used_by.items() if v > 0}
     out.leftover = [(cid, amount) for cid, amount, _ in queue if amount > 0]
