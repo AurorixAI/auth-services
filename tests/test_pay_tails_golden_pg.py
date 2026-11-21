@@ -14,7 +14,7 @@ from pathlib import Path
 from src.models.auth import Group, Student, StudentGroup
 
 from tests.money1b_helpers import account, add, fresh_student, set_schedule, slot, transfer
-from tests.pg_world import give_group_price, make_group, needs_pg, pg_session, world  # noqa: F401  (fixtures)
+from tests.pg_world import ensure_billing, give_group_price, make_group, needs_pg, pg_session, world  # noqa: F401  (fixtures)
 from tests.test_pay2_api_pg import API, fixed_today, membership, owner, settings_block, stay  # noqa: F401  (fixtures)
 from tests.test_pay_tails_money_pg import TTF, forgive, leave, lp, om, refund
 from tests.test_payments_service_pg import pay
@@ -145,6 +145,35 @@ def package_world(w, fixed_today):
     return w.group
 
 
+def extra_world(w, fixed_today):
+    """The holes of the first snapshot (R3 Б6.2): ОМ 600 000 (Tue / Thu / Fri) on 03.11 and a second group of the Fridays 400 000.  Students: a (ОМ) paid 600 000, the centre cancels Tue 24.11 (recalculation on);
+    Остаток has an opening «оплачено до 10.11», Долг-остаток an opening debt 100 000 on 31.10; Архивный paid 300 000 and is archived 11.11; Прогнозов is enrolled on 10.11 into the Friday group: the first lesson is
+    Friday 13.11, three days later (the forecast)."""
+    g, a = om(w, fixed_today)                                        # clock 03.11
+    g3 = make_group(w.db, w.org, w.teacher, "Пятничная")
+    give_group_price(w.db, g3, 400_000)
+    set_schedule(w, [slot("s5", 5, "2026-01-01", "14:00", "15:00")], g3)
+    ensure_billing(w, g3, price=None)
+    names = {n: fresh_student(w, n) for n in ("Остаток", "Долг-остаток", "Архивный")}
+    for s in names.values():
+        add(w, s, group=g, mode="add")
+    assert owner(w).put(f"{API}/org/settings/payments", json={"centre_cancel_recalc": True}).status_code == 200
+    pay(w, a, g, amount=600_000, paid_on=D(2026, 11, 3))
+    pay(w, names["Архивный"], g, amount=300_000, paid_on=D(2026, 11, 3))
+    r = owner(w).put(f"{API}/org/memberships/{membership(w, names['Остаток'], g).id}/opening-balance", json={"paid_until": "2026-11-10"})
+    assert r.status_code == 200, r.text
+    r = owner(w).put(f"{API}/org/memberships/{membership(w, names['Долг-остаток'], g).id}/opening-balance", json={"debt_amount": 100_000, "debt_on": "2026-10-31"})
+    assert r.status_code == 200, r.text
+    r = owner(w).post(f"{API}/org/groups/{g.id}/attendance", json={"lessonDate": "2026-11-24", "lessonId": "s2", "status": "cancelled", "records": {}, "cancellationReason": "Преподаватель заболел", "cancellationKind": "centre"})
+    assert r.status_code == 200, r.text
+    fixed_today(D(2026, 11, 10))
+    add(w, fresh_student(w, "Прогнозов"), group=g3, mode="add")                  # Tuesday 10.11: the first lesson of the Fridays is 13.11, three days later
+    fixed_today(D(2026, 11, 11))
+    r = owner(w).post(f"{API}/org/students/{names['Архивный'].id}/archive", json={})
+    assert r.status_code == 200, r.text
+    return g
+
+
 def check_golden(name: str, w, days, fixed_today):
     shots = {}
     for day in days:
@@ -174,3 +203,8 @@ def test_the_money_of_the_common_month_is_the_golden_snapshot(world, fixed_today
 def test_the_money_of_a_package_is_the_golden_snapshot(world, fixed_today):
     package_world(world, fixed_today)
     check_golden("package", world, (D(2026, 10, 27), D(2026, 11, 10)), fixed_today)
+
+
+def test_the_money_of_the_holes_of_the_first_snapshot_is_the_golden_snapshot(world, fixed_today):
+    extra_world(world, fixed_today)
+    check_golden("extra", world, (D(2026, 11, 11), D(2026, 11, 25), D(2026, 12, 5)), fixed_today)

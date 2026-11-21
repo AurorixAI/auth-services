@@ -1,0 +1,2458 @@
+{
+ "extra 2026-11-11": {
+  "accounts": {
+   "Алия | Группа": {
+    "advance": 0,
+    "charged": 0,
+    "covered_through": null,
+    "current_due": 0,
+    "debt": 0,
+    "paid": 0,
+    "paid_until": null,
+    "partial_credit": 0,
+    "past_debt": 0,
+    "recalculated": 0,
+    "reconciles": true,
+    "refundable": 0,
+    "refunded": 0,
+    "segments": [
+     {
+      "amount": 0,
+      "begun": true,
+      "covered_days": 0,
+      "ended": true,
+      "forgiven": 0,
+      "kind": "period",
+      "money": 0,
+      "period_end": "2026-10-31",
+      "period_start": "2026-10-01",
+      "recalculated": 0,
+      "unpaid": 0
+     },
+     {
+      "amount": 0,
+      "begun": true,
+      "covered_days": 0,
+      "ended": false,
+      "forgiven": 0,
+      "kind": "period",
+      "money": 0,
+      "period_end": "2026-11-30",
+      "period_start": "2026-11-01",
+      "recalculated": 0,
+      "unpaid": 0
+     }
+    ],
+    "transferred_in": 0,
+    "transferred_out": 0,
+    "written_off": 0,
+    "written_off_granted": 0
+   },
+   "Архивный | Общий": {
+    "advance": 100000,
+    "charged": 200000,
+    "covered_through": "2026-11-11",
+    "current_due": 0,
+    "debt": 0,
+    "paid": 300000,
+    "paid_until": "2026-11-11",
+    "partial_credit": 0,
+    "past_debt": 0,
+    "recalculated": 0,
+    "reconciles": true,
+    "refundable": 100000,
+    "refunded": 0,
+    "segments": [
+     {
+      "amount": 200000,
+      "begun": true,
+      "covered_days": 9,
+      "ended": false,
+      "forgiven": 0,
+      "kind": "period",
+      "money": 200000,
+      "period_end": "2026-11-30",
+      "period_start": "2026-11-01",
+      "recalculated": 0,
+      "unpaid": 0
+     }
+    ],
+    "transferred_in": 0,
+    "transferred_out": 0,
+    "written_off": 0,
+    "written_off_granted": 0
+   },
+   "Бек | Группа": {
+    "advance": 0,
+    "charged": 0,
+    "covered_through": null,
+    "current_due": 0,
+    "debt": 0,
+    "paid": 0,
+    "paid_until": null,
+    "partial_credit": 0,
+    "past_debt": 0,
+    "recalculated": 0,
+    "reconciles": true,
+    "refundable": 0,
+    "refunded": 0,
+    "segments": [
+     {
+      "amount": 0,
+      "begun": true,
+      "covered_days": 0,
+      "ended": true,
+      "forgiven": 0,
+      "kind": "period",
+      "money": 0,
+      "period_end": "2026-10-31",
+      "period_start": "2026-10-01",
+      "recalculated": 0,
+      "unpaid": 0
+     },
+     {
+      "amount": 0,
+      "begun": true,
+      "covered_days": 0,
+      "ended": false,
+      "forgiven": 0,
+      "kind": "period",
+      "money": 0,
+      "period_end": "2026-11-30",
+      "period_start": "2026-11-01",
+      "recalculated": 0,
+      "unpaid": 0
+     }
+    ],
+    "transferred_in": 0,
+    "transferred_out": 0,
+    "written_off": 0,
+    "written_off_granted": 0
+   },
+   "Дана | Группа": {
+    "advance": 0,
+    "charged": 0,
+    "covered_through": null,
+    "current_due": 0,
+    "debt": 0,
+    "paid": 0,
+    "paid_until": null,
+    "partial_credit": 0,
+    "past_debt": 0,
+    "recalculated": 0,
+    "reconciles": true,
+    "refundable": 0,
+    "refunded": 0,
+    "segments": [
+     {
+      "amount": 0,
+      "begun": true,
+      "covered_days": 0,
+      "ended": true,
+      "forgiven": 0,
+      "kind": "period",
+      "money": 0,
+      "period_end": "2026-10-31",
+      "period_start": "2026-10-01",
+      "recalculated": 0,
+      "unpaid": 0
+     },
+     {
+      "amount": 0,
+      "begun": true,
+      "covered_days": 0,
+      "ended": false,
+      "forgiven": 0,
+      "kind": "period",
+      "money": 0,
+      "period_end": "2026-11-30",
+      "period_start": "2026-11-01",
+      "recalculated": 0,
+      "unpaid": 0
+     }
+    ],
+    "transferred_in": 0,
+    "transferred_out": 0,
+    "written_off": 0,
+    "written_off_granted": 0
+   },
+   "Долг-остаток | Общий": {
+    "advance": 0,
+    "charged": 700000,
+    "covered_through": null,
+    "current_due": 550000,
+    "debt": 650000,
+    "paid": 0,
+    "paid_until": null,
+    "partial_credit": 7143,
+    "past_debt": 100000,
+    "recalculated": 50000,
+    "reconciles": true,
+    "refundable": 0,
+    "refunded": 0,
+    "segments": [
+     {
+      "amount": 100000,
+      "begun": true,
+      "covered_days": 0,
+      "ended": true,
+      "forgiven": 0,
+      "kind": "opening",
+      "money": 0,
+      "period_end": "2026-10-31",
+      "period_start": "2026-10-31",
+      "recalculated": 0,
+      "unpaid": 100000
+     },
+     {
+      "amount": 600000,
+      "begun": true,
+      "covered_days": 2,
+      "ended": false,
+      "forgiven": 0,
+      "kind": "period",
+      "money": 0,
+      "period_end": "2026-11-30",
+      "period_start": "2026-11-01",
+      "recalculated": 50000,
+      "unpaid": 550000
+     }
+    ],
+    "transferred_in": 0,
+    "transferred_out": 0,
+    "written_off": 0,
+    "written_off_granted": 0
+   },
+   "Остаток | Общий": {
+    "advance": 0,
+    "charged": 400000,
+    "covered_through": "2026-11-12",
+    "current_due": 350000,
+    "debt": 350000,
+    "paid": 0,
+    "paid_until": "2026-11-12",
+    "partial_credit": 10000,
+    "past_debt": 0,
+    "recalculated": 50000,
+    "reconciles": true,
+    "refundable": 0,
+    "refunded": 0,
+    "segments": [
+     {
+      "amount": 400000,
+      "begun": true,
+      "covered_days": 2,
+      "ended": false,
+      "forgiven": 0,
+      "kind": "period",
+      "money": 0,
+      "period_end": "2026-11-30",
+      "period_start": "2026-11-01",
+      "recalculated": 50000,
+      "unpaid": 350000
+     }
+    ],
+    "transferred_in": 0,
+    "transferred_out": 0,
+    "written_off": 0,
+    "written_off_granted": 0
+   },
+   "Прогнозов | Пятничная": {
+    "advance": 0,
+    "charged": 0,
+    "covered_through": "2026-11-12",
+    "current_due": 0,
+    "debt": 0,
+    "paid": 0,
+    "paid_until": null,
+    "partial_credit": 0,
+    "past_debt": 0,
+    "recalculated": 0,
+    "reconciles": true,
+    "refundable": 0,
+    "refunded": 0,
+    "segments": [
+     {
+      "amount": 300000,
+      "begun": false,
+      "covered_days": 0,
+      "ended": false,
+      "forgiven": 0,
+      "kind": "period",
+      "money": 0,
+      "period_end": "2026-11-30",
+      "period_start": "2026-11-01",
+      "recalculated": 0,
+      "unpaid": 300000
+     }
+    ],
+    "transferred_in": 0,
+    "transferred_out": 0,
+    "written_off": 0,
+    "written_off_granted": 0
+   },
+   "Ученик ОМ | Общий": {
+    "advance": 50000,
+    "charged": 600000,
+    "covered_through": "2026-12-02",
+    "current_due": 0,
+    "debt": 0,
+    "paid": 600000,
+    "paid_until": "2026-12-02",
+    "partial_credit": 11291,
+    "past_debt": 0,
+    "recalculated": 50000,
+    "reconciles": true,
+    "refundable": 50000,
+    "refunded": 0,
+    "segments": [
+     {
+      "amount": 600000,
+      "begun": true,
+      "covered_days": 28,
+      "ended": false,
+      "forgiven": 0,
+      "kind": "period",
+      "money": 600000,
+      "period_end": "2026-11-30",
+      "period_start": "2026-11-01",
+      "recalculated": 0,
+      "unpaid": 0
+     },
+     {
+      "amount": 600000,
+      "begun": false,
+      "covered_days": 2,
+      "ended": false,
+      "forgiven": 0,
+      "kind": "period",
+      "money": 0,
+      "period_end": "2026-12-31",
+      "period_start": "2026-12-01",
+      "recalculated": 50000,
+      "unpaid": 550000
+     }
+    ],
+    "transferred_in": 0,
+    "transferred_out": 0,
+    "written_off": 0,
+    "written_off_granted": 0
+   }
+  },
+  "balances_advance": {
+   "advance_total": null,
+   "items": [
+    "Ученик Архивный | Общий | 100000",
+    "Ученик Ученик ОМ | Общий | 50000"
+   ],
+   "total": 2
+  },
+  "income": {
+   "checks": [
+    {
+     "code": "received_eq_strip",
+     "diff": 0,
+     "left": 900000,
+     "right": 900000
+    },
+    {
+     "code": "refunded_eq_rows",
+     "diff": 0,
+     "left": 0,
+     "right": 0
+    },
+    {
+     "code": "received_eq_methods",
+     "diff": 0,
+     "left": 900000,
+     "right": 900000
+    },
+    {
+     "code": "received_eq_series",
+     "diff": 0,
+     "left": 900000,
+     "right": 900000
+    },
+    {
+     "code": "received_eq_journal",
+     "diff": 0,
+     "left": 900000,
+     "right": 900000
+    },
+    {
+     "code": "strip_current_eq_journal",
+     "diff": 0,
+     "left": 800000,
+     "right": 800000
+    },
+    {
+     "code": "strip_advance_eq_journal",
+     "diff": 0,
+     "left": 100000,
+     "right": 100000
+    }
+   ],
+   "current": {
+    "net_received": 900000,
+    "payments_count": 2,
+    "received": 900000,
+    "refunded": 0,
+    "refunded_from_received": 0,
+    "to_advance": 100000,
+    "to_current": 800000,
+    "to_forward": 0,
+    "to_past_debt": 0,
+    "transferred": 0,
+    "written_off": 0
+   },
+   "position": {
+    "advance_total": 150000,
+    "debt_text": "Долг 650 000 сум",
+    "debt_total": 650000,
+    "debtors": 1,
+    "due_students": 1,
+    "due_text": "К оплате 350 000 сум",
+    "due_total": 350000,
+    "memberships_with_advance": 2,
+    "memberships_with_debt": 1,
+    "students_with_advance": 2
+   }
+  },
+  "statements": {
+   "Алия | Группа": {
+    "rows": [],
+    "summary": {
+     "advance": 0,
+     "charged": 0,
+     "debt_amount": 0,
+     "due_amount": 0,
+     "paid": 0,
+     "recalculated": 0,
+     "reconciles": true,
+     "refunded": 0,
+     "transferred_in": 0,
+     "transferred_out": 0,
+     "unpaid": 0,
+     "written_off": 0
+    }
+   },
+   "Архивный | Общий": {
+    "rows": [
+     {
+      "credit": 0,
+      "date": "2026-11-03",
+      "debit": 200000,
+      "outflow": 0,
+      "type": "charge"
+     },
+     {
+      "credit": 300000,
+      "date": "2026-11-03",
+      "debit": 0,
+      "outflow": 0,
+      "type": "payment"
+     }
+    ],
+    "summary": {
+     "advance": 100000,
+     "charged": 200000,
+     "debt_amount": 0,
+     "due_amount": 0,
+     "paid": 300000,
+     "recalculated": 0,
+     "reconciles": true,
+     "refunded": 0,
+     "transferred_in": 0,
+     "transferred_out": 0,
+     "unpaid": 0,
+     "written_off": 0
+    }
+   },
+   "Бек | Группа": {
+    "rows": [],
+    "summary": {
+     "advance": 0,
+     "charged": 0,
+     "debt_amount": 0,
+     "due_amount": 0,
+     "paid": 0,
+     "recalculated": 0,
+     "reconciles": true,
+     "refunded": 0,
+     "transferred_in": 0,
+     "transferred_out": 0,
+     "unpaid": 0,
+     "written_off": 0
+    }
+   },
+   "Дана | Группа": {
+    "rows": [],
+    "summary": {
+     "advance": 0,
+     "charged": 0,
+     "debt_amount": 0,
+     "due_amount": 0,
+     "paid": 0,
+     "recalculated": 0,
+     "reconciles": true,
+     "refunded": 0,
+     "transferred_in": 0,
+     "transferred_out": 0,
+     "unpaid": 0,
+     "written_off": 0
+    }
+   },
+   "Долг-остаток | Общий": {
+    "rows": [
+     {
+      "credit": 0,
+      "date": "2026-10-31",
+      "debit": 100000,
+      "outflow": 0,
+      "type": "opening_debt"
+     },
+     {
+      "credit": 0,
+      "date": "2026-11-03",
+      "debit": 600000,
+      "outflow": 0,
+      "type": "charge"
+     },
+     {
+      "credit": 50000,
+      "date": "2026-11-24",
+      "debit": 0,
+      "outflow": 0,
+      "type": "recalc"
+     }
+    ],
+    "summary": {
+     "advance": 0,
+     "charged": 700000,
+     "debt_amount": 650000,
+     "due_amount": 0,
+     "paid": 0,
+     "recalculated": 50000,
+     "reconciles": true,
+     "refunded": 0,
+     "transferred_in": 0,
+     "transferred_out": 0,
+     "unpaid": 650000,
+     "written_off": 0
+    }
+   },
+   "Остаток | Общий": {
+    "rows": [
+     {
+      "credit": 0,
+      "date": "2026-11-03",
+      "debit": 0,
+      "outflow": 0,
+      "type": "opening_paid_until"
+     },
+     {
+      "credit": 0,
+      "date": "2026-11-11",
+      "debit": 400000,
+      "outflow": 0,
+      "type": "charge"
+     },
+     {
+      "credit": 50000,
+      "date": "2026-11-24",
+      "debit": 0,
+      "outflow": 0,
+      "type": "recalc"
+     }
+    ],
+    "summary": {
+     "advance": 0,
+     "charged": 400000,
+     "debt_amount": 0,
+     "due_amount": 350000,
+     "paid": 0,
+     "recalculated": 50000,
+     "reconciles": true,
+     "refunded": 0,
+     "transferred_in": 0,
+     "transferred_out": 0,
+     "unpaid": 350000,
+     "written_off": 0
+    }
+   },
+   "Прогнозов | Пятничная": {
+    "rows": [],
+    "summary": {
+     "advance": 0,
+     "charged": 0,
+     "debt_amount": 0,
+     "due_amount": 0,
+     "paid": 0,
+     "recalculated": 0,
+     "reconciles": true,
+     "refunded": 0,
+     "transferred_in": 0,
+     "transferred_out": 0,
+     "unpaid": 0,
+     "written_off": 0
+    }
+   },
+   "Ученик ОМ | Общий": {
+    "rows": [
+     {
+      "credit": 0,
+      "date": "2026-11-03",
+      "debit": 600000,
+      "outflow": 0,
+      "type": "charge"
+     },
+     {
+      "credit": 600000,
+      "date": "2026-11-03",
+      "debit": 0,
+      "outflow": 0,
+      "type": "payment"
+     },
+     {
+      "credit": 50000,
+      "date": "2026-11-24",
+      "debit": 0,
+      "outflow": 0,
+      "type": "recalc"
+     }
+    ],
+    "summary": {
+     "advance": 50000,
+     "charged": 600000,
+     "debt_amount": 0,
+     "due_amount": 0,
+     "paid": 600000,
+     "recalculated": 50000,
+     "reconciles": true,
+     "refunded": 0,
+     "transferred_in": 0,
+     "transferred_out": 0,
+     "unpaid": 0,
+     "written_off": 0
+    }
+   }
+  },
+  "status": {
+   "active": {
+    "amount_total": 0,
+    "items": [
+     {
+      "advance": 0,
+      "debt_amount": 0,
+      "due_amount": 0,
+      "due_until": null,
+      "is_active": true,
+      "lessons_left": null,
+      "overdue_days": null,
+      "paid_until": null,
+      "partial_credit": 0,
+      "refundable": 0,
+      "status": "none",
+      "unpaid": 0,
+      "who": "Ученик Прогнозов | Пятничная"
+     },
+     {
+      "advance": 50000,
+      "debt_amount": 0,
+      "due_amount": 0,
+      "due_until": null,
+      "is_active": true,
+      "lessons_left": null,
+      "overdue_days": null,
+      "paid_until": "2026-12-02",
+      "partial_credit": 11291,
+      "refundable": 50000,
+      "status": "active",
+      "unpaid": 0,
+      "who": "Ученик Ученик ОМ | Общий"
+     }
+    ],
+    "students": 2,
+    "total": 2
+   },
+   "debtors": {
+    "amount_total": 650000,
+    "items": [
+     {
+      "advance": 0,
+      "debt_amount": 650000,
+      "due_amount": 0,
+      "due_until": null,
+      "is_active": true,
+      "lessons_left": null,
+      "overdue_days": 11,
+      "paid_until": null,
+      "partial_credit": 7143,
+      "refundable": 0,
+      "status": "active",
+      "unpaid": 650000,
+      "who": "Ученик Долг-остаток | Общий"
+     }
+    ],
+    "students": 1,
+    "total": 1
+   },
+   "expiring": {
+    "amount_total": 0,
+    "items": [],
+    "students": 0,
+    "total": 0
+   },
+   "paused": {
+    "amount_total": 0,
+    "items": [],
+    "students": 0,
+    "total": 0
+   },
+   "to_pay": {
+    "amount_total": 350000,
+    "items": [
+     {
+      "advance": 0,
+      "debt_amount": 0,
+      "due_amount": 350000,
+      "due_until": "2026-11-16",
+      "is_active": true,
+      "lessons_left": null,
+      "overdue_days": null,
+      "paid_until": "2026-11-12",
+      "partial_credit": 10000,
+      "refundable": 0,
+      "status": "active",
+      "unpaid": 350000,
+      "who": "Ученик Остаток | Общий"
+     }
+    ],
+    "students": 1,
+    "total": 1
+   }
+  },
+  "summary": {
+   "active": 1,
+   "advance_total": 150000,
+   "bucket_rows": {
+    "active": 2,
+    "debtors": 1,
+    "expiring": 0,
+    "paused": 0,
+    "to_pay": 1
+   },
+   "buckets": {
+    "active": 2,
+    "debtors": 1,
+    "expiring": 0,
+    "paused": 0,
+    "to_pay": 1
+   },
+   "debt_total": 650000,
+   "debtors": 1,
+   "due_students": 1,
+   "due_total": 350000,
+   "ends_today": 0,
+   "expiring": 1,
+   "free": 0,
+   "memberships_with_debt": 1,
+   "none": 4,
+   "paused": 0,
+   "students_with_advance": 2,
+   "tracked_total": 7
+  }
+ },
+ "extra 2026-11-25": {
+  "accounts": {
+   "Алия | Группа": {
+    "advance": 0,
+    "charged": 0,
+    "covered_through": null,
+    "current_due": 0,
+    "debt": 0,
+    "paid": 0,
+    "paid_until": null,
+    "partial_credit": 0,
+    "past_debt": 0,
+    "recalculated": 0,
+    "reconciles": true,
+    "refundable": 0,
+    "refunded": 0,
+    "segments": [
+     {
+      "amount": 0,
+      "begun": true,
+      "covered_days": 0,
+      "ended": true,
+      "forgiven": 0,
+      "kind": "period",
+      "money": 0,
+      "period_end": "2026-10-31",
+      "period_start": "2026-10-01",
+      "recalculated": 0,
+      "unpaid": 0
+     },
+     {
+      "amount": 0,
+      "begun": true,
+      "covered_days": 0,
+      "ended": false,
+      "forgiven": 0,
+      "kind": "period",
+      "money": 0,
+      "period_end": "2026-11-30",
+      "period_start": "2026-11-01",
+      "recalculated": 0,
+      "unpaid": 0
+     }
+    ],
+    "transferred_in": 0,
+    "transferred_out": 0,
+    "written_off": 0,
+    "written_off_granted": 0
+   },
+   "Архивный | Общий": {
+    "advance": 100000,
+    "charged": 200000,
+    "covered_through": "2026-11-11",
+    "current_due": 0,
+    "debt": 0,
+    "paid": 300000,
+    "paid_until": null,
+    "partial_credit": 0,
+    "past_debt": 0,
+    "recalculated": 0,
+    "reconciles": true,
+    "refundable": 100000,
+    "refunded": 0,
+    "segments": [
+     {
+      "amount": 200000,
+      "begun": true,
+      "covered_days": 9,
+      "ended": false,
+      "forgiven": 0,
+      "kind": "period",
+      "money": 200000,
+      "period_end": "2026-11-30",
+      "period_start": "2026-11-01",
+      "recalculated": 0,
+      "unpaid": 0
+     }
+    ],
+    "transferred_in": 0,
+    "transferred_out": 0,
+    "written_off": 0,
+    "written_off_granted": 0
+   },
+   "Бек | Группа": {
+    "advance": 0,
+    "charged": 0,
+    "covered_through": null,
+    "current_due": 0,
+    "debt": 0,
+    "paid": 0,
+    "paid_until": null,
+    "partial_credit": 0,
+    "past_debt": 0,
+    "recalculated": 0,
+    "reconciles": true,
+    "refundable": 0,
+    "refunded": 0,
+    "segments": [
+     {
+      "amount": 0,
+      "begun": true,
+      "covered_days": 0,
+      "ended": true,
+      "forgiven": 0,
+      "kind": "period",
+      "money": 0,
+      "period_end": "2026-10-31",
+      "period_start": "2026-10-01",
+      "recalculated": 0,
+      "unpaid": 0
+     },
+     {
+      "amount": 0,
+      "begun": true,
+      "covered_days": 0,
+      "ended": false,
+      "forgiven": 0,
+      "kind": "period",
+      "money": 0,
+      "period_end": "2026-11-30",
+      "period_start": "2026-11-01",
+      "recalculated": 0,
+      "unpaid": 0
+     }
+    ],
+    "transferred_in": 0,
+    "transferred_out": 0,
+    "written_off": 0,
+    "written_off_granted": 0
+   },
+   "Дана | Группа": {
+    "advance": 0,
+    "charged": 0,
+    "covered_through": null,
+    "current_due": 0,
+    "debt": 0,
+    "paid": 0,
+    "paid_until": null,
+    "partial_credit": 0,
+    "past_debt": 0,
+    "recalculated": 0,
+    "reconciles": true,
+    "refundable": 0,
+    "refunded": 0,
+    "segments": [
+     {
+      "amount": 0,
+      "begun": true,
+      "covered_days": 0,
+      "ended": true,
+      "forgiven": 0,
+      "kind": "period",
+      "money": 0,
+      "period_end": "2026-10-31",
+      "period_start": "2026-10-01",
+      "recalculated": 0,
+      "unpaid": 0
+     },
+     {
+      "amount": 0,
+      "begun": true,
+      "covered_days": 0,
+      "ended": false,
+      "forgiven": 0,
+      "kind": "period",
+      "money": 0,
+      "period_end": "2026-11-30",
+      "period_start": "2026-11-01",
+      "recalculated": 0,
+      "unpaid": 0
+     }
+    ],
+    "transferred_in": 0,
+    "transferred_out": 0,
+    "written_off": 0,
+    "written_off_granted": 0
+   },
+   "Долг-остаток | Общий": {
+    "advance": 0,
+    "charged": 700000,
+    "covered_through": null,
+    "current_due": 550000,
+    "debt": 650000,
+    "paid": 0,
+    "paid_until": null,
+    "partial_credit": 7143,
+    "past_debt": 100000,
+    "recalculated": 50000,
+    "reconciles": true,
+    "refundable": 0,
+    "refunded": 0,
+    "segments": [
+     {
+      "amount": 100000,
+      "begun": true,
+      "covered_days": 0,
+      "ended": true,
+      "forgiven": 0,
+      "kind": "opening",
+      "money": 0,
+      "period_end": "2026-10-31",
+      "period_start": "2026-10-31",
+      "recalculated": 0,
+      "unpaid": 100000
+     },
+     {
+      "amount": 600000,
+      "begun": true,
+      "covered_days": 2,
+      "ended": false,
+      "forgiven": 0,
+      "kind": "period",
+      "money": 0,
+      "period_end": "2026-11-30",
+      "period_start": "2026-11-01",
+      "recalculated": 50000,
+      "unpaid": 550000
+     }
+    ],
+    "transferred_in": 0,
+    "transferred_out": 0,
+    "written_off": 0,
+    "written_off_granted": 0
+   },
+   "Остаток | Общий": {
+    "advance": 0,
+    "charged": 400000,
+    "covered_through": "2026-11-12",
+    "current_due": 350000,
+    "debt": 350000,
+    "paid": 0,
+    "paid_until": "2026-11-12",
+    "partial_credit": 10000,
+    "past_debt": 0,
+    "recalculated": 50000,
+    "reconciles": true,
+    "refundable": 0,
+    "refunded": 0,
+    "segments": [
+     {
+      "amount": 400000,
+      "begun": true,
+      "covered_days": 2,
+      "ended": false,
+      "forgiven": 0,
+      "kind": "period",
+      "money": 0,
+      "period_end": "2026-11-30",
+      "period_start": "2026-11-01",
+      "recalculated": 50000,
+      "unpaid": 350000
+     }
+    ],
+    "transferred_in": 0,
+    "transferred_out": 0,
+    "written_off": 0,
+    "written_off_granted": 0
+   },
+   "Прогнозов | Пятничная": {
+    "advance": 0,
+    "charged": 300000,
+    "covered_through": "2026-11-12",
+    "current_due": 300000,
+    "debt": 300000,
+    "paid": 0,
+    "paid_until": null,
+    "partial_credit": 0,
+    "past_debt": 0,
+    "recalculated": 0,
+    "reconciles": true,
+    "refundable": 0,
+    "refunded": 0,
+    "segments": [
+     {
+      "amount": 300000,
+      "begun": true,
+      "covered_days": 0,
+      "ended": false,
+      "forgiven": 0,
+      "kind": "period",
+      "money": 0,
+      "period_end": "2026-11-30",
+      "period_start": "2026-11-01",
+      "recalculated": 0,
+      "unpaid": 300000
+     }
+    ],
+    "transferred_in": 0,
+    "transferred_out": 0,
+    "written_off": 0,
+    "written_off_granted": 0
+   },
+   "Ученик ОМ | Общий": {
+    "advance": 50000,
+    "charged": 600000,
+    "covered_through": "2026-12-02",
+    "current_due": 0,
+    "debt": 0,
+    "paid": 600000,
+    "paid_until": "2026-12-02",
+    "partial_credit": 11291,
+    "past_debt": 0,
+    "recalculated": 50000,
+    "reconciles": true,
+    "refundable": 50000,
+    "refunded": 0,
+    "segments": [
+     {
+      "amount": 600000,
+      "begun": true,
+      "covered_days": 28,
+      "ended": false,
+      "forgiven": 0,
+      "kind": "period",
+      "money": 600000,
+      "period_end": "2026-11-30",
+      "period_start": "2026-11-01",
+      "recalculated": 0,
+      "unpaid": 0
+     },
+     {
+      "amount": 600000,
+      "begun": false,
+      "covered_days": 2,
+      "ended": false,
+      "forgiven": 0,
+      "kind": "period",
+      "money": 0,
+      "period_end": "2026-12-31",
+      "period_start": "2026-12-01",
+      "recalculated": 50000,
+      "unpaid": 550000
+     }
+    ],
+    "transferred_in": 0,
+    "transferred_out": 0,
+    "written_off": 0,
+    "written_off_granted": 0
+   }
+  },
+  "balances_advance": {
+   "advance_total": null,
+   "items": [
+    "Ученик Архивный | Общий | 100000",
+    "Ученик Ученик ОМ | Общий | 50000"
+   ],
+   "total": 2
+  },
+  "income": {
+   "checks": [
+    {
+     "code": "received_eq_strip",
+     "diff": 0,
+     "left": 900000,
+     "right": 900000
+    },
+    {
+     "code": "refunded_eq_rows",
+     "diff": 0,
+     "left": 0,
+     "right": 0
+    },
+    {
+     "code": "received_eq_methods",
+     "diff": 0,
+     "left": 900000,
+     "right": 900000
+    },
+    {
+     "code": "received_eq_series",
+     "diff": 0,
+     "left": 900000,
+     "right": 900000
+    },
+    {
+     "code": "received_eq_journal",
+     "diff": 0,
+     "left": 900000,
+     "right": 900000
+    },
+    {
+     "code": "strip_current_eq_journal",
+     "diff": 0,
+     "left": 800000,
+     "right": 800000
+    },
+    {
+     "code": "strip_advance_eq_journal",
+     "diff": 0,
+     "left": 100000,
+     "right": 100000
+    }
+   ],
+   "current": {
+    "net_received": 900000,
+    "payments_count": 2,
+    "received": 900000,
+    "refunded": 0,
+    "refunded_from_received": 0,
+    "to_advance": 100000,
+    "to_current": 800000,
+    "to_forward": 0,
+    "to_past_debt": 0,
+    "transferred": 0,
+    "written_off": 0
+   },
+   "position": {
+    "advance_total": 150000,
+    "debt_text": "Долг 1 300 000 сум",
+    "debt_total": 1300000,
+    "debtors": 3,
+    "due_students": 0,
+    "due_text": null,
+    "due_total": 0,
+    "memberships_with_advance": 2,
+    "memberships_with_debt": 3,
+    "students_with_advance": 2
+   }
+  },
+  "statements": {
+   "Алия | Группа": {
+    "rows": [],
+    "summary": {
+     "advance": 0,
+     "charged": 0,
+     "debt_amount": 0,
+     "due_amount": 0,
+     "paid": 0,
+     "recalculated": 0,
+     "reconciles": true,
+     "refunded": 0,
+     "transferred_in": 0,
+     "transferred_out": 0,
+     "unpaid": 0,
+     "written_off": 0
+    }
+   },
+   "Архивный | Общий": {
+    "rows": [
+     {
+      "credit": 0,
+      "date": "2026-11-03",
+      "debit": 200000,
+      "outflow": 0,
+      "type": "charge"
+     },
+     {
+      "credit": 300000,
+      "date": "2026-11-03",
+      "debit": 0,
+      "outflow": 0,
+      "type": "payment"
+     }
+    ],
+    "summary": {
+     "advance": 100000,
+     "charged": 200000,
+     "debt_amount": 0,
+     "due_amount": 0,
+     "paid": 300000,
+     "recalculated": 0,
+     "reconciles": true,
+     "refunded": 0,
+     "transferred_in": 0,
+     "transferred_out": 0,
+     "unpaid": 0,
+     "written_off": 0
+    }
+   },
+   "Бек | Группа": {
+    "rows": [],
+    "summary": {
+     "advance": 0,
+     "charged": 0,
+     "debt_amount": 0,
+     "due_amount": 0,
+     "paid": 0,
+     "recalculated": 0,
+     "reconciles": true,
+     "refunded": 0,
+     "transferred_in": 0,
+     "transferred_out": 0,
+     "unpaid": 0,
+     "written_off": 0
+    }
+   },
+   "Дана | Группа": {
+    "rows": [],
+    "summary": {
+     "advance": 0,
+     "charged": 0,
+     "debt_amount": 0,
+     "due_amount": 0,
+     "paid": 0,
+     "recalculated": 0,
+     "reconciles": true,
+     "refunded": 0,
+     "transferred_in": 0,
+     "transferred_out": 0,
+     "unpaid": 0,
+     "written_off": 0
+    }
+   },
+   "Долг-остаток | Общий": {
+    "rows": [
+     {
+      "credit": 0,
+      "date": "2026-10-31",
+      "debit": 100000,
+      "outflow": 0,
+      "type": "opening_debt"
+     },
+     {
+      "credit": 0,
+      "date": "2026-11-03",
+      "debit": 600000,
+      "outflow": 0,
+      "type": "charge"
+     },
+     {
+      "credit": 50000,
+      "date": "2026-11-24",
+      "debit": 0,
+      "outflow": 0,
+      "type": "recalc"
+     }
+    ],
+    "summary": {
+     "advance": 0,
+     "charged": 700000,
+     "debt_amount": 650000,
+     "due_amount": 0,
+     "paid": 0,
+     "recalculated": 50000,
+     "reconciles": true,
+     "refunded": 0,
+     "transferred_in": 0,
+     "transferred_out": 0,
+     "unpaid": 650000,
+     "written_off": 0
+    }
+   },
+   "Остаток | Общий": {
+    "rows": [
+     {
+      "credit": 0,
+      "date": "2026-11-03",
+      "debit": 0,
+      "outflow": 0,
+      "type": "opening_paid_until"
+     },
+     {
+      "credit": 0,
+      "date": "2026-11-11",
+      "debit": 400000,
+      "outflow": 0,
+      "type": "charge"
+     },
+     {
+      "credit": 50000,
+      "date": "2026-11-24",
+      "debit": 0,
+      "outflow": 0,
+      "type": "recalc"
+     }
+    ],
+    "summary": {
+     "advance": 0,
+     "charged": 400000,
+     "debt_amount": 350000,
+     "due_amount": 0,
+     "paid": 0,
+     "recalculated": 50000,
+     "reconciles": true,
+     "refunded": 0,
+     "transferred_in": 0,
+     "transferred_out": 0,
+     "unpaid": 350000,
+     "written_off": 0
+    }
+   },
+   "Прогнозов | Пятничная": {
+    "rows": [
+     {
+      "credit": 0,
+      "date": "2026-11-13",
+      "debit": 300000,
+      "outflow": 0,
+      "type": "charge"
+     }
+    ],
+    "summary": {
+     "advance": 0,
+     "charged": 300000,
+     "debt_amount": 300000,
+     "due_amount": 0,
+     "paid": 0,
+     "recalculated": 0,
+     "reconciles": true,
+     "refunded": 0,
+     "transferred_in": 0,
+     "transferred_out": 0,
+     "unpaid": 300000,
+     "written_off": 0
+    }
+   },
+   "Ученик ОМ | Общий": {
+    "rows": [
+     {
+      "credit": 0,
+      "date": "2026-11-03",
+      "debit": 600000,
+      "outflow": 0,
+      "type": "charge"
+     },
+     {
+      "credit": 600000,
+      "date": "2026-11-03",
+      "debit": 0,
+      "outflow": 0,
+      "type": "payment"
+     },
+     {
+      "credit": 50000,
+      "date": "2026-11-24",
+      "debit": 0,
+      "outflow": 0,
+      "type": "recalc"
+     }
+    ],
+    "summary": {
+     "advance": 50000,
+     "charged": 600000,
+     "debt_amount": 0,
+     "due_amount": 0,
+     "paid": 600000,
+     "recalculated": 50000,
+     "reconciles": true,
+     "refunded": 0,
+     "transferred_in": 0,
+     "transferred_out": 0,
+     "unpaid": 0,
+     "written_off": 0
+    }
+   }
+  },
+  "status": {
+   "active": {
+    "amount_total": 0,
+    "items": [
+     {
+      "advance": 50000,
+      "debt_amount": 0,
+      "due_amount": 0,
+      "due_until": null,
+      "is_active": true,
+      "lessons_left": null,
+      "overdue_days": null,
+      "paid_until": "2026-12-02",
+      "partial_credit": 11291,
+      "refundable": 50000,
+      "status": "active",
+      "unpaid": 0,
+      "who": "Ученик Ученик ОМ | Общий"
+     }
+    ],
+    "students": 1,
+    "total": 1
+   },
+   "debtors": {
+    "amount_total": 1300000,
+    "items": [
+     {
+      "advance": 0,
+      "debt_amount": 650000,
+      "due_amount": 0,
+      "due_until": null,
+      "is_active": true,
+      "lessons_left": null,
+      "overdue_days": 25,
+      "paid_until": null,
+      "partial_credit": 7143,
+      "refundable": 0,
+      "status": "active",
+      "unpaid": 650000,
+      "who": "Ученик Долг-остаток | Общий"
+     },
+     {
+      "advance": 0,
+      "debt_amount": 350000,
+      "due_amount": 0,
+      "due_until": null,
+      "is_active": true,
+      "lessons_left": null,
+      "overdue_days": 9,
+      "paid_until": "2026-11-12",
+      "partial_credit": 10000,
+      "refundable": 0,
+      "status": "active",
+      "unpaid": 350000,
+      "who": "Ученик Остаток | Общий"
+     },
+     {
+      "advance": 0,
+      "debt_amount": 300000,
+      "due_amount": 0,
+      "due_until": null,
+      "is_active": true,
+      "lessons_left": null,
+      "overdue_days": 8,
+      "paid_until": null,
+      "partial_credit": 0,
+      "refundable": 0,
+      "status": "none",
+      "unpaid": 300000,
+      "who": "Ученик Прогнозов | Пятничная"
+     }
+    ],
+    "students": 3,
+    "total": 3
+   },
+   "expiring": {
+    "amount_total": 0,
+    "items": [],
+    "students": 0,
+    "total": 0
+   },
+   "paused": {
+    "amount_total": 0,
+    "items": [],
+    "students": 0,
+    "total": 0
+   },
+   "to_pay": {
+    "amount_total": 0,
+    "items": [],
+    "students": 0,
+    "total": 0
+   }
+  },
+  "summary": {
+   "active": 1,
+   "advance_total": 150000,
+   "bucket_rows": {
+    "active": 1,
+    "debtors": 3,
+    "expiring": 0,
+    "paused": 0,
+    "to_pay": 0
+   },
+   "buckets": {
+    "active": 1,
+    "debtors": 3,
+    "expiring": 0,
+    "paused": 0,
+    "to_pay": 0
+   },
+   "debt_total": 1300000,
+   "debtors": 3,
+   "due_students": 0,
+   "due_total": 0,
+   "ends_today": 0,
+   "expiring": 0,
+   "free": 0,
+   "memberships_with_debt": 3,
+   "none": 4,
+   "paused": 0,
+   "students_with_advance": 2,
+   "tracked_total": 7
+  }
+ },
+ "extra 2026-12-05": {
+  "accounts": {
+   "Алия | Группа": {
+    "advance": 0,
+    "charged": 0,
+    "covered_through": null,
+    "current_due": 0,
+    "debt": 0,
+    "paid": 0,
+    "paid_until": null,
+    "partial_credit": 0,
+    "past_debt": 0,
+    "recalculated": 0,
+    "reconciles": true,
+    "refundable": 0,
+    "refunded": 0,
+    "segments": [
+     {
+      "amount": 0,
+      "begun": true,
+      "covered_days": 0,
+      "ended": true,
+      "forgiven": 0,
+      "kind": "period",
+      "money": 0,
+      "period_end": "2026-10-31",
+      "period_start": "2026-10-01",
+      "recalculated": 0,
+      "unpaid": 0
+     },
+     {
+      "amount": 0,
+      "begun": true,
+      "covered_days": 0,
+      "ended": true,
+      "forgiven": 0,
+      "kind": "period",
+      "money": 0,
+      "period_end": "2026-11-30",
+      "period_start": "2026-11-01",
+      "recalculated": 0,
+      "unpaid": 0
+     },
+     {
+      "amount": 0,
+      "begun": true,
+      "covered_days": 0,
+      "ended": false,
+      "forgiven": 0,
+      "kind": "period",
+      "money": 0,
+      "period_end": "2026-12-31",
+      "period_start": "2026-12-01",
+      "recalculated": 0,
+      "unpaid": 0
+     }
+    ],
+    "transferred_in": 0,
+    "transferred_out": 0,
+    "written_off": 0,
+    "written_off_granted": 0
+   },
+   "Архивный | Общий": {
+    "advance": 100000,
+    "charged": 200000,
+    "covered_through": "2026-11-11",
+    "current_due": 0,
+    "debt": 0,
+    "paid": 300000,
+    "paid_until": null,
+    "partial_credit": 0,
+    "past_debt": 0,
+    "recalculated": 0,
+    "reconciles": true,
+    "refundable": 100000,
+    "refunded": 0,
+    "segments": [
+     {
+      "amount": 200000,
+      "begun": true,
+      "covered_days": 9,
+      "ended": true,
+      "forgiven": 0,
+      "kind": "period",
+      "money": 200000,
+      "period_end": "2026-11-30",
+      "period_start": "2026-11-01",
+      "recalculated": 0,
+      "unpaid": 0
+     }
+    ],
+    "transferred_in": 0,
+    "transferred_out": 0,
+    "written_off": 0,
+    "written_off_granted": 0
+   },
+   "Бек | Группа": {
+    "advance": 0,
+    "charged": 0,
+    "covered_through": null,
+    "current_due": 0,
+    "debt": 0,
+    "paid": 0,
+    "paid_until": null,
+    "partial_credit": 0,
+    "past_debt": 0,
+    "recalculated": 0,
+    "reconciles": true,
+    "refundable": 0,
+    "refunded": 0,
+    "segments": [
+     {
+      "amount": 0,
+      "begun": true,
+      "covered_days": 0,
+      "ended": true,
+      "forgiven": 0,
+      "kind": "period",
+      "money": 0,
+      "period_end": "2026-10-31",
+      "period_start": "2026-10-01",
+      "recalculated": 0,
+      "unpaid": 0
+     },
+     {
+      "amount": 0,
+      "begun": true,
+      "covered_days": 0,
+      "ended": true,
+      "forgiven": 0,
+      "kind": "period",
+      "money": 0,
+      "period_end": "2026-11-30",
+      "period_start": "2026-11-01",
+      "recalculated": 0,
+      "unpaid": 0
+     },
+     {
+      "amount": 0,
+      "begun": true,
+      "covered_days": 0,
+      "ended": false,
+      "forgiven": 0,
+      "kind": "period",
+      "money": 0,
+      "period_end": "2026-12-31",
+      "period_start": "2026-12-01",
+      "recalculated": 0,
+      "unpaid": 0
+     }
+    ],
+    "transferred_in": 0,
+    "transferred_out": 0,
+    "written_off": 0,
+    "written_off_granted": 0
+   },
+   "Дана | Группа": {
+    "advance": 0,
+    "charged": 0,
+    "covered_through": null,
+    "current_due": 0,
+    "debt": 0,
+    "paid": 0,
+    "paid_until": null,
+    "partial_credit": 0,
+    "past_debt": 0,
+    "recalculated": 0,
+    "reconciles": true,
+    "refundable": 0,
+    "refunded": 0,
+    "segments": [
+     {
+      "amount": 0,
+      "begun": true,
+      "covered_days": 0,
+      "ended": true,
+      "forgiven": 0,
+      "kind": "period",
+      "money": 0,
+      "period_end": "2026-10-31",
+      "period_start": "2026-10-01",
+      "recalculated": 0,
+      "unpaid": 0
+     },
+     {
+      "amount": 0,
+      "begun": true,
+      "covered_days": 0,
+      "ended": true,
+      "forgiven": 0,
+      "kind": "period",
+      "money": 0,
+      "period_end": "2026-11-30",
+      "period_start": "2026-11-01",
+      "recalculated": 0,
+      "unpaid": 0
+     },
+     {
+      "amount": 0,
+      "begun": true,
+      "covered_days": 0,
+      "ended": false,
+      "forgiven": 0,
+      "kind": "period",
+      "money": 0,
+      "period_end": "2026-12-31",
+      "period_start": "2026-12-01",
+      "recalculated": 0,
+      "unpaid": 0
+     }
+    ],
+    "transferred_in": 0,
+    "transferred_out": 0,
+    "written_off": 0,
+    "written_off_granted": 0
+   },
+   "Долг-остаток | Общий": {
+    "advance": 0,
+    "charged": 1300000,
+    "covered_through": null,
+    "current_due": 600000,
+    "debt": 1250000,
+    "paid": 0,
+    "paid_until": null,
+    "partial_credit": 7143,
+    "past_debt": 650000,
+    "recalculated": 50000,
+    "reconciles": true,
+    "refundable": 0,
+    "refunded": 0,
+    "segments": [
+     {
+      "amount": 100000,
+      "begun": true,
+      "covered_days": 0,
+      "ended": true,
+      "forgiven": 0,
+      "kind": "opening",
+      "money": 0,
+      "period_end": "2026-10-31",
+      "period_start": "2026-10-31",
+      "recalculated": 0,
+      "unpaid": 100000
+     },
+     {
+      "amount": 600000,
+      "begun": true,
+      "covered_days": 2,
+      "ended": true,
+      "forgiven": 0,
+      "kind": "period",
+      "money": 0,
+      "period_end": "2026-11-30",
+      "period_start": "2026-11-01",
+      "recalculated": 50000,
+      "unpaid": 550000
+     },
+     {
+      "amount": 600000,
+      "begun": true,
+      "covered_days": 0,
+      "ended": false,
+      "forgiven": 0,
+      "kind": "period",
+      "money": 0,
+      "period_end": "2026-12-31",
+      "period_start": "2026-12-01",
+      "recalculated": 0,
+      "unpaid": 600000
+     }
+    ],
+    "transferred_in": 0,
+    "transferred_out": 0,
+    "written_off": 0,
+    "written_off_granted": 0
+   },
+   "Остаток | Общий": {
+    "advance": 0,
+    "charged": 1000000,
+    "covered_through": "2026-11-12",
+    "current_due": 600000,
+    "debt": 950000,
+    "paid": 0,
+    "paid_until": "2026-11-12",
+    "partial_credit": 10000,
+    "past_debt": 350000,
+    "recalculated": 50000,
+    "reconciles": true,
+    "refundable": 0,
+    "refunded": 0,
+    "segments": [
+     {
+      "amount": 400000,
+      "begun": true,
+      "covered_days": 2,
+      "ended": true,
+      "forgiven": 0,
+      "kind": "period",
+      "money": 0,
+      "period_end": "2026-11-30",
+      "period_start": "2026-11-01",
+      "recalculated": 50000,
+      "unpaid": 350000
+     },
+     {
+      "amount": 600000,
+      "begun": true,
+      "covered_days": 0,
+      "ended": false,
+      "forgiven": 0,
+      "kind": "period",
+      "money": 0,
+      "period_end": "2026-12-31",
+      "period_start": "2026-12-01",
+      "recalculated": 0,
+      "unpaid": 600000
+     }
+    ],
+    "transferred_in": 0,
+    "transferred_out": 0,
+    "written_off": 0,
+    "written_off_granted": 0
+   },
+   "Прогнозов | Пятничная": {
+    "advance": 0,
+    "charged": 700000,
+    "covered_through": "2026-11-12",
+    "current_due": 400000,
+    "debt": 700000,
+    "paid": 0,
+    "paid_until": null,
+    "partial_credit": 0,
+    "past_debt": 300000,
+    "recalculated": 0,
+    "reconciles": true,
+    "refundable": 0,
+    "refunded": 0,
+    "segments": [
+     {
+      "amount": 300000,
+      "begun": true,
+      "covered_days": 0,
+      "ended": true,
+      "forgiven": 0,
+      "kind": "period",
+      "money": 0,
+      "period_end": "2026-11-30",
+      "period_start": "2026-11-01",
+      "recalculated": 0,
+      "unpaid": 300000
+     },
+     {
+      "amount": 400000,
+      "begun": true,
+      "covered_days": 0,
+      "ended": false,
+      "forgiven": 0,
+      "kind": "period",
+      "money": 0,
+      "period_end": "2026-12-31",
+      "period_start": "2026-12-01",
+      "recalculated": 0,
+      "unpaid": 400000
+     }
+    ],
+    "transferred_in": 0,
+    "transferred_out": 0,
+    "written_off": 0,
+    "written_off_granted": 0
+   },
+   "Ученик ОМ | Общий": {
+    "advance": 0,
+    "charged": 1200000,
+    "covered_through": "2026-12-02",
+    "current_due": 550000,
+    "debt": 550000,
+    "paid": 600000,
+    "paid_until": "2026-12-02",
+    "partial_credit": 11291,
+    "past_debt": 0,
+    "recalculated": 50000,
+    "reconciles": true,
+    "refundable": 0,
+    "refunded": 0,
+    "segments": [
+     {
+      "amount": 600000,
+      "begun": true,
+      "covered_days": 28,
+      "ended": true,
+      "forgiven": 0,
+      "kind": "period",
+      "money": 600000,
+      "period_end": "2026-11-30",
+      "period_start": "2026-11-01",
+      "recalculated": 0,
+      "unpaid": 0
+     },
+     {
+      "amount": 600000,
+      "begun": true,
+      "covered_days": 2,
+      "ended": false,
+      "forgiven": 0,
+      "kind": "period",
+      "money": 0,
+      "period_end": "2026-12-31",
+      "period_start": "2026-12-01",
+      "recalculated": 50000,
+      "unpaid": 550000
+     }
+    ],
+    "transferred_in": 0,
+    "transferred_out": 0,
+    "written_off": 0,
+    "written_off_granted": 0
+   }
+  },
+  "balances_advance": {
+   "advance_total": null,
+   "items": [
+    "Ученик Архивный | Общий | 100000"
+   ],
+   "total": 1
+  },
+  "income": {
+   "checks": [
+    {
+     "code": "received_eq_strip",
+     "diff": 0,
+     "left": 900000,
+     "right": 900000
+    },
+    {
+     "code": "refunded_eq_rows",
+     "diff": 0,
+     "left": 0,
+     "right": 0
+    },
+    {
+     "code": "received_eq_methods",
+     "diff": 0,
+     "left": 900000,
+     "right": 900000
+    },
+    {
+     "code": "received_eq_series",
+     "diff": 0,
+     "left": 900000,
+     "right": 900000
+    },
+    {
+     "code": "received_eq_journal",
+     "diff": 0,
+     "left": 900000,
+     "right": 900000
+    },
+    {
+     "code": "strip_current_eq_journal",
+     "diff": 0,
+     "left": 800000,
+     "right": 800000
+    },
+    {
+     "code": "strip_advance_eq_journal",
+     "diff": 0,
+     "left": 100000,
+     "right": 100000
+    }
+   ],
+   "current": {
+    "net_received": 900000,
+    "payments_count": 2,
+    "received": 900000,
+    "refunded": 0,
+    "refunded_from_received": 0,
+    "to_advance": 100000,
+    "to_current": 800000,
+    "to_forward": 0,
+    "to_past_debt": 0,
+    "transferred": 0,
+    "written_off": 0
+   },
+   "position": {
+    "advance_total": 100000,
+    "debt_text": "Долг 1 300 000 сум",
+    "debt_total": 1300000,
+    "debtors": 3,
+    "due_students": 4,
+    "due_text": "К оплате 2 150 000 сум",
+    "due_total": 2150000,
+    "memberships_with_advance": 1,
+    "memberships_with_debt": 3,
+    "students_with_advance": 1
+   }
+  },
+  "statements": {
+   "Алия | Группа": {
+    "rows": [],
+    "summary": {
+     "advance": 0,
+     "charged": 0,
+     "debt_amount": 0,
+     "due_amount": 0,
+     "paid": 0,
+     "recalculated": 0,
+     "reconciles": true,
+     "refunded": 0,
+     "transferred_in": 0,
+     "transferred_out": 0,
+     "unpaid": 0,
+     "written_off": 0
+    }
+   },
+   "Архивный | Общий": {
+    "rows": [
+     {
+      "credit": 0,
+      "date": "2026-11-03",
+      "debit": 200000,
+      "outflow": 0,
+      "type": "charge"
+     },
+     {
+      "credit": 300000,
+      "date": "2026-11-03",
+      "debit": 0,
+      "outflow": 0,
+      "type": "payment"
+     }
+    ],
+    "summary": {
+     "advance": 100000,
+     "charged": 200000,
+     "debt_amount": 0,
+     "due_amount": 0,
+     "paid": 300000,
+     "recalculated": 0,
+     "reconciles": true,
+     "refunded": 0,
+     "transferred_in": 0,
+     "transferred_out": 0,
+     "unpaid": 0,
+     "written_off": 0
+    }
+   },
+   "Бек | Группа": {
+    "rows": [],
+    "summary": {
+     "advance": 0,
+     "charged": 0,
+     "debt_amount": 0,
+     "due_amount": 0,
+     "paid": 0,
+     "recalculated": 0,
+     "reconciles": true,
+     "refunded": 0,
+     "transferred_in": 0,
+     "transferred_out": 0,
+     "unpaid": 0,
+     "written_off": 0
+    }
+   },
+   "Дана | Группа": {
+    "rows": [],
+    "summary": {
+     "advance": 0,
+     "charged": 0,
+     "debt_amount": 0,
+     "due_amount": 0,
+     "paid": 0,
+     "recalculated": 0,
+     "reconciles": true,
+     "refunded": 0,
+     "transferred_in": 0,
+     "transferred_out": 0,
+     "unpaid": 0,
+     "written_off": 0
+    }
+   },
+   "Долг-остаток | Общий": {
+    "rows": [
+     {
+      "credit": 0,
+      "date": "2026-10-31",
+      "debit": 100000,
+      "outflow": 0,
+      "type": "opening_debt"
+     },
+     {
+      "credit": 0,
+      "date": "2026-11-03",
+      "debit": 600000,
+      "outflow": 0,
+      "type": "charge"
+     },
+     {
+      "credit": 50000,
+      "date": "2026-11-24",
+      "debit": 0,
+      "outflow": 0,
+      "type": "recalc"
+     },
+     {
+      "credit": 0,
+      "date": "2026-12-01",
+      "debit": 600000,
+      "outflow": 0,
+      "type": "charge"
+     }
+    ],
+    "summary": {
+     "advance": 0,
+     "charged": 1300000,
+     "debt_amount": 650000,
+     "due_amount": 600000,
+     "paid": 0,
+     "recalculated": 50000,
+     "reconciles": true,
+     "refunded": 0,
+     "transferred_in": 0,
+     "transferred_out": 0,
+     "unpaid": 1250000,
+     "written_off": 0
+    }
+   },
+   "Остаток | Общий": {
+    "rows": [
+     {
+      "credit": 0,
+      "date": "2026-11-03",
+      "debit": 0,
+      "outflow": 0,
+      "type": "opening_paid_until"
+     },
+     {
+      "credit": 0,
+      "date": "2026-11-11",
+      "debit": 400000,
+      "outflow": 0,
+      "type": "charge"
+     },
+     {
+      "credit": 50000,
+      "date": "2026-11-24",
+      "debit": 0,
+      "outflow": 0,
+      "type": "recalc"
+     },
+     {
+      "credit": 0,
+      "date": "2026-12-01",
+      "debit": 600000,
+      "outflow": 0,
+      "type": "charge"
+     }
+    ],
+    "summary": {
+     "advance": 0,
+     "charged": 1000000,
+     "debt_amount": 350000,
+     "due_amount": 600000,
+     "paid": 0,
+     "recalculated": 50000,
+     "reconciles": true,
+     "refunded": 0,
+     "transferred_in": 0,
+     "transferred_out": 0,
+     "unpaid": 950000,
+     "written_off": 0
+    }
+   },
+   "Прогнозов | Пятничная": {
+    "rows": [
+     {
+      "credit": 0,
+      "date": "2026-11-13",
+      "debit": 300000,
+      "outflow": 0,
+      "type": "charge"
+     },
+     {
+      "credit": 0,
+      "date": "2026-12-01",
+      "debit": 400000,
+      "outflow": 0,
+      "type": "charge"
+     }
+    ],
+    "summary": {
+     "advance": 0,
+     "charged": 700000,
+     "debt_amount": 300000,
+     "due_amount": 400000,
+     "paid": 0,
+     "recalculated": 0,
+     "reconciles": true,
+     "refunded": 0,
+     "transferred_in": 0,
+     "transferred_out": 0,
+     "unpaid": 700000,
+     "written_off": 0
+    }
+   },
+   "Ученик ОМ | Общий": {
+    "rows": [
+     {
+      "credit": 0,
+      "date": "2026-11-03",
+      "debit": 600000,
+      "outflow": 0,
+      "type": "charge"
+     },
+     {
+      "credit": 600000,
+      "date": "2026-11-03",
+      "debit": 0,
+      "outflow": 0,
+      "type": "payment"
+     },
+     {
+      "credit": 50000,
+      "date": "2026-11-24",
+      "debit": 0,
+      "outflow": 0,
+      "type": "recalc"
+     },
+     {
+      "credit": 0,
+      "date": "2026-12-01",
+      "debit": 600000,
+      "outflow": 0,
+      "type": "charge"
+     }
+    ],
+    "summary": {
+     "advance": 0,
+     "charged": 1200000,
+     "debt_amount": 0,
+     "due_amount": 550000,
+     "paid": 600000,
+     "recalculated": 50000,
+     "reconciles": true,
+     "refunded": 0,
+     "transferred_in": 0,
+     "transferred_out": 0,
+     "unpaid": 550000,
+     "written_off": 0
+    }
+   }
+  },
+  "status": {
+   "active": {
+    "amount_total": 0,
+    "items": [],
+    "students": 0,
+    "total": 0
+   },
+   "debtors": {
+    "amount_total": 1300000,
+    "items": [
+     {
+      "advance": 0,
+      "debt_amount": 650000,
+      "due_amount": 600000,
+      "due_until": "2026-12-05",
+      "is_active": true,
+      "lessons_left": null,
+      "overdue_days": 35,
+      "paid_until": null,
+      "partial_credit": 7143,
+      "refundable": 0,
+      "status": "active",
+      "unpaid": 1250000,
+      "who": "Ученик Долг-остаток | Общий"
+     },
+     {
+      "advance": 0,
+      "debt_amount": 350000,
+      "due_amount": 600000,
+      "due_until": "2026-12-05",
+      "is_active": true,
+      "lessons_left": null,
+      "overdue_days": 19,
+      "paid_until": "2026-11-12",
+      "partial_credit": 10000,
+      "refundable": 0,
+      "status": "active",
+      "unpaid": 950000,
+      "who": "Ученик Остаток | Общий"
+     },
+     {
+      "advance": 0,
+      "debt_amount": 300000,
+      "due_amount": 400000,
+      "due_until": "2026-12-05",
+      "is_active": true,
+      "lessons_left": null,
+      "overdue_days": 18,
+      "paid_until": null,
+      "partial_credit": 0,
+      "refundable": 0,
+      "status": "none",
+      "unpaid": 700000,
+      "who": "Ученик Прогнозов | Пятничная"
+     }
+    ],
+    "students": 3,
+    "total": 3
+   },
+   "expiring": {
+    "amount_total": 0,
+    "items": [],
+    "students": 0,
+    "total": 0
+   },
+   "paused": {
+    "amount_total": 0,
+    "items": [],
+    "students": 0,
+    "total": 0
+   },
+   "to_pay": {
+    "amount_total": 2150000,
+    "items": [
+     {
+      "advance": 0,
+      "debt_amount": 650000,
+      "due_amount": 600000,
+      "due_until": "2026-12-05",
+      "is_active": true,
+      "lessons_left": null,
+      "overdue_days": 35,
+      "paid_until": null,
+      "partial_credit": 7143,
+      "refundable": 0,
+      "status": "active",
+      "unpaid": 1250000,
+      "who": "Ученик Долг-остаток | Общий"
+     },
+     {
+      "advance": 0,
+      "debt_amount": 350000,
+      "due_amount": 600000,
+      "due_until": "2026-12-05",
+      "is_active": true,
+      "lessons_left": null,
+      "overdue_days": 19,
+      "paid_until": "2026-11-12",
+      "partial_credit": 10000,
+      "refundable": 0,
+      "status": "active",
+      "unpaid": 950000,
+      "who": "Ученик Остаток | Общий"
+     },
+     {
+      "advance": 0,
+      "debt_amount": 300000,
+      "due_amount": 400000,
+      "due_until": "2026-12-05",
+      "is_active": true,
+      "lessons_left": null,
+      "overdue_days": 18,
+      "paid_until": null,
+      "partial_credit": 0,
+      "refundable": 0,
+      "status": "none",
+      "unpaid": 700000,
+      "who": "Ученик Прогнозов | Пятничная"
+     },
+     {
+      "advance": 0,
+      "debt_amount": 0,
+      "due_amount": 550000,
+      "due_until": "2026-12-05",
+      "is_active": true,
+      "lessons_left": null,
+      "overdue_days": null,
+      "paid_until": "2026-12-02",
+      "partial_credit": 11291,
+      "refundable": 0,
+      "status": "active",
+      "unpaid": 550000,
+      "who": "Ученик Ученик ОМ | Общий"
+     }
+    ],
+    "students": 4,
+    "total": 4
+   }
+  },
+  "summary": {
+   "active": 0,
+   "advance_total": 100000,
+   "bucket_rows": {
+    "active": 0,
+    "debtors": 3,
+    "expiring": 0,
+    "paused": 0,
+    "to_pay": 4
+   },
+   "buckets": {
+    "active": 0,
+    "debtors": 3,
+    "expiring": 0,
+    "paused": 0,
+    "to_pay": 4
+   },
+   "debt_total": 1300000,
+   "debtors": 3,
+   "due_students": 4,
+   "due_total": 2150000,
+   "ends_today": 0,
+   "expiring": 0,
+   "free": 0,
+   "memberships_with_debt": 3,
+   "none": 4,
+   "paused": 0,
+   "students_with_advance": 1,
+   "tracked_total": 7
+  }
+ }
+}
