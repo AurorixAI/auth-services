@@ -1177,8 +1177,8 @@ class _Placed:
 
 
 def _begun_by(s: Segment, day: date) -> bool:
-    """Б7 R1: had the period begun by ``day``?  The debt of the opening balance is old by its nature (А7.7): «had the period begun» is not asked.  (The first day of a package is its first held lesson.)"""
-    return s.kind == "opening" or (s.days[0] if s.days else s.period_start) <= day
+    """Б7 R1 for a period that has no other world (a package): had it begun by ``day``?  (The first day of a package is its first held lesson.)"""
+    return (s.days[0] if s.days else s.period_start) <= day
 
 
 @dataclass(frozen=True)
@@ -1246,7 +1246,7 @@ def _was_going(worlds: Sequence[_World], slot: tuple, c: Credit) -> bool:
 def _may_lie(worlds: Sequence[_World]) -> Callable[[Credit, Segment], bool]:
     """Б7.7 п. 1 (R1 in the world known at the moment): a forgiveness lies on a period only if the period had begun by the day the forgiveness was entered IN THE WORLD KNOWN AT THAT MOMENT (a pause
     entered later cannot make it «not begun» afterwards) AND has begun today (a period that has not begun charges nothing: what lay on it would be an advance made of forgiveness).  What it cannot
-    be tied to burns and does not hold the line.  A package and the opening debt have no other world: their own first day."""
+    be tied to burns and does not hold the line.  The debt of the opening balance is old by its nature (А7.7): always; a package has no other world: its own first day."""
     def may(c: Credit, s: Segment) -> bool:
         if c.kind != WRITEOFF or s.kind == "opening":
             return True
