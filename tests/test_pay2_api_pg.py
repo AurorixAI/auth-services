@@ -853,7 +853,7 @@ def test_the_statement_xlsx_reads_like_the_page(world, fixed_today):
                                          f"Оплата № 4 · Payme · внёс {who}", f"Возврат аванса — карта · {who}", None]
     assert got[-1][0] == "Итого" and got[-1][2:7] == [450_000, 253_000, 50_000, 40_000, None]
     assert ws.max_row == head + 7                                            # a month: the band, five rows, the total row; no «Следующие периоды», no cancelled block
-    assert got[1][6] == "Оплачено"                                           # the words of the server for the October charge, not a sum over the cut rows
+    assert got[1][6] == "Закрыто"                                            # the words of the server for the October charge (money and the forgiveness of 50 000 together, Б6.12), not a sum over the cut rows
     # the equalities that replace the running total (decision 7): the advance of the rows is the advance of the summary (60 000), the cost - paid - forgiven + refunded = - advance
     assert [g[6] for g in sheet_grid(export_sheet(world, m), head + 1) if g[6] and g[6].startswith("Аванс")] == ["Аванс 60 000 сум"]
     assert 1_103_000 - 1_153_000 - 50_000 + 40_000 == -60_000

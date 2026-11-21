@@ -29,7 +29,7 @@ def test_the_fixtures_hold_statements():
 @pytest.mark.parametrize("st", CASES)
 def test_the_open_sums_of_the_rows_are_the_cards_and_the_money_balances(st):
     s = st["summary"]
-    sums = {"due": 0, "debt": 0, "advance": 0, "paid": 0, "forgiven": 0}
+    sums = {"due": 0, "debt": 0, "advance": 0, "paid": 0, "forgiven": 0, "closed": 0}
     for row in st["rows"]:
         for part in row["open_parts"]:
             sums[part["name"]] += part["amount"]
