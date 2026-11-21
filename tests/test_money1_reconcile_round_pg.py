@@ -101,9 +101,9 @@ def test_r3_18_i1_the_injected_distortions_of_the_account_are_found_and_an_hones
                                  reason="Подложено", created_by=world.owner.id))
     world.db.commit()
     keys = sorted(f.subject_key for f in mr.reconcile_org(world.db, world.org.id) if f.invariant == "I-1")
-    # PAY-TAILS А6.5: the injected outflow is found; the injected forgiveness of 99 000 000 is NOT a finding any more - the calculation uses only what the charge needs (used <= charged) and the rows equal
-    # what the ledger took in; it is thrown away, it is neither money nor a distortion of the account.  (The check «used > charged» stays as a net: see the pure test below.)
-    assert f"membership:{m0}:outflow" in keys and f"membership:{m1}:writeoff" not in keys and f"membership:{m1}:writeoff_rows" not in keys
+    # PAY-TAILS А7.5: BOTH injected defects are found again.  The forgiveness of 99 000 000 is thrown away by the calculation (used <= charged, the rows equal what the ledger took in), but a sum
+    # entered above everything the begun periods would cost cannot come out of the product: the finding «выдано прощения больше всего начисленного» (key ``...:writeoff``).
+    assert f"membership:{m0}:outflow" in keys and f"membership:{m1}:writeoff" in keys and f"membership:{m1}:writeoff_rows" not in keys
 
 
 def test_r3_18_i1_every_path_of_the_account_has_its_pure_check():
@@ -126,6 +126,15 @@ def test_r3_18_i1_every_path_of_the_account_has_its_pure_check():
     assert [f.details["what"] for f in mr.check_rows(org, "m", big, mr.RowSums(paid=450_000, written_off=99_000_000))] == ["writeoff_exceeds_charged"]   # the USED forgiveness above the charge: a bug of the calculation
     whole = SimpleNamespace(**{**vars(ledger), "written_off": 450_000, "written_off_granted": 450_000})
     assert mr.check_rows(org, "m", whole, mr.RowSums(paid=450_000, written_off=450_000)) == []          # forgiving everything that was charged is lawful
+    # А7.5: the sum entered above the nominal sum of the begun periods is a finding even when the USED part is fine ...
+    over = SimpleNamespace(**{**vars(ledger), "written_off": 450_000, "written_off_granted": 500_000, "nominal_charged": 450_000})
+    assert [(f.details["what"], f.expected, f.actual) for f in mr.check_rows(org, "m", over, mr.RowSums(paid=450_000, written_off=500_000))] == [("writeoff_exceeds_charged", 450_000, 500_000)]
+    # ... and a forgiveness entered for a whole month that a leaving cut AFTERWARDS (charged 294 000 of 420 000, used 294 000, entered 420 000) is lawful
+    cut = SimpleNamespace(**{**vars(ledger), "charged": 294_000, "paid": 0, "written_off": 294_000, "written_off_granted": 420_000, "nominal_charged": 420_000})
+    assert mr.check_rows(org, "m", cut, mr.RowSums(written_off=420_000)) == []
+    # А7.5: the flag «an advance above the money» is a finding of its own (the rule of an advance is broken)
+    flagged = SimpleNamespace(**{**vars(ledger), "flags": ("advance_exceeds_money",), "advance": 126_000})
+    assert [f.details["what"] for f in mr.check_rows(org, "m", flagged, mr.RowSums(paid=450_000))] == ["advance_exceeds_money"]
 
 
 # ============================================================================================================ I-3 (НЕТОЧНОСТЬ-3)

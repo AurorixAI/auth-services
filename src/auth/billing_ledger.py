@@ -393,6 +393,11 @@ class Ledger:
     _cache: Dict = field(default_factory=dict, repr=False, compare=False)
 
     @property
+    def nominal_charged(self) -> int:
+        """PAY-TAILS А7.5: what the periods that have begun would cost without the cut of a leaving, a transfer, an archive or a pause (the ceiling of everything that may lawfully be forgiven)."""
+        return sum(s.nominal for s in self.segments if s.begun or s.kind == "opening")
+
+    @property
     def reconciles(self) -> bool:
         """I2: charged - paid - transferred_in - written_off - recalculated + refunded + transferred_out == debt - advance."""
         return (

@@ -49,6 +49,7 @@ from src.models.platform import PlatformStaff
 from . import business_clock as bc
 from . import money_reconcile_rows as mrows
 from . import payroll_engine as engine
+from .billing_ledger import F_ADVANCE_EXCEEDS_MONEY
 from .closed_period import ClosedPeriods, month_first, open_lesson_key
 
 logger = logging.getLogger(__name__)
@@ -130,8 +131,14 @@ def check_rows(org_id: UUID, membership_id: Any, ledger, rows: RowSums) -> List[
     # it is thrown away by the calculation)
     if rows.written_off != ledger.written_off_granted:
         out.append(Found(org_id, "I-1", f"membership:{sid}:writeoff_rows", sid, None, rows.written_off, ledger.written_off_granted, {"what": "writeoff_rows"}))
-    if ledger.written_off > max(ledger.charged, 0):
-        out.append(Found(org_id, "I-1", f"membership:{sid}:writeoff", sid, None, ledger.charged, ledger.written_off, {"what": "writeoff_exceeds_charged"}))
+    # PAY-TAILS А7.5: the USED forgiveness is never above the charge, and the sum ENTERED is never above what the begun periods would cost without a cut (a leaving may cut a period AFTER it was
+    # forgiven: entered 420 000 against a charge of 294 000 is lawful; entered 99 000 000 against a month of 450 000 cannot come out of the product)
+    ceiling = max(getattr(ledger, "nominal_charged", ledger.charged), ledger.charged, 0)
+    if ledger.written_off > max(ledger.charged, 0) or ledger.written_off_granted > ceiling:
+        out.append(Found(org_id, "I-1", f"membership:{sid}:writeoff", sid, None, ceiling, max(ledger.written_off, ledger.written_off_granted), {"what": "writeoff_exceeds_charged"}))
+    # PAY-TAILS А7.5: an advance is money only (Р4): the flag of the calculation is a finding, not a second number on a screen
+    if F_ADVANCE_EXCEEDS_MONEY in getattr(ledger, "flags", ()):
+        out.append(Found(org_id, "I-1", f"membership:{sid}:advance", sid, None, ledger.paid + ledger.transferred_in - ledger.refunded - ledger.transferred_out, ledger.advance, {"what": "advance_exceeds_money"}))
     return out
 
 
