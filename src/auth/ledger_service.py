@@ -25,6 +25,7 @@ from src.models.auth import (
     AttendanceExcuse,
     Group,
     GroupAttendance,
+    GroupAttendanceAudit,
     GroupAudit,
     GroupScheduleOneOffLesson,
     MembershipOpeningBalance,
@@ -191,7 +192,8 @@ def parse_recalc(block: Dict[str, Any]) -> Tuple[bl.RecalcVersion, ...]:
             start = date.min if raw in (None, "", "min") else date.fromisoformat(str(raw)[:10])
         except ValueError:
             continue
-        out.append(bl.RecalcVersion(start, entry["on"]))
+        # R4 (Б7.8 шаг 5): the version is made on the day it begins (``payments_service`` writes ``from`` = today): its moment is the START of that business day - a time stamp inside the day is not stored
+        out.append(bl.RecalcVersion(start, entry["on"], entered=datetime.min if start == date.min else bc.lesson_instant_utc(start, 0)))
     return tuple(sorted(out, key=lambda v: v.effective_from))
 
 
@@ -495,15 +497,20 @@ class LedgerLoader:
         since = self.settings.accounting_start.isoformat()
         found: Dict[UUID, List[Tuple[str, str]]] = {}
         made: Dict[Tuple[UUID, str, str], str] = {}
-        for group_id, day, lesson_id, made_up_by in self.db.query(GroupAttendance.group_id, GroupAttendance.lesson_date, GroupAttendance.lesson_id, GroupAttendance.made_up_by).filter(
+        created: Dict[Tuple[UUID, str, str], datetime] = {}
+        for group_id, day, lesson_id, made_up_by, row_created in self.db.query(
+            GroupAttendance.group_id, GroupAttendance.lesson_date, GroupAttendance.lesson_id, GroupAttendance.made_up_by, GroupAttendance.created_at,
+        ).filter(
             GroupAttendance.org_id == self.org_id, GroupAttendance.group_id.in_(wanted), GroupAttendance.status == "cancelled",
             GroupAttendance.cancellation_kind == "centre", GroupAttendance.lesson_date >= since,
         ):
             found.setdefault(group_id, []).append((day, lesson_id or ""))
+            created[(group_id, day, lesson_id or "")] = row_created
             if made_up_by:
                 made[(group_id, day, lesson_id or "")] = made_up_by
         if made:
             self._load_makeups(made)
+        moments = self._cancel_moments(wanted, since) if found else {}
         groups = {g.id: g for _, _, g, _ in self.members.values()}
         copies_of = self._cost_copies_of({gid: {lesson_id for _day, lesson_id in items} for gid, items in found.items() if gid in groups}, groups)      # wave C: one query for all the groups
         for group_id, items in found.items():
@@ -513,7 +520,29 @@ class LedgerLoader:
             last = max(date.fromisoformat(day) for day, _ in items)
             regular = {(o["occurrenceDate"], o["id"]) for o in self._occurrences(group, self.settings.accounting_start, last, pattern=True) if not o.get("isOneOff")}
             copies = copies_of.get(group_id, set())
-            self.cancels[group_id] = [bl.CentreCancel(date.fromisoformat(day), lesson_id) for day, lesson_id in items if (day, lesson_id) in regular or lesson_id in copies]
+            self.cancels[group_id] = [bl.CentreCancel(date.fromisoformat(day), lesson_id, entered=moments.get((group_id, day, lesson_id)) or created[(group_id, day, lesson_id)] or datetime.min)
+                                      for day, lesson_id in items if (day, lesson_id) in regular or lesson_id in copies]
+
+    def _cancel_moments(self, group_ids: Set[UUID], since: str) -> Dict[Tuple[UUID, str, str], datetime]:
+        """R4 (Б7.8 шаг 5): the MOMENT a lesson became cancelled by the centre - one query of the journal of attendance for all the groups: the LAST record whose lesson was not cancelled before it
+        (the cancel itself) or that turned the kind of the cancellation INTO ``centre`` (a holiday given back, a kind changed by hand).  A lesson cancelled in advance, when its row did not exist, has the record of its
+        creation (``before_status`` is empty).  A lesson with no such record (a row older than the journal): the caller takes the moment the row was created."""
+        out: Dict[Tuple[UUID, str, str], datetime] = {}
+        for group_id, day, lesson_id, before_status, details, moment in self.db.query(
+            GroupAttendanceAudit.group_id, GroupAttendanceAudit.lesson_date, GroupAttendanceAudit.lesson_id, GroupAttendanceAudit.before_status, GroupAttendanceAudit.details,
+            GroupAttendanceAudit.created_at,
+        ).filter(
+            GroupAttendanceAudit.org_id == self.org_id, GroupAttendanceAudit.group_id.in_(group_ids), GroupAttendanceAudit.after_status == "cancelled",
+            GroupAttendanceAudit.lesson_date >= since,
+        ):
+            kind = details.get("cancellation_kind") if isinstance(details, dict) else None
+            turned_to_centre = isinstance(kind, dict) and kind.get("to") == "centre"
+            if before_status == "cancelled" and not turned_to_centre:
+                continue
+            key = (group_id, day, lesson_id or "")
+            if key not in out or moment > out[key]:
+                out[key] = moment
+        return out
 
     def _cost_copies_of(self, wanted: Dict[UUID, Set[str]], groups: Dict[UUID, Group]) -> Dict[UUID, Set[str]]:
         """``{group id: the copies of a move among its ``wanted`` lesson ids whose cancellation costs the students}``: ONLY ``purpose = 'moved'`` (the copy of a regular lesson, which the month is priced by).  The copy of a move of an
