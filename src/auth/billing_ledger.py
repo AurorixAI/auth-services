@@ -176,6 +176,8 @@ class CentreCancel:
 
     day: date
     lesson_id: str = ""
+    # PAY-TAILS Б7.8 шаг 5 (R4): the MOMENT the lesson became cancelled by the centre (a time stamp, naive UTC; ``datetime.min`` = no stamp: known always) - the event of the account like a pause
+    entered: datetime = datetime.min
 
 
 @dataclass(frozen=True)
@@ -184,6 +186,8 @@ class RecalcVersion:
 
     effective_from: date
     on: bool
+    # PAY-TAILS Б7.8 шаг 5 (R4): the moment the version was made (``datetime.min`` = no stamp); a deduction cannot be known before the setting that asks for it
+    entered: datetime = datetime.min
 
 
 @dataclass(frozen=True)

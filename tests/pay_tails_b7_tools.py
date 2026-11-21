@@ -4,6 +4,9 @@ One command:   python tests/pay_tails_b7_tools.py count  SEED N          -> numb
                python tests/pay_tails_b7_tools.py smallest PROPERTY SEED N -> the smallest world of a property with the table before / after
                B7_TREE=/path/to/another/worktree  python <this file> ...   -> the same on another checkout of ``src`` (a comparison with an older head)
                B7_CANCELS=none|with   -> the generator WITHOUT a lesson cancelled by the centre (no deduction on the line) / ONLY with one (common month, a cancel in October); unset = the old mix (30 % of the common months)
+               python <this file> dump SEED N  -> one JSON line per world with the TOTALS of the account (a comparison of two trees: B7_TREE=old ... > a.txt; the new ... > b.txt; diff)
+  R4 (Б7.8 шаг 5): the cancel of a lesson by the centre is an EVENT of the chain with its own moment (``entered``, the setting of the deductions may be switched on later: ``RecalcVersion.entered``);
+  the moment of the event is the later of the two.
 
 What the product allows (facts, file:line on head 1d323dd / f4642e2):
   * a payment: ``paid_on`` in [today - 3 years, today] (payments_service.py:1490-1494 ``_check_date``; PaymentCreate at :1714); an administrator not earlier than 7 days (payment_status.py:100,
@@ -31,7 +34,7 @@ FIXED1 = bl.Regime(anchor=ps.FIXED_DAY, billing_day=1)
 BOOKS = D(2026, 9, 1)
 EARLIEST = D(2026, 9, 15)                # the earliest date the generator gives a payment / a forgiveness (the product allows 3 years)
 PROPERTIES = ("P1 debt", "P1 used", "P1 advance", "P1 advance<=money", "P1 identity", "P2 debt", "P2 advance<=money", "P2 advance today", "P2 advance back",
-              "P3 used", "P3 debt", "P3 advance", "P3 advance<=money", "P3e used", "P3e debt", "P3e advance", "P3e advance<=money", "P3c advance", "P3ec advance", "P4 early", "P4 today", "P5 probe")
+              "P3 used", "P3 debt", "P3 advance", "P3 advance<=money", "P3k used", "P3k debt", "P3k advance", "P3k advance<=money", "P3e used", "P3e debt", "P3e advance", "P3e advance<=money", "P3c advance", "P3ec advance", "P4 early", "P4 today", "P5 probe")
 
 
 @dataclass(frozen=True)
@@ -81,6 +84,37 @@ def known_pauses(inp, moment):
     return tuple(out)
 
 
+def mk_cancel(day, lesson_id, moment):
+    """A lesson cancelled by the centre, entered at ``moment`` (a tree older than R4 has no such field: the cancel is then without a moment)."""
+    try:
+        return bl.CentreCancel(day, lesson_id, entered=moment)
+    except TypeError:
+        return bl.CentreCancel(day, lesson_id)
+
+
+def mk_version(first, on, moment):
+    try:
+        return bl.RecalcVersion(first, on, entered=moment)
+    except TypeError:
+        return bl.RecalcVersion(first, on)
+
+
+def cancel_moment(inp, c):
+    """The moment a cancel is KNOWN to the account: the later of the moment it was entered and the moment the setting (the version in force on the day of the lesson) was switched on.  Written here on its own."""
+    version = None
+    for v in sorted(inp.recalc_versions, key=lambda x: x.effective_from):
+        if v.effective_from <= c.day:
+            version = v
+    moment = getattr(c, "entered", datetime.min)
+    if version is not None and version.on:
+        moment = max(moment, getattr(version, "entered", datetime.min))
+    return moment
+
+
+def known_cancels(inp, moment):
+    return tuple(c for c in inp.centre_cancels if cancel_moment(inp, c) <= moment)
+
+
 def now_of(inp):
     return at(inp.today, 900)
 
@@ -89,7 +123,7 @@ def _debt_on(inp, day, entered_before, moment):
     """The debt of the account as it was on ``day``, at ``moment``: the credits entered before, the pauses known by then."""
     seen = tuple(c for c in inp.credits if entered_before(c))
     held = tuple(c for c in inp.counted_lessons if c.day <= day)                          # the lessons held BY THAT DAY (the product reads the account of the day it is entered on: no later lesson is there yet)
-    return bl.run_ledger(replace(inp, today=day, credits=seen, pauses=known_pauses(inp, moment), counted_lessons=held)).debt
+    return bl.run_ledger(replace(inp, today=day, credits=seen, pauses=known_pauses(inp, moment), counted_lessons=held, centre_cancels=known_cancels(inp, moment))).debt
 
 
 def allowed(inp):
@@ -122,9 +156,6 @@ def base_world(rng, cfg=Cfg()):
     if mode == "packages":
         held = [d for d in (D(2026, 10, 1) + timedelta(days=k) for k in range((today - D(2026, 10, 1)).days + 1)) if d.weekday() in (1, 3, 4) and (stay_last is None or d <= stay_last)]
         inp = replace(inp, counted_lessons=tuple(bl.CountedLesson(d, f"l{d}") for d in held))
-    if common and (cfg.cancels == "with" or (cfg.cancels != "none" and rng.random() < 0.3)):
-        cancel = D(2026, 10, 13) + timedelta(days=7 * rng.randint(0, 3))
-        inp = replace(inp, centre_cancels=(bl.CentreCancel(cancel, "l"),), recalc_versions=(bl.RecalcVersion(date.min, True),))
     if rng.random() < 0.7:
         last_stay = stay_last or today + timedelta(days=40)
         if rng.random() < 0.2:                                                                                # a whole month in a pause (October, or November once it has begun)
@@ -143,9 +174,26 @@ def _any_day(rng, lo, hi):
     return lo + timedelta(days=rng.randint(0, max(0, (hi - lo).days)))
 
 
+def _with_cancel(rng, inp, cfg):
+    """R4: a lesson of October (or the first of November) cancelled by the centre, entered at a moment of the chain (before or after the lesson, before or after the credits); sometimes the setting of the
+    deductions is switched on LATER than the cancel (a version made on a day, its moment is the start of that day)."""
+    if inp.regimes[0].anchor != ps.FIXED_DAY or inp.regimes[0].mode == bl.LESSONS or cfg.cancels == "none":
+        return inp
+    if cfg.cancels != "with" and rng.random() >= 0.3:
+        return inp
+    lesson = D(2026, 10, 13) + timedelta(days=7 * rng.randint(0, 3))
+    entered = _any_day(rng, D(2026, 9, 25), inp.today)
+    cancel = mk_cancel(lesson, "l", at(entered, rng.choice([5, 25, 45, 90, 700])))
+    version = mk_version(date.min, True, datetime.min)
+    if rng.random() < 0.25:
+        first = _any_day(rng, D(2026, 10, 1), lesson)
+        version = mk_version(first, True, at(first, 0))
+    return replace(inp, centre_cancels=(cancel,), recalc_versions=(version,))
+
+
 def allowed_world(rng, cfg=Cfg()):
     """The history in the order of entry: 1-4 credits, each entered on a day <= today; a forgiveness <= the debt of its entry day; a date from ``EARLIEST`` to the entry day."""
-    inp = base_world(rng, cfg)
+    inp = _with_cancel(rng, base_world(rng, cfg), cfg)
     days = sorted(_any_day(rng, D(2026, 10, 6), inp.today) for _ in range(rng.randint(1, 4)))
     credits = []
     for i, e in enumerate(days):
@@ -189,6 +237,17 @@ def new_pause(rng, inp):
     if stay_last is not None:
         first, last = min(first, stay_last), min(last, stay_last)
     return mk_pause(first, last, inp.today, 900)
+
+
+def new_cancel(rng, inp):
+    """R4 P3k: a lesson cancelled by the centre NOW (today): a lesson of the October days or the first of November, one that is not cancelled yet; the setting must be on."""
+    if not inp.recalc_versions or inp.regimes[0].anchor != ps.FIXED_DAY or inp.regimes[0].mode == bl.LESSONS:
+        return None
+    taken = {c.day for c in inp.centre_cancels}
+    free = [d for d in (D(2026, 10, 13) + timedelta(days=7 * k) for k in range(4)) if d not in taken and d >= max(v.effective_from for v in inp.recalc_versions)]
+    if not free:
+        return None
+    return mk_cancel(rng.choice(free), "l", at(inp.today, 900))
 
 
 @dataclass(frozen=True)
@@ -311,6 +370,20 @@ def violations(inp, x):
         if after.advance - before.advance > max(0, before.charged - after.charged):       # information: the same bound by the TOTAL charge (a period changes its place on a personal chain, the id of a period is not the same after)
             bad.append(f"{tag}c advance")
         return bad
+    if isinstance(x, bl.CentreCancel):                                  # R4 P3k: a lesson cancelled by the centre entered NOW
+        after = bl.run_ledger(apply_x(inp, x))
+        bad = []
+        if after.flags or not after.reconciles:
+            bad.append("flags")
+        if after.advance > money_of(inp):
+            bad.append("P3k advance<=money")
+        if after.written_off > before.written_off:
+            bad.append("P3k used")
+        if after.debt > before.debt:
+            bad.append("P3k debt")
+        if after.advance - before.advance > after.recalculated - before.recalculated:        # the advance grows only by the deduction that came on the line
+            bad.append("P3k advance")
+        return bad
     new = replace(inp, credits=(*inp.credits, x))
     after = bl.run_ledger(new)
     bad = []
@@ -364,10 +437,10 @@ def explain(inp):
     may = bl._may_lie(worlds)
     alive = bl._alive_forgiveness(worlds, credits, net)
     amounts = {c.id: (alive[c.id] if c.kind == bl.WRITEOFF else net[c.id]) for c in credits}
-    main, _ = bl._tie(segments, credits, amounts, lambda s: s.capacity, may)
+    main, _ = bl._tie(segments, credits, amounts, getattr(bl, "_line_room", lambda recalcs: (lambda s: s.capacity))(recalcs), may)
     tied = {c.id: {s.id: sum(a for cc, a in main[s.id] if cc.id == c.id) for s in segments} for c in credits}
     lines = [f"today {inp.today}  charged {L.charged}  debt {L.debt}  advance {L.advance}  used {L.written_off} of {L.written_off_granted}  covered_through {L.covered_through}"]
-    lines.append("  pauses: " + (", ".join(f"{p.first}..{p.last} entered {pause_moment(p):%d.%m %H:%M}" for p in inp.pauses) or "-") + "   centre cancels: " + (", ".join(str(c.day) for c in inp.centre_cancels) or "-"))
+    lines.append("  pauses: " + (", ".join(f"{p.first}..{p.last} entered {pause_moment(p):%d.%m %H:%M}" for p in inp.pauses) or "-") + "   centre cancels: " + (", ".join(f"{c.day} entered {getattr(c, 'entered', datetime.min):%d.%m %H:%M}" for c in inp.centre_cancels) or "-"))
     head = "  credit (kind, date, entered, amount)".ljust(52) + "".join(f"| {s.period_start} (charge {s.amount}, first day {s.days[0] if s.days else '-'})".ljust(46) for s in segments) + "| burned / leftover"
     lines.append(head)
     for c in credits:
@@ -433,8 +506,12 @@ def describe(inp, x):
         lines.append(f"  credit {c.id}: {c.kind} {c.amount} dated {c.on} entered {c.created_at:%d.%m %H:%M}")
     for p in inp.pauses:
         lines.append(f"  pause {p.first}..{p.last} entered {pause_moment(p):%d.%m %H:%M}")
+    for c in inp.centre_cancels:
+        lines.append(f"  cancel {c.day} entered {getattr(c, 'entered', datetime.min):%d.%m %H:%M}; setting " + ", ".join(f"{v.effective_from} {v.on} made {getattr(v, 'entered', datetime.min):%d.%m %H:%M}" for v in inp.recalc_versions))
     if isinstance(x, bl.Pause):
         lines.append(f"  ADDED  pause {x.first}..{x.last} entered {pause_moment(x):%d.%m %H:%M}")
+    elif isinstance(x, bl.CentreCancel):
+        lines.append(f"  ADDED  lesson {x.day} cancelled by the centre, entered {x.entered:%d.%m %H:%M}")
     elif isinstance(x, PauseEdit):
         lines.append(f"  ADDED  edit of pause {x.index}: {x.kind} to {x.first}..{x.last} entered {inp.today} 12:00")
     else:
@@ -447,6 +524,8 @@ def apply_x(inp, x):
         return replace(inp, pauses=(*inp.pauses, x))
     if isinstance(x, PauseEdit):
         return apply_edit(inp, x)
+    if isinstance(x, bl.CentreCancel):
+        return replace(inp, centre_cancels=(*inp.centre_cancels, x))
     return replace(inp, credits=(*inp.credits, x))
 
 
@@ -460,9 +539,9 @@ def run_counts(seed, n, cfg=Cfg()):
     for _ in range(n):
         inp = allowed_world(rng, cfg)
         worlds += 1
-        for kind in (bl.PAYMENT, bl.WRITEOFF, "pause", "edit"):
+        for kind in (bl.PAYMENT, bl.WRITEOFF, "pause", "edit", "cancel"):
             x = (new_payment(rng, inp) if kind == bl.PAYMENT else new_forgiveness(rng, inp) if kind == bl.WRITEOFF
-                 else new_pause(rng, inp) if kind == "pause" else new_pause_edit(rng, inp))
+                 else new_pause(rng, inp) if kind == "pause" else new_pause_edit(rng, inp) if kind == "edit" else new_cancel(rng, inp) if inp.centre_cancels else None)
             if x is None:
                 continue
             pays += kind == bl.PAYMENT
@@ -475,9 +554,35 @@ def run_counts(seed, n, cfg=Cfg()):
     return counts, found, (worlds, pays, forgs)
 
 
+def _totals(inp):
+    L = bl.run_ledger(inp)
+    return [L.charged, L.debt, L.advance, L.written_off, L.recalculated, L.paid, L.refundable, sorted(s.amount for s in L.segments)]
+
+
+def dump(seed, n, cfg):
+    """Б7.8 5.3: the TOTALS of the account of the worlds WITHOUT a forgiveness (as they are, and with a payment / a pause / an edit of a pause / a cancel entered now): one JSON line per account.  The same seed on
+    two trees (``B7_TREE``) must give the same lines: R4 moves money between the periods, never the totals."""
+    import json
+    rng = random.Random(seed)
+    for k in range(n):
+        inp = allowed_world(rng, cfg)
+        pay, pse, edit = new_payment(rng, inp), new_pause(rng, inp), new_pause_edit(rng, inp)
+        cancel = new_cancel(rng, inp) if inp.centre_cancels else None
+        if any(c.kind == bl.WRITEOFF for c in inp.credits):
+            continue
+        row = {"world": k, "now": _totals(inp)}
+        for name, x in (("payment", pay), ("pause", pse), ("edit", edit), ("cancel", cancel)):
+            if x is not None:
+                row[name] = _totals(apply_x(inp, x))
+        print(json.dumps(row))
+
+
 def main(argv):
     cmd = argv[1]
     cfg = cfg_from_env()
+    if cmd == "dump":
+        dump(int(argv[2]), int(argv[3]), cfg)
+        return
     if cmd == "count":
         total = {}
         for seed in range(int(argv[2]), int(argv[2]) + (int(argv[4]) if len(argv) > 4 else 1)):
