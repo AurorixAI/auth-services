@@ -615,7 +615,7 @@ def e1_create_replace_void(store):
     write("e1_create_300000.json", PaymentCreated(
         payment=p18,
         allocation=AllocationSummary(items=allocs, unpaid_before=769_000, unpaid_after=469_000, advance_after=0,
-                                     paid_until_before=t0["through"], paid_until_after=t["through"]),
+                                     paid_until_before=t0["through"]),
         warnings=[], row=row), store)
 
     # --- receipt of that payment (the snapshot is "at the moment of the payment")
@@ -651,7 +651,7 @@ def e1_create_replace_void(store):
     write("e8_replace_300000_by_250000.json", PaymentCreated(
         payment=p19,
         allocation=AllocationSummary(items=allocs2, unpaid_before=769_000, unpaid_after=519_000, advance_after=0,
-                                     paid_until_before=t0["through"], paid_until_after=t2["through"]),
+                                     paid_until_before=t0["through"]),
         warnings=[], row=row2), store)
 
     # --- void of the 300 000: the row returns to the state before it

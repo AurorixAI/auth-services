@@ -66,8 +66,7 @@
     "unpaid_before": 769000,
     "unpaid_after": 519000,
     "advance_after": 0,
-    "paid_until_before": "2026-09-27",
-    "paid_until_after": "2026-10-12"
+    "paid_until_before": "2026-09-27"
   },
   "warnings": [],
   "row": {

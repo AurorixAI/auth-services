@@ -184,7 +184,6 @@ class AllocationSummary(PayModel):
     unpaid_after: int = 0
     advance_after: int = 0
     paid_until_before: Optional[date_type] = None
-    paid_until_after: Optional[date_type] = None
 
 
 class PaymentSettings(BaseModel):

@@ -143,18 +143,6 @@
             "title": "Items",
             "type": "array"
           },
-          "paid_until_after": {
-            "anyOf": [
-              {
-                "format": "date",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Paid Until After"
-          },
           "paid_until_before": {
             "anyOf": [
               {
@@ -183,8 +171,7 @@
           "unpaid_before",
           "unpaid_after",
           "advance_after",
-          "paid_until_before",
-          "paid_until_after"
+          "paid_until_before"
         ],
         "title": "AllocationSummary",
         "type": "object"

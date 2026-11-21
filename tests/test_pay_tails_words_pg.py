@@ -95,6 +95,16 @@ def test_the_receipt_of_a_closed_period_says_paid_until_and_of_a_part_says_sums(
     assert "text" not in rc["state_on_issue"] and rc["state_on_issue"]["debt"] == 320_000
 
 
+def test_the_receipt_of_an_old_payment_says_what_is_not_paid_now_and_up_to_which_day_the_money_goes(world, fixed_today):
+    # Б9.5: the route of the receipt, the phrase with BOTH parts.  420 000 paid on 01.11 for the personal period 01.11 - 30.11.  On 03.12 the second period (01.12 - 30.12, 420 000) has begun and is not paid:
+    # the state of the day of issue is «не оплачено 420 000 сум, оплачено до 30.11» (the days of the first period are covered, the whole second one is a debt).
+    g, s = lp(world, fixed_today)
+    made = pay(world, s, g, amount=420_000, paid_on=D(2026, 11, 1))
+    fixed_today(D(2026, 12, 3))
+    rc = owner(world).get(f"{API}/org/payments/{made['payment']['id'] if 'payment' in made else made['id']}/receipt").json()
+    assert rc["receipt_state_text"] == f"не оплачено {M(420_000)}, оплачено до 30.11" and rc["state_on_issue"]["debt"] == 420_000 and rc["state_on_issue"]["as_of"] == "2026-12-03"
+
+
 def test_the_sub_line_of_a_debtor_has_no_day_inside_a_period(world, fixed_today):
     g, s = lp(world, fixed_today)
     pay(world, s, g, amount=100_000, paid_on=D(2026, 11, 1))

@@ -7,6 +7,7 @@ import pytest
 from src.auth import billing_ledger as bl
 from src.auth import pay_due
 from src.auth import payment_status as ps
+from src.auth import payments_texts as tx
 from src.auth import payments_views as pv
 
 from tests.pay2_ledger_helpers import (
@@ -42,8 +43,9 @@ def check_preview(fx: dict, inp: bl.LedgerInput, new: bl.Credit):
         res["debt_amount_after"], res["due_amount_after"], date.fromisoformat(res["due_until_after"]) if res["due_until_after"] else None, res["overdue_days_after"])
     assert pv.status_without_paid_until(after.status.status, after.debt) == res["status_after"]
     assert after.partial_credit == res["partial_credit_after"]
+    # the contract of the probe since 5f9af7d: ONE date after the payment, the one in its words (``after_text``; the old ``paid_until_after`` field said another day when an advance lay on the next period)
+    assert tx.after_text(named_after.debt_amount, named_after.due_amount, pv.cover_until(after), after.lessons.left if after.mode == bl.LESSONS else None, after.advance, after.covered_by) == res["after_text"]
     if after.mode == bl.CALENDAR:
-        assert (after.status.paid_until.isoformat() if after.status.paid_until else None) == res["paid_until_after"]
         assert (before.status.paid_until.isoformat() if before.status.paid_until else None) == res["paid_until_before"]
     else:
         lv = res["lessons"]
@@ -106,7 +108,7 @@ def test_e8_replace_is_void_plus_insert():
     replaced = bl.run_ledger(e1([credit("p19", TODAY, 250_000, minutes=2)]))
     fx = fixture("e8_replace_300000_by_250000")
     assert replaced.debt == fx["allocation"]["unpaid_after"] == 519_000 and with_300.debt == 469_000
-    assert replaced.status.paid_until.isoformat() == fx["allocation"]["paid_until_after"]
+    assert replaced.status.paid_until == D(2026, 10, 12)       # the day of the 250 000 preview (``test_e1_numbers_of_the_design_table``); the response of the save no longer carries a second date (Б9.5)
     assert [alloc_tuple(a) for a in replaced.allocations if a.credit_id == "p19"] == [
         fixture_alloc_tuple(a) for a in fx["allocation"]["items"]]
 

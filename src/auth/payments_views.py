@@ -74,7 +74,7 @@ def payment_allocation(ledger: bl.Ledger, payment_id: str) -> PaymentAllocationO
 def allocation_summary(before: bl.Ledger, after: bl.Ledger, credit_id: str) -> AllocationSummary:
     return AllocationSummary(
         items=allocations_of(after, credit_id), unpaid_before=before.debt, unpaid_after=after.debt,
-        advance_after=after.advance, paid_until_before=before.status.paid_until, paid_until_after=after.status.paid_until,
+        advance_after=after.advance, paid_until_before=before.status.paid_until,
     )
 
 
