@@ -82,3 +82,12 @@ def test_a_forgiveness_that_money_had_pushed_out_covers_the_donor_period_after_t
     assert (octo.amount, octo.money, octo.forgiven, octo.unpaid) == (600_000, 300_000, 0, 300_000)
     assert (L.charged, L.debt, L.advance, L.written_off, L.written_off_granted) == (900_000, 300_000, 0, 300_000, 900_000) and L.reconciles and not L.flags
     assert L.forgiven_used_by == {"w2": 300_000}
+
+
+def test_a_forgiveness_of_the_opening_balance_covers_it_even_when_the_debt_day_is_after_the_day_it_was_entered():
+    # А7.7: a stay from 01.11 (420 000), the opening balance of the membership says «owed 100 000 on 10.11» (a debt «on a future start day»).  05.11: forgiven 100 000.  The rule «the period had begun by the day
+    # of entering» is for periods of the stay; the debt of the opening is old by its nature, so it is covered: used 100 000 (before: 0, the forgiveness burned and the debt stayed).  Today 20.11:
+    # charged 100 000 + 420 000 = 520 000, used 100 000, debt 420 000, advance 0.
+    inp = make(today=D(2026, 11, 20), stays=[bl.Stay(D(2026, 11, 1))], price_at=flat(420_000), start=D(2026, 10, 1), credits=[entered("w", D(2026, 11, 5), 100_000)])
+    L = bl.run_ledger(replace(inp, opening=bl.Opening(debt_amount=100_000, debt_on=D(2026, 11, 10))))
+    assert (L.charged, L.debt, L.advance, L.written_off, L.written_off_granted) == (520_000, 420_000, 0, 100_000, 100_000) and L.reconciles and not L.flags

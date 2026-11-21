@@ -1195,7 +1195,7 @@ def _place_credits(segments: Sequence[Segment], credits: Sequence[Credit], net: 
         """The forgiveness tied to the period covers what money and deductions left of its charge (only if the period had begun by the day it was entered); returns the room that is still free."""
         begin = s.days[0] if s.days else s.period_start
         for c, a in tied[s.id]:
-            if c.kind != WRITEOFF or begin > (c.entered_on or c.on):
+            if c.kind != WRITEOFF or (s.kind != "opening" and begin > (c.entered_on or c.on)):             # А7.7: the debt of the opening balance is old by its nature: «had the period begun» is not asked
                 continue
             take = min(a, left)
             left -= take
