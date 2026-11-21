@@ -51,6 +51,18 @@
       "AddStudentToGroupRequest": {
         "description": "Optional body of \"add a student to a group\".\n\nWithout a body the student follows the price of the group.  ``price_override`` is an explicit individual\nprice (sum + reason) and needs the right to manage payments.",
         "properties": {
+          "expected_as_of": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected As Of"
+          },
           "expected_carried": {
             "anyOf": [
               {

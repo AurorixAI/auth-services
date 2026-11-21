@@ -2653,6 +2653,7 @@ class AuthService:
         immediate: bool = True,
         from_group_id: Optional[Any] = None,
         expected_carried: Optional[int] = None,
+        expected_as_of: Optional[date] = None,
         batch_common: bool = False,
     ) -> dict:
         """Enrol a student in a group.
@@ -2922,17 +2923,21 @@ class AuthService:
         if closing:
             from .payments_service import PaymentService  # lazy: pulls in the status maths
 
+            if expected_as_of is not None and payments_detail and expected_as_of != ps.business_date(now_dt):      # PAY-TAILS Б6.6: the day of the probe, as at a leaving: another business day is the same refusal (the charge of the source moved at midnight)
+                from .leave_service import BALANCE_CHANGED_TEXT, BalanceChanged
+
+                raise BalanceChanged(BALANCE_CHANGED_TEXT, fresh=[])
             self.db.flush()
             carried = PaymentService(self.db).carry_over_on_transfer(
                 org_id, actor_id, closing, membership,
                 detailed=payments_detail, moment=now_dt,
             )
             if expected_carried is not None and payments_detail:      # Money-2 T5: the number the window showed against the one worked out under the locks - a payment cancelled meanwhile is 409, nothing is written
-                from .leave_service import BalanceChanged
+                from .leave_service import BALANCE_CHANGED_TEXT, BalanceChanged
 
                 actual = next((int(n["amount"]) for n in carried if n.get("code") == "payment_carried_over" and "amount" in n), 0)
                 if actual != expected_carried:
-                    raise BalanceChanged("Данные оплат изменились — проверьте суммы", fresh=[{"carried": actual}], carried=actual)
+                    raise BalanceChanged(BALANCE_CHANGED_TEXT, fresh=[{"carried": actual}], carried=actual)
             if payments_detail and carried:      # Money-1 D-6: the window says what the NEW account looks like after the transfer, not only what arrived
                 pay = PaymentService(self.db)
                 carry_after = pay.transfer_balance(carry_before, pay.account_after(org_id, membership.id, now_dt, tomorrow=True), group.name)
@@ -2967,6 +2972,7 @@ class AuthService:
             "status": "added",
             "display_id": student.display_id,
             "mode": mode,
+            "as_of": ps.business_date(now_dt),      # PAY-TAILS Б6.6: the business day of the probe: the window sends it back as ``expected_as_of``
             "membership_id": str(membership.id),
             "warnings": warnings,
             "carried": carried,

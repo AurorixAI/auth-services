@@ -346,10 +346,26 @@ def test_t5_a_payment_cancelled_between_the_window_and_the_transfer_is_409_and_n
     assert owner(world).post(f"{API}/org/payments/{second['payment']['id']}/void", json={"reason": "Внесли дважды"}).status_code == 200
     r = add(world, s0, group=b, mode="transfer", expected_carried=390_000, expect=409)
     assert r["detail"]["code"] == "BALANCE_CHANGED" and r["detail"]["carried"] == 190_000 and r["detail"]["fresh"] == [{"carried": 190_000}]
+    assert r["detail"]["message"] == "Сумма изменилась, откройте окно заново"          # PAY-TAILS Б6.6: the one refusal of a window (was: «Данные оплат изменились — проверьте суммы»)
     assert membership(world, s0, a).is_active and world.db.query(MembershipTransfer).filter_by(student_id=s0.id).count() == 0     # nothing written
     assert world.db.query(StudentGroup).filter_by(student_id=s0.id, group_id=b.id).count() == 0
     again = add(world, s0, group=b, mode="transfer", expected_carried=190_000)                 # the fresh number goes through
     assert again["status"] == "added"
+
+
+def test_b6_6_a_transfer_after_midnight_is_refused_like_a_leaving(world, fixed_today):
+    # the window (dry run) of 22.11 says ``as_of`` 22.11; the button is pressed on 23.11 with ``expected_as_of`` 22.11: the same 409 with the same words as a leaving, nothing written; the fresh day goes through.
+    # (A transfer is the money right's act - a caller without it is refused whole, 403 ``MONEY_RIGHT_REQUIRED``: there is nobody to leave unchecked.)
+    a, b, c = groups3(world, fixed_today, date(2026, 11, 22))
+    s0 = world.students[0]
+    joined(world, s0, a, date(2026, 11, 2))
+    pay(world, s0, a, amount=600_000)
+    assert add(world, s0, group=b, mode="transfer", dry_run=True)["as_of"] == "2026-11-22"
+    fixed_today(date(2026, 11, 23))
+    r = add(world, s0, group=b, mode="transfer", expected_as_of="2026-11-22", expect=409)
+    assert r["detail"]["code"] == "BALANCE_CHANGED" and r["detail"]["message"] == "Сумма изменилась, откройте окно заново"
+    assert membership(world, s0, a).is_active and world.db.query(MembershipTransfer).filter_by(student_id=s0.id).count() == 0 and world.db.query(StudentGroup).filter_by(student_id=s0.id, group_id=b.id).count() == 0
+    assert add(world, s0, group=b, mode="transfer", expected_as_of="2026-11-23")["status"] == "added"
 
 
 def test_t5_a_transfer_without_expected_carried_is_not_checked_and_a_matching_one_passes(world, fixed_today):

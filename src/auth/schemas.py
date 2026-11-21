@@ -359,6 +359,8 @@ class AddStudentToGroupRequest(BaseModel):
     from_group_id: Optional[UUID] = None
     # Money-2 T5: the sum the window showed as «перейдёт» (``effects.moves[code=money].amount`` of the dry run); the server works it out again under the locks and a difference is 409 ``BALANCE_CHANGED`` (nothing written).
     expected_carried: Optional[StrictInt] = None
+    # PAY-TAILS Б6.6: the business day of the probe (``as_of`` of the dry run); another day at the action is 409 ``BALANCE_CHANGED`` (the charge of the source group moves at midnight), as at a leaving.  Money right only.
+    expected_as_of: Optional[date] = None
 
     @field_validator("monthly_fee")
     @classmethod
