@@ -1,4 +1,4 @@
-"""PAY-TAILS А6.7: the KNOWN deviations of the mechanism, pinned «as they are» (pure ledger, numbers by hand).  They are not fixed in package A: the lead decides, ROADMAP records them."""
+"""PAY-TAILS А6.7: the KNOWN deviations of the mechanism, pinned «as they are» (pure ledger, numbers by hand): О2, О3.  О1 was FIXED in А7.1 (the capacity of a period is counted per credit).  They are not fixed in package A: the lead decides, ROADMAP records them."""
 from dataclasses import replace
 from datetime import date, timedelta
 
@@ -12,17 +12,24 @@ def entered(cid, on, amount, minutes=0):
 
 
 def test_o1_a_pause_planned_before_the_forgiveness_then_a_prepayment_of_the_next_month():
-    # ОМ 600 000 (12 lessons Tue / Thu / Fri), a pause 17.11 - 30.11 is planned (6 lessons are charged: A = 300 000, the nominal sum does not know about the pause: 600 000).
-    # 10.11: the debt is 300 000 -> forgiven 300 000.  11.11: the next month is prepaid, 600 000.  By the order the 600 000 start after the 300 000 of the forgiveness: November gets 300 000 of MONEY, so the
-    # forgiveness is not needed (it burns: used 0); December gets only 300 000 of 600 000.  The window of the payment shows it («Что изменится»); a second forgiveness repairs it.
+    # FIXED in А7.1 (it was a «known deviation» pinned as it is: the nominal sum did not know about the pause and the prepayment of the next month ended short).
+    # ОМ 600 000 (12 lessons Tue / Thu / Fri), a pause 17.11 - 30.11 is entered on 09.11 (6 lessons are charged: A = 300 000; the capacity of November for a credit entered AFTER the pause = 300 000).
+    # 10.11: the debt is 300 000 -> forgiven 300 000: it lies on November (capacity 300 000) and is USED.  11.11: the next month is prepaid, 600 000: November is full, so all of it is December's:
+    # December money 600 000, unpaid 0.  Debt 0; the forgiveness is used 300 000; 600 000 are an advance (December has not begun: money).
     fixed = bl.Regime(anchor=ps.FIXED_DAY, billing_day=1)
     inp = make(today=D(2026, 11, 20), stays=[bl.Stay(D(2026, 11, 1))], price_at=flat(600_000), regimes=[fixed], start=D(2026, 10, 1), lesson_days=weekly((1, 3, 4)),
                credits=[entered("w", D(2026, 11, 10), 300_000), credit("p", D(2026, 11, 11), 600_000, minutes=1)])
-    L = bl.run_ledger(replace(inp, pauses=(bl.Pause(D(2026, 11, 17), D(2026, 11, 30)),)))
+    L = bl.run_ledger(replace(inp, pauses=(bl.Pause(D(2026, 11, 17), D(2026, 11, 30), created_on=D(2026, 11, 9)),)))
     nov, dec = [s for s in L.segments if s.kind == "period"][:2]
-    assert (nov.amount, nov.money, nov.forgiven) == (300_000, 300_000, 0)
-    assert (dec.money, dec.forgiven, dec.unpaid) == (300_000, 0, dec.amount - 300_000)
-    assert (L.written_off, L.written_off_granted, L.debt, L.advance) == (0, 300_000, 0, 300_000)      # the 300 000 left of the prepayment are the advance of December (money); the forgiveness is gone
+    assert (nov.amount, nov.money, nov.forgiven) == (300_000, 0, 300_000)
+    assert (dec.money, dec.forgiven, dec.unpaid) == (600_000, 0, 0)
+    assert (L.written_off, L.written_off_granted, L.debt, L.advance) == (300_000, 300_000, 0, 600_000)
+    # the same account when the pause is entered AFTER both records (С5: a later pause is not in the capacity): the order of the line decides as before - November takes 300 000 of the 600 000 of the nominal sum,
+    # money first: money 300 000 (the forgiveness is not needed, it burns), December gets the other 300 000
+    L = bl.run_ledger(replace(inp, pauses=(bl.Pause(D(2026, 11, 17), D(2026, 11, 30), created_on=D(2026, 11, 12)),)))
+    nov, dec = [s for s in L.segments if s.kind == "period"][:2]
+    assert (nov.money, nov.forgiven, dec.money, dec.forgiven) == (300_000, 0, 300_000, 0)
+    assert (L.written_off, L.written_off_granted, L.debt, L.advance) == (0, 300_000, 0, 300_000)
 
 
 def test_o2_a_price_lowered_backdated_gives_an_advance_in_one_order_of_the_records_and_none_in_the_other():

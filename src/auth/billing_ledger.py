@@ -113,8 +113,8 @@ class Credit:
     on: date
     created_at: datetime
     amount: int
-    # PAY-TAILS А6.1: the business day the write-off was ENTERED (``created_at``), None = unknown (an old row): ``on`` is taken.  A forgiveness lies only on the periods that
-    # had begun by that day, never on a future one.
+    # PAY-TAILS А6.1: the business day the credit was ENTERED (``created_at``), None = unknown (an old row): ``on`` is taken.  A forgiveness lies only on the periods that
+    # had begun by that day, never on a future one; every credit is tied to a period by the capacity the period had that day (А7.1: the pauses entered by then are out of it).
     entered_on: Optional[date] = None
 
 
@@ -141,6 +141,8 @@ class Pause:
 
     first: date
     last: date
+    # PAY-TAILS А7.1: the business day the pause was entered (``None`` = unknown: the pause is then not taken out of the nominal sum of a period, as before)
+    created_on: Optional[date] = None
 
 
 @dataclass(frozen=True)
@@ -235,10 +237,20 @@ class Segment:
     # PAY-TAILS А6.1: what the period would cost WITHOUT the cut of a leaving, a transfer, an archive of the student or a pause (``None`` = the same as ``amount``).  Credits are tied
     # to periods by their order on the NOMINAL line, so that "which period is this payment / forgiveness for" never depends on what happened to the stay afterwards.
     nominal_amount: Optional[int] = field(default=None, repr=False)
+    # PAY-TAILS А7.1: ``(day, sum)`` ascending: what the period would cost without the cut of a leaving but WITHOUT the days of the pauses entered on or before ``day``
+    pause_capacity: Tuple[Tuple[date, int], ...] = field(default=(), repr=False)
 
     @property
     def nominal(self) -> int:
         return self.amount if self.nominal_amount is None else max(self.nominal_amount, self.amount)
+
+    def capacity(self, entered: date) -> int:
+        """How much a credit entered on ``entered`` may take of the period: the nominal sum minus the pauses that were already entered (a pause entered LATER does not shrink it)."""
+        cap = self.nominal
+        for day, value in self.pause_capacity:
+            if day <= entered:
+                cap = value
+        return max(min(cap, self.nominal), self.amount)
 
     @property
     def unpaid(self) -> int:
@@ -639,8 +651,15 @@ class _Gen:
 
         value, basis, in_part, whole_n, first_lesson = charge(days)
         nominal_amount = value if nominal_days is None else charge(nominal_days)[0]
+        capacity: List[Tuple[date, int]] = []
+        if nominal_days is not None:
+            for day in sorted({p.created_on for p in self.inp.pauses if p.created_on is not None}):
+                gone = _merge_pauses([p for p in self.inp.pauses if p.created_on is not None and p.created_on <= day])
+                kept = [d for d in nominal_days if not _is_paused(gone, d)]
+                if len(kept) < len(nominal_days):
+                    capacity.append((day, charge(kept)[0] if kept else 0))
         return Segment(amount=value, basis=basis, lessons_in_part=in_part, lessons_in_period=whole_n, first_lesson=first_lesson,
-                       nominal_amount=nominal_amount, **common)
+                       nominal_amount=nominal_amount, pause_capacity=tuple(capacity), **common)
 
     # ---------------------------------------------------------------- calendar: payment date
 
@@ -1134,32 +1153,28 @@ class _Placed:
 
 def _place_credits(segments: Sequence[Segment], credits: Sequence[Credit], net: Dict[str, int], recalcs: Sequence[RecalcLine]) -> _Placed:
     """PAY-TAILS А6.1-А6.2.  1) Every credit (payment, transfer in, forgiveness) is tied to a period by its ORDER ``(on, created_at, id)`` on the line of the NOMINAL sums of the periods
-    (what each would cost without the cut of a leaving, a transfer, an archive of the student or a pause): «which period is this credit for» never depends on what happened to the
-    stay afterwards.  2) Inside a period of the actual sum ``A``: the money first (``m = min(tied money, A)``), then the deductions for cancelled lessons, then the forgiveness
+    (what each would cost without the cut of a leaving, a transfer or an archive of the student, and without the pauses that were entered by the day of THIS credit - А7.1, capacity per credit,
+    a greedy fill with a counter per period): «which period is this credit for» never depends on what happened to the stay afterwards.  2) Inside a period of the actual sum ``A``: the money first (``m = min(tied money, A)``), then the deductions for cancelled lessons, then the forgiveness
     (``f = min(tied forgiveness, A - m - r)``): a forgiveness never covers a charge money has already paid, and what no charge needs is thrown away - it is not an advance, not a refund, not a
     payment of another period.  A forgiveness lies only on a period that had begun by the day it was entered.  3) The money that a cut period leaves over (and a deduction that found no charge)
     goes on, oldest first, into the unfilled part of the periods; what is still left is the advance.  4) A last pass brings money that lies on a LATER period back to a period that has begun and is still unfilled.
     It fires only when a forgiveness was thrown away because it was entered before its period began; a forgiveness is never larger than the debt of its own day, so in the product it lies on
     periods that have begun and the pass moves nothing (the account does not change); it keeps the debt of the periods and the totals one picture (pinned by a test with numbers)."""
-    spans: Dict[str, Tuple[int, int]] = {}
-    pos = 0
-    for c in credits:
-        spans[c.id] = (pos, pos + net[c.id])
-        pos += net[c.id]
-    tied: Dict[str, List[Tuple[Credit, int]]] = {}
+    tied: Dict[str, List[Tuple[Credit, int]]] = {s.id: [] for s in segments}
     tied_total: Dict[str, int] = {c.id: 0 for c in credits}
-    cur = 0
-    for s in segments:
-        lo, hi = cur, cur + s.nominal
-        cur = hi
-        rows = []
-        for c in credits:
-            a, b = spans[c.id]
-            part = max(0, min(b, hi) - max(a, lo))
+    filled: Dict[str, int] = {s.id: 0 for s in segments}               # per period: how much of its capacity the earlier credits have taken
+    for c in credits:                          # greedy, in the order of the credits; the capacity of a period is counted for EACH credit (the pauses entered by the day it was entered are out of it)
+        entered = c.entered_on or c.on
+        rest = net[c.id]
+        for s in segments:
+            if rest <= 0:
+                break
+            part = min(rest, max(0, s.capacity(entered) - filled[s.id]))
             if part:
-                rows.append((c, part))
+                tied[s.id].append((c, part))
+                filled[s.id] += part
                 tied_total[c.id] += part
-        tied[s.id] = rows
+                rest -= part
     out = _Placed(money={s.id: 0 for s in segments}, forgiven={s.id: 0 for s in segments}, recalculated={s.id: 0 for s in segments})
     by_segment: Dict[str, List[RecalcLine]] = {}
     for line in recalcs:
