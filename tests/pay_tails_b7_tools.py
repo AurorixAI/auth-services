@@ -7,16 +7,16 @@ One command:   python tests/pay_tails_b7_tools.py count  SEED N          -> numb
 
 What the product allows (facts, file:line on head 1d323dd / f4642e2):
   * a payment: ``paid_on`` in [today - 3 years, today] (payments_service.py:1490-1494 ``_check_date``; PaymentCreate at :1714); an administrator not earlier than 7 days (payment_status.py:100,
-    payments_service.py:1497-1501), the owner without a limit; nothing compares the date with the start of the stay or of the books; ``entered_on`` = the business day of ``created_at`` (ledger_service.py:858).
-  * a forgiveness: ``effective_on`` in the same range (payments_service.py:2090-2091), default today; the amount 1 .. the debt on the day of entry (:2107-2111, ``before.debt``); ``entered_on`` = the
+    payments_service.py:1497-1501), the owner without a limit; nothing compares the date with the start of the stay or of the books; the day of entry = the business day of ``created_at`` (ledger_service.py:858).
+  * a forgiveness: ``effective_on`` in the same range (payments_service.py:2090-2091), default today; the amount 1 .. the debt on the day of entry (:2107-2111, ``before.debt``); the day of entry = the
     business day of ``created_at`` (ledger_service.py:861-862); a correction of a payment = void + a new payment entered now (:1848).
-  * a transfer from a group: dated and entered the day of the transfer (ledger_service.py:870-878, no ``entered_on``); the opening balance is not a credit (``Opening``), it is exempt from «had the period begun».
-  * the entry day is never after today; a pause is entered any day (``created_on``), also between the credits.
+  * a transfer from a group: dated and entered the day of the transfer (ledger_service.py:870-878, ``created_at`` = the moment of the transfer); the opening balance is not a credit (``Opening``), it is exempt from «had the period begun».
+  * the entry day is never after today; a pause is entered any day (its first form is the moment ``created_at``), also between the credits.
 The generator below builds the history in the order of entry; a forgiveness is capped by the debt of the account AS IT WAS the day it was entered (``allowed``)."""
 import os
 import random
 import sys
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import date, datetime, timedelta
 
 _TREE = os.environ.get("B7_TREE") or os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -30,43 +30,135 @@ TTF = weekly((1, 3, 4))
 FIXED1 = bl.Regime(anchor=ps.FIXED_DAY, billing_day=1)
 BOOKS = D(2026, 9, 1)
 EARLIEST = D(2026, 9, 15)                # the earliest date the generator gives a payment / a forgiveness (the product allows 3 years)
-CANCELS = os.environ.get("B7_CANCELS", "")        # "" = mixed, "none" = no cancelled lessons, "with" = every world has one
-PROPERTIES = ("P1 debt", "P1 used", "P1 advance", "P1 advance<=money", "P1 identity", "P2 debt", "P2 advance<=money", "P2 advance today", "P2 advance back", "P3 used", "P3 debt", "P3 advance")
+PROPERTIES = ("P1 debt", "P1 used", "P1 advance", "P1 advance<=money", "P1 identity", "P2 debt", "P2 advance<=money", "P2 advance today", "P2 advance back",
+              "P3 used", "P3 debt", "P3 advance", "P3 advance<=money", "P3e used", "P3e debt", "P3e advance", "P3e advance<=money", "P4 early", "P4 today", "P5 probe")
 
 
-def _debt_on(inp, day, entered_before):
-    """The debt of the account as it was on ``day``: the credits entered before, the pauses entered by then."""
+@dataclass(frozen=True)
+class Cfg:
+    """``mode``: "" = the old mix (60 % common month, 40 % personal period), "common", "personal", "packages", "all" (a third each); ``cancels``: "" = the old mix, "none", "with" (common month only)."""
+
+    mode: str = ""
+    cancels: str = ""
+
+
+def cfg_from_env():
+    return Cfg(os.environ.get("B7_MODE", ""), os.environ.get("B7_CANCELS", ""))
+
+
+# ------------------------------------------------------------------------------------------------------------------------------ the moments (Б7.7 п. 4)
+# A fact is entered at a MOMENT (a time stamp), not on a day: the credit ``created_at``, the pause its first form.  The generator gives every fact the moment ``at(day, minute)``; the minutes inside one
+# day decide who was first (class C: a pause entered the same day AFTER the forgiveness).  Before step 3.1 the head knows only days (``entered_on`` / ``created_on``): the constructors below write both.
+BY_MOMENT = "forms" in bl.Pause.__dataclass_fields__
+
+
+def at(day, minute=0):
+    return datetime(day.year, day.month, day.day, 3, 0) + timedelta(minutes=minute)
+
+
+def mk_credit(cid, kind, on, entered, minute, amount):
+    if "entered_on" in bl.Credit.__dataclass_fields__:
+        return bl.Credit(cid, kind, on, at(entered, minute), amount, entered_on=entered)
+    return bl.Credit(cid, kind, on, at(entered, minute), amount)
+
+
+def mk_pause(first, last, entered, minute=0):
+    if BY_MOMENT:
+        return bl.Pause(first, last, forms=((at(entered, minute), first, last),))
+    return bl.Pause(first, last, created_on=entered)
+
+
+def edit_pause(p, first, last, entered, minute=0):
+    """The pause ``p`` edited to the days ``first .. last`` at a moment (the ``PATCH`` of the product).  Before step 3.4 the edit is lost in time: the pause keeps the day it was created."""
+    if BY_MOMENT:
+        return replace(p, first=first, last=last, forms=(*p.forms, (at(entered, minute), first, last)))
+    return replace(p, first=first, last=last)
+
+
+def pause_moment(p):
+    if BY_MOMENT:
+        return p.forms[0][0] if p.forms else datetime.min
+    return at(p.created_on, 0) if p.created_on is not None else datetime.min
+
+
+def entered_day(c):
+    return c.entered_on or c.on if "entered_on" in bl.Credit.__dataclass_fields__ else (c.created_at.date() if c.created_at > datetime.min else c.on)
+
+
+def known_pauses(inp, moment):
+    """The pauses as they were known at ``moment`` (a pause entered later is not there; an edited one has the form of that moment; on the old head - by the day)."""
+    out = []
+    for p in inp.pauses:
+        if not BY_MOMENT:
+            if p.created_on is None or p.created_on <= moment.date():
+                out.append(p)
+            continue
+        if not p.forms:
+            out.append(p)
+            continue
+        form = None
+        for m, a, b in p.forms:
+            if m <= moment:
+                form = (a, b)
+        if form is not None:
+            out.append(replace(p, first=form[0], last=form[1]))
+    return tuple(out)
+
+
+def now_of(inp):
+    return at(inp.today, 900)
+
+
+def _debt_on(inp, day, entered_before, moment):
+    """The debt of the account as it was on ``day``, at ``moment``: the credits entered before, the pauses known by then."""
     seen = tuple(c for c in inp.credits if entered_before(c))
-    pauses = tuple(p for p in inp.pauses if p.created_on is None or p.created_on <= day)
-    return bl.run_ledger(replace(inp, today=day, credits=seen, pauses=pauses)).debt
+    return bl.run_ledger(replace(inp, today=day, credits=seen, pauses=known_pauses(inp, moment))).debt
 
 
 def allowed(inp):
-    """Every forgiveness is not larger than the debt of the day it was entered (the product refuses more); every credit is entered not before its... (any date is allowed) and not after today."""
+    """Every forgiveness is not larger than the debt of the day it was entered (the product refuses more); every credit is entered not after today."""
     for c in inp.credits:
-        e = c.entered_on or c.on
+        e = entered_day(c)
         if e > inp.today:
             return False
         if c.kind == bl.WRITEOFF:
             key = (e, c.created_at)
-            if c.amount > _debt_on(inp, e, lambda o: (o.entered_on or o.on, o.created_at) < key):
+            if c.amount > _debt_on(inp, e, lambda o: (entered_day(o), o.created_at) < key, c.created_at):
                 return False
     return True
 
 
-def base_world(rng):
-    common = rng.random() < 0.6 or CANCELS == "with"
-    price = 600_000 if common else 420_000
+def base_world(rng, cfg=Cfg()):
+    mode = cfg.mode
+    if mode == "all":
+        mode = rng.choice(["common", "personal", "packages"])
+    elif not mode:
+        mode = "common" if rng.random() < 0.6 or cfg.cancels == "with" else "personal"
+    common = mode == "common"
+    price = {"common": 600_000, "personal": 420_000, "packages": 400_000}[mode]
+    regime = {"common": FIXED1, "personal": bl.Regime(), "packages": bl.Regime(mode=bl.LESSONS, package_size=8)}[mode]
     today = D(2026, 11, 3) + timedelta(days=rng.randint(0, 45))
-    inp = make(today=today, stays=[bl.Stay(D(2026, 10, 1))], price_at=flat(price), regimes=[FIXED1] if common else [bl.Regime()], start=BOOKS, lesson_days=TTF)
-    if common and (CANCELS == "with" or (CANCELS != "none" and rng.random() < 0.3)):
+    stay_last = None
+    if rng.random() < 0.2:                                                                                    # a leaving, the stay is cut on a day inside the account
+        stay_last = D(2026, 10, 12) + timedelta(days=rng.randint(0, max(0, (today - D(2026, 10, 13)).days)))
+    inp = make(today=today, stays=[bl.Stay(D(2026, 10, 1), stay_last)], price_at=flat(price), regimes=[regime], start=BOOKS, lesson_days=TTF)
+    if mode == "packages":
+        held = [d for d in (D(2026, 10, 1) + timedelta(days=k) for k in range((today - D(2026, 10, 1)).days + 1)) if d.weekday() in (1, 3, 4) and (stay_last is None or d <= stay_last)]
+        inp = replace(inp, counted_lessons=tuple(bl.CountedLesson(d, f"l{d}") for d in held))
+    if common and (cfg.cancels == "with" or (cfg.cancels != "none" and rng.random() < 0.3)):
         cancel = D(2026, 10, 13) + timedelta(days=7 * rng.randint(0, 3))
         inp = replace(inp, centre_cancels=(bl.CentreCancel(cancel, "l"),), recalc_versions=(bl.RecalcVersion(date.min, True),))
     if rng.random() < 0.7:
-        first = D(2026, 10, 5) + timedelta(days=rng.randint(0, 40))
-        last = first + timedelta(days=rng.randint(2, 18))
+        last_stay = stay_last or today + timedelta(days=40)
+        if rng.random() < 0.2:                                                                                # a whole month in a pause (October, or November once it has begun)
+            first = D(2026, 10, 1) if rng.random() < 0.5 or today < D(2026, 11, 1) else D(2026, 11, 1)
+            last = D(2026, 10, 31) if first.month == 10 else D(2026, 11, 30)
+        else:
+            first = D(2026, 10, 5) + timedelta(days=rng.randint(0, 40))
+            last = first + timedelta(days=rng.randint(2, 35))                                                 # may run past today
+        first, last = min(first, last_stay), min(last, last_stay)
         entered = D(2026, 9, 25) + timedelta(days=rng.randint(0, (today - D(2026, 9, 25)).days))        # any day, also BETWEEN the credits
-        inp = replace(inp, pauses=(bl.Pause(first, last, created_on=entered),))
+        inp = replace(inp, pauses=(mk_pause(first, last, entered, rng.choice([5, 25, 45, 90, 700])),))
     return inp
 
 
@@ -74,29 +166,29 @@ def _any_day(rng, lo, hi):
     return lo + timedelta(days=rng.randint(0, max(0, (hi - lo).days)))
 
 
-def allowed_world(rng):
+def allowed_world(rng, cfg=Cfg()):
     """The history in the order of entry: 1-4 credits, each entered on a day <= today; a forgiveness <= the debt of its entry day; a date from ``EARLIEST`` to the entry day."""
-    inp = base_world(rng)
+    inp = base_world(rng, cfg)
     days = sorted(_any_day(rng, D(2026, 10, 6), inp.today) for _ in range(rng.randint(1, 4)))
     credits = []
     for i, e in enumerate(days):
         on = _any_day(rng, EARLIEST, e) if rng.random() < 0.5 else e
-        created = T0 + timedelta(minutes=i)
         if rng.random() < 0.5:
-            credits.append(bl.Credit(f"c{i}", bl.PAYMENT, on, created, rng.choice([100_000, 150_000, 200_000, 300_000, 420_000, 600_000]), entered_on=e))
+            credits.append(mk_credit(f"c{i}", bl.PAYMENT, on, e, 20 * i + 10, rng.choice([100_000, 150_000, 200_000, 300_000, 400_000, 420_000, 600_000])))
         else:
-            debt = _debt_on(replace(inp, credits=tuple(credits)), e, lambda o: True)
+            probe_moment = at(e, 20 * i + 10)
+            debt = _debt_on(replace(inp, credits=tuple(credits)), e, lambda o: True, probe_moment)
             if debt > 0:
-                credits.append(bl.Credit(f"c{i}", bl.WRITEOFF, on, created, min(debt, rng.choice([100_000, 150_000, 200_000, 300_000, 420_000, 600_000])), entered_on=e))
+                credits.append(mk_credit(f"c{i}", bl.WRITEOFF, on, e, 20 * i + 10, min(debt, rng.choice([100_000, 150_000, 200_000, 300_000, 420_000, 600_000]))))
     if not credits:
-        credits.append(bl.Credit("c0", bl.PAYMENT, inp.today, T0, 200_000, entered_on=inp.today))
+        credits.append(mk_credit("c0", bl.PAYMENT, inp.today, inp.today, 10, 200_000))
     return replace(inp, credits=tuple(credits))
 
 
 def new_payment(rng, inp, name="late"):
     """A payment entered NOW (today); the date any allowed one."""
     on = inp.today if rng.random() < 0.3 else _any_day(rng, EARLIEST, inp.today)
-    return bl.Credit(name, bl.PAYMENT, on, T0 + timedelta(minutes=5000), rng.choice([100_000, 200_000, 300_000, 420_000, 600_000]), entered_on=inp.today)
+    return mk_credit(name, bl.PAYMENT, on, inp.today, 900, rng.choice([100_000, 200_000, 300_000, 420_000, 600_000]))
 
 
 def new_forgiveness(rng, inp, name="extra"):
@@ -105,36 +197,136 @@ def new_forgiveness(rng, inp, name="extra"):
     if debt <= 0:
         return None
     on = inp.today if rng.random() < 0.4 else _any_day(rng, EARLIEST, inp.today)
-    return bl.Credit(name, bl.WRITEOFF, on, T0 + timedelta(minutes=5000), min(debt, rng.choice([100_000, 150_000, 200_000, 300_000, 420_000, 600_000])), entered_on=inp.today)
+    return mk_credit(name, bl.WRITEOFF, on, inp.today, 900, min(debt, rng.choice([100_000, 150_000, 200_000, 300_000, 420_000, 600_000])))
 
 
-def new_pause(rng, inp, name=None):
-    """Б7.5 P3: a pause entered NOW (today); the days of it any day from the first of October to today."""
-    first = D(2026, 10, 1) + timedelta(days=rng.randint(0, max(0, (inp.today - D(2026, 10, 1)).days - 1)))
-    last = min(inp.today, first + timedelta(days=rng.randint(1, 25)))
-    return bl.Pause(first, last, created_on=inp.today)
+def new_pause(rng, inp):
+    """Б7.5 P3: a pause entered NOW (today).  Б7.7 3.0: it may run past today, and it may cover a whole month."""
+    if rng.random() < 0.25:
+        first = D(2026, 10, 1) if rng.random() < 0.5 or inp.today < D(2026, 11, 1) else D(2026, 11, 1)
+        last = D(2026, 10, 31) if first.month == 10 else D(2026, 11, 30)
+    else:
+        first = D(2026, 10, 1) + timedelta(days=rng.randint(0, max(0, (inp.today - D(2026, 10, 1)).days + 10)))
+        last = first + timedelta(days=rng.randint(1, 35))
+    stay_last = inp.stays[0].last
+    if stay_last is not None:
+        first, last = min(first, stay_last), min(last, stay_last)
+    return mk_pause(first, last, inp.today, 900)
+
+
+@dataclass(frozen=True)
+class PauseEdit:
+    """A pause of the world edited NOW (the ``PATCH /org/pauses/{id}`` of the product): ``extend`` = the days only grow, ``shorten`` = they only shrink."""
+
+    index: int
+    first: date
+    last: date
+    kind: str
+
+
+def new_pause_edit(rng, inp):
+    if not inp.pauses:
+        return None
+    index = rng.randrange(len(inp.pauses))
+    p = inp.pauses[index]
+    stay_last = inp.stays[0].last
+    if rng.random() < 0.6:
+        first, last = p.first - timedelta(days=rng.randint(0, 10)), p.last + timedelta(days=rng.randint(0, 15))
+        if stay_last is not None:
+            last = min(last, stay_last)
+        if (first, last) == (p.first, p.last) or last < first:
+            return None
+        return PauseEdit(index, first, last, "extend")
+    if p.last <= p.first:
+        return None
+    first = p.first + timedelta(days=rng.randint(0, (p.last - p.first).days - 1))
+    last = p.last - timedelta(days=rng.randint(0, (p.last - first).days))
+    return PauseEdit(index, first, last, "shorten") if (first, last) != (p.first, p.last) and first <= last else None
+
+
+def apply_edit(inp, e):
+    pauses = list(inp.pauses)
+    pauses[e.index] = edit_pause(pauses[e.index], e.first, e.last, inp.today, 900)
+    return replace(inp, pauses=tuple(pauses))
+
+
+def probe_credit(x):
+    """The probe of the payment window as the product builds it (``payments_service.py:2452`` ``preview``: a stand-in credit with a moment far in the future and no day of entry)."""
+    return bl.Credit("preview", x.kind, x.on, datetime(9999, 1, 1), x.amount)
 
 
 def money_of(inp):
     return sum(c.amount for c in inp.credits if c.kind != bl.WRITEOFF)
 
 
+def _slot_first_days(inp):
+    """``{key of a period: its first charged day}`` of the world; the key is the start of the month (common month) or the place in the chain (personal period); packages have none."""
+    segs = [s for s in bl.run_ledger(inp).segments if s.kind == "period"]
+    if inp.regimes[0].anchor == ps.FIXED_DAY:
+        return {s.period_start: (s.days[0] if s.days else s.period_start) for s in segs}
+    return {k: (s.days[0] if s.days else s.period_start) for k, s in enumerate(sorted(segs, key=lambda x: x.period_start))}
+
+
+def oracle_p4(inp):
+    """Б7.6 / Б7.7 P4, found by REBUILDING the world (no line of the money code is read except the periods of a world): a forgiveness lies only on a period that had begun by the day it was entered in the world
+    KNOWN AT THAT MOMENT, and that has begun today.  Returns ``(names of broken properties, number of forgivenesses whose period was not found in the old world)``."""
+    bad, lost = [], 0
+    L = bl.run_ledger(inp)
+    forgiveness = {c.id: c for c in inp.credits if c.kind == bl.WRITEOFF}
+    if not forgiveness:
+        return bad, lost
+    seg = {s.id: s for s in L.segments}
+    packages = inp.regimes[0].mode == bl.LESSONS
+    worlds = {}
+    order = {s.id: k for k, s in enumerate(sorted((s for s in L.segments if s.kind == "period"), key=lambda x: x.period_start))}
+    for a in L.allocations:
+        c = forgiveness.get(a.credit_id)
+        if c is None or a.segment_id not in seg or a.amount <= 0:
+            continue
+        s = seg[a.segment_id]
+        if s.kind == "opening":
+            continue
+        if not s.begun:
+            bad.append("P4 today")
+            continue
+        day = entered_day(c)
+        if packages:
+            first = s.days[0] if s.days else s.period_start
+        else:
+            if c.id not in worlds:
+                worlds[c.id] = _slot_first_days(replace(inp, pauses=known_pauses(inp, c.created_at)))
+            key = s.period_start if inp.regimes[0].anchor == ps.FIXED_DAY else order[s.id]
+            if key not in worlds[c.id]:
+                lost += 1
+                continue
+            first = worlds[c.id][key]
+        if first > day:
+            bad.append("P4 early")
+    return bad, lost
+
+
 def violations(inp, x):
-    """The names of the properties that the addition of ``x`` (a payment or a forgiveness entered today) breaks."""
+    """The names of the properties that the addition of ``x`` (a payment, a forgiveness, a pause or an edit of a pause - all entered now) breaks."""
     before = bl.run_ledger(inp)
-    if isinstance(x, bl.Pause):                       # Б7.5 P3: a pause entered now
-        after = bl.run_ledger(replace(inp, pauses=(*inp.pauses, x)))
+    if isinstance(x, (bl.Pause, PauseEdit)):                       # Б7.5 P3: a pause entered now; Б7.7: an edit of a pause is the same entry
+        new = replace(inp, pauses=(*inp.pauses, x)) if isinstance(x, bl.Pause) else apply_edit(inp, x)
+        after = bl.run_ledger(new)
+        tag = "P3" if isinstance(x, bl.Pause) else "P3e"
         bad = []
         if after.flags or not after.reconciles:
             bad.append("flags")
+        if after.advance > money_of(new):
+            bad.append(f"{tag} advance<=money")
+        if isinstance(x, PauseEdit) and x.kind == "shorten":      # the days only shrink: the charge may grow, nothing else is promised
+            return bad
         if after.written_off > before.written_off:
-            bad.append("P3 used")
+            bad.append(f"{tag} used")
         if after.debt > before.debt:
-            bad.append("P3 debt")
+            bad.append(f"{tag} debt")
         after_cost = {s.id: s.amount for s in after.segments if s.begun}       # what a period costs NOW: a period that has not begun costs nothing
         freed = sum(max(0, s.money - after_cost.get(s.id, 0)) for s in before.segments)
         if after.advance - before.advance > freed:
-            bad.append("P3 advance")
+            bad.append(f"{tag} advance")
         return bad
     new = replace(inp, credits=(*inp.credits, x))
     after = bl.run_ledger(new)
@@ -152,6 +344,9 @@ def violations(inp, x):
             bad.append("P1 advance<=money")
         if (before.debt - after.debt) + (after.advance - before.advance) + (before.written_off - after.written_off) + (after.charged - before.charged) != x.amount:
             bad.append("P1 identity")
+        probe = bl.run_ledger(replace(inp, credits=(*inp.credits, probe_credit(x))))        # P5: the window shows what the record will give
+        if (probe.debt, probe.advance, probe.written_off) != (after.debt, after.advance, after.written_off):
+            bad.append("P5 probe")
     else:
         if after.debt > before.debt:
             bad.append("P2 debt")
@@ -161,6 +356,7 @@ def violations(inp, x):
             bad.append("P2 advance today")
         if x.on < inp.today and after.advance - before.advance > x.amount:
             bad.append("P2 advance back")
+    bad.extend(oracle_p4(new)[0])
     return bad
 
 
@@ -187,7 +383,7 @@ def explain(inp):
     main, _ = bl._tie(segments, credits, amounts, lambda s: s.capacity(date.max))
     tied = {c.id: {s.id: sum(a for cc, a in main[s.id] if cc.id == c.id) for s in segments} for c in credits}
     lines = [f"today {inp.today}  charged {L.charged}  debt {L.debt}  advance {L.advance}  used {L.written_off} of {L.written_off_granted}  covered_through {L.covered_through}"]
-    lines.append("  pauses: " + (", ".join(f"{p.first}..{p.last} entered {p.created_on}" for p in inp.pauses) or "-") + "   centre cancels: " + (", ".join(str(c.day) for c in inp.centre_cancels) or "-"))
+    lines.append("  pauses: " + (", ".join(f"{p.first}..{p.last} entered {pause_moment(p):%d.%m %H:%M}" for p in inp.pauses) or "-") + "   centre cancels: " + (", ".join(str(c.day) for c in inp.centre_cancels) or "-"))
     head = "  credit (kind, date, entered, amount)".ljust(52) + "".join(f"| {s.period_start} (charge {s.amount}, first day {s.days[0] if s.days else '-'})".ljust(46) for s in segments) + "| burned / leftover"
     lines.append(head)
     for c in credits:
@@ -197,7 +393,7 @@ def explain(inp):
             cells.append(f"| cap {s.capacity(date.max)} tied {tied[c.id][s.id]} placed {got}".ljust(46))
         gone = net[c.id] - sum(placed.parts.get((s.id, c.id), 0) for s in segments) - sum(a for cid, a in placed.leftover if cid == c.id)
         left = sum(a for cid, a in placed.leftover if cid == c.id)
-        lines.append(f"  {c.id:5s} {c.kind[:3]} {c.on} {c.entered_on or c.on} {net[c.id]}{' alive ' + str(alive[c.id]) if c.kind == bl.WRITEOFF and alive[c.id] != net[c.id] else ''}".ljust(52) + "".join(cells) + f"| burned {gone}, leftover {left}")
+        lines.append(f"  {c.id:5s} {c.kind[:3]} {c.on} {entered_day(c)} {net[c.id]}{' alive ' + str(alive[c.id]) if c.kind == bl.WRITEOFF and alive[c.id] != net[c.id] else ''}".ljust(52) + "".join(cells) + f"| burned {gone}, leftover {left}")
     for what, key in (("money", placed.money), ("forgiven", placed.forgiven), ("recalc", placed.recalculated)):
         lines.append(f"  {what:9s}".ljust(52) + "".join(f"| {key[s.id]}".ljust(46) for s in segments))
     lines.append("  unpaid".ljust(52) + "".join(f"| {s.amount - placed.money[s.id] - placed.forgiven[s.id] - placed.recalculated[s.id]}".ljust(46) for s in segments))
@@ -206,8 +402,12 @@ def explain(inp):
 
 # ------------------------------------------------------------------------------------------------------------------------------ the shrinker
 
+def _minute(c):
+    return int((c.created_at - at(entered_day(c))).total_seconds() // 60)
+
+
 def shrink(inp, x, prop):
-    """Make the world smaller while ``prop`` is still broken by the addition of ``x`` and the world stays allowed: drop a credit / a pause / the cancels, lower an amount, move the dates
+    """Make the world smaller while ``prop`` is still broken by the addition of ``x`` and the world stays allowed: drop a credit / a pause / the cancels / the leaving, lower an amount, move the dates
     towards the entry day, lower ``today``.  Returns (inp, x)."""
     def ok(i, xx):
         return allowed(i) and prop in violations(i, xx)
@@ -218,16 +418,18 @@ def shrink(inp, x, prop):
         steps = []
         for k in range(len(inp.credits)):
             steps.append((replace(inp, credits=inp.credits[:k] + inp.credits[k + 1:]), x))
-        if inp.pauses:
+        if inp.pauses and not isinstance(x, PauseEdit):
             steps.append((replace(inp, pauses=()), x))
         if inp.centre_cancels:
             steps.append((replace(inp, centre_cancels=(), recalc_versions=()), x))
+        if inp.stays[0].last is not None and not isinstance(x, PauseEdit):
+            steps.append((replace(inp, stays=(replace(inp.stays[0], last=None),)), x))
         for k, c in enumerate(inp.credits):
-            for amount in (100_000, 200_000, 300_000, 420_000, 600_000):
+            for amount in (100_000, 200_000, 300_000, 400_000, 420_000, 600_000):
                 if amount < c.amount:
                     steps.append((replace(inp, credits=inp.credits[:k] + (replace(c, amount=amount),) + inp.credits[k + 1:]), x))
-            if (c.entered_on or c.on) != c.on:
-                steps.append((replace(inp, credits=inp.credits[:k] + (replace(c, entered_on=c.on),) + inp.credits[k + 1:]), x))
+            if entered_day(c) != c.on:
+                steps.append((replace(inp, credits=inp.credits[:k] + (mk_credit(c.id, c.kind, c.on, c.on, _minute(c), c.amount),) + inp.credits[k + 1:]), x))
         if isinstance(x, bl.Credit):
             for amount in (100_000, 200_000, 300_000, 420_000):
                 if amount < x.amount:
@@ -242,50 +444,67 @@ def shrink(inp, x, prop):
 
 
 def describe(inp, x):
-    lines = [f"regime {inp.regimes[0].anchor}, price {inp.price_at(inp.today).amount if callable(inp.price_at) else '?'}, stay from {inp.stays[0].first}, books from {BOOKS}, lessons Tue/Thu/Fri, today {inp.today}"]
+    lines = [f"regime {inp.regimes[0].mode}/{inp.regimes[0].anchor}, price {inp.price_at(inp.today).amount if callable(inp.price_at) else '?'}, stay {inp.stays[0].first}..{inp.stays[0].last}, books from {BOOKS}, lessons Tue/Thu/Fri, today {inp.today}"]
     for c in inp.credits:
-        lines.append(f"  credit {c.id}: {c.kind} {c.amount} dated {c.on} entered {c.entered_on} (order {int((c.created_at - T0).total_seconds() // 60)})")
+        lines.append(f"  credit {c.id}: {c.kind} {c.amount} dated {c.on} entered {c.created_at:%d.%m %H:%M}")
+    for p in inp.pauses:
+        lines.append(f"  pause {p.first}..{p.last} entered {pause_moment(p):%d.%m %H:%M}")
     if isinstance(x, bl.Pause):
-        lines.append(f"  ADDED  pause {x.first}..{x.last} entered {x.created_on}")
+        lines.append(f"  ADDED  pause {x.first}..{x.last} entered {pause_moment(x):%d.%m %H:%M}")
+    elif isinstance(x, PauseEdit):
+        lines.append(f"  ADDED  edit of pause {x.index}: {x.kind} to {x.first}..{x.last} entered {inp.today} 12:00")
     else:
-        lines.append(f"  ADDED  {x.id}: {x.kind} {x.amount} dated {x.on} entered {x.entered_on}")
+        lines.append(f"  ADDED  {x.id}: {x.kind} {x.amount} dated {x.on} entered {x.created_at:%d.%m %H:%M}")
     return "\n".join(lines)
 
 
-def run_counts(seed, n):
+def apply_x(inp, x):
+    if isinstance(x, bl.Pause):
+        return replace(inp, pauses=(*inp.pauses, x))
+    if isinstance(x, PauseEdit):
+        return apply_edit(inp, x)
+    return replace(inp, credits=(*inp.credits, x))
+
+
+def run_counts(seed, n, cfg=Cfg()):
     rng = random.Random(seed)
     counts = {p: 0 for p in PROPERTIES}
     counts["flags"] = 0
+    counts["P4 nomatch"] = 0
     found = {}
     worlds = pays = forgs = 0
     for _ in range(n):
-        inp = allowed_world(rng)
+        inp = allowed_world(rng, cfg)
         worlds += 1
-        for kind in (bl.PAYMENT, bl.WRITEOFF, "pause"):
-            x = new_payment(rng, inp) if kind == bl.PAYMENT else new_forgiveness(rng, inp) if kind == bl.WRITEOFF else new_pause(rng, inp)
+        for kind in (bl.PAYMENT, bl.WRITEOFF, "pause", "edit"):
+            x = (new_payment(rng, inp) if kind == bl.PAYMENT else new_forgiveness(rng, inp) if kind == bl.WRITEOFF
+                 else new_pause(rng, inp) if kind == "pause" else new_pause_edit(rng, inp))
             if x is None:
                 continue
             pays += kind == bl.PAYMENT
             forgs += kind == bl.WRITEOFF
-            for name in violations(inp, x):
+            names = violations(inp, x)
+            for name in names:
                 counts[name] += 1
                 found.setdefault(name, []).append((inp, x))
+            counts["P4 nomatch"] += oracle_p4(apply_x(inp, x))[1]
     return counts, found, (worlds, pays, forgs)
 
 
 def main(argv):
     cmd = argv[1]
+    cfg = cfg_from_env()
     if cmd == "count":
         total = {}
-        for seed in range(int(argv[2]), int(argv[2]) + int(argv[4]) if len(argv) > 4 else int(argv[2]) + 1):
-            counts, _, size = run_counts(seed, int(argv[3]))
+        for seed in range(int(argv[2]), int(argv[2]) + (int(argv[4]) if len(argv) > 4 else 1)):
+            counts, _, size = run_counts(seed, int(argv[3]), cfg)
             for k, v in counts.items():
                 total[k] = total.get(k, 0) + v
             total["_worlds/payments/forgivenesses"] = tuple(a + b for a, b in zip(total.get("_worlds/payments/forgivenesses", (0, 0, 0)), size))
         print(" | ".join(f"{k}: {v}" for k, v in total.items()))
     elif cmd == "smallest":
         prop, seed, n = argv[2], int(argv[3]), int(argv[4])
-        _, found, _ = run_counts(seed, n)
+        _, found, _ = run_counts(seed, n, cfg)
         if prop not in found:
             print("no counterexample of", prop)
             return
@@ -298,7 +517,7 @@ def main(argv):
         _, small, sx = best
         print(describe(small, sx))
         print("BEFORE\n" + explain(small))
-        print("AFTER\n" + explain(replace(small, pauses=(*small.pauses, sx)) if isinstance(sx, bl.Pause) else replace(small, credits=(*small.credits, sx))))
+        print("AFTER\n" + explain(apply_x(small, sx)))
         print("broken:", violations(small, sx))
 
 
