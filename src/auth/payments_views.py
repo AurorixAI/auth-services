@@ -165,7 +165,12 @@ def cover_until(l: bl.Ledger, closed: bool = False) -> Optional[date]:
     nothing covers (Б6.3)."""
     if closed or l.status.period_mode == bl.LESSONS or l.cover_partial is not None or nothing_covered(l):
         return None
-    return l.status.paid_until
+    return cover_day(l)
+
+
+def cover_day(l: bl.Ledger) -> Optional[date]:
+    """The day the words name: ``status.paid_until``, except a date inside a period that has not begun and is paid only in part (Б6.4) - then the border of the last period covered in full (``status`` itself is not touched)."""
+    return l.cover_ahead[0] if l.cover_ahead is not None else l.status.paid_until
 
 
 def partial_words(l: bl.Ledger, due, closed: bool = False) -> Optional[str]:
@@ -187,7 +192,8 @@ def cover_phrase(l: bl.Ledger, due, closed: bool = False) -> Optional[str]:
     until = cover_until(l)
     if until is None or l.covered_by not in ("money", "opening", None):
         return None
-    return f"{tx.cover_words(l.covered_by).lower()} {tx.ddmm(until)}"
+    words = f"{tx.cover_words(l.covered_by).lower()} {tx.ddmm(until)}"
+    return f"{words} · {tx.paid_forward_text(l.cover_ahead[1])}" if l.cover_ahead is not None and l.cover_ahead[1] > 0 else words
 
 
 def starts_info(e) -> Tuple[Optional[pay_upcoming.Upcoming], Optional[dict]]:
@@ -308,7 +314,7 @@ def tab_words(e, tab: str) -> Tuple[Optional[str], Optional[str]]:
         return tx.advance_text(l.advance), closed_words(e, left_on(e))
     if l.status.period_mode == bl.LESSONS and l.status.lessons_left is not None:
         return tx.advance_text(l.advance), tx.lessons_left_text(l.status.lessons_left).lower()
-    until = tx.cover_text(l.covered_by, l.status.paid_until)
+    until = tx.cover_text(l.covered_by, cover_day(l))
     return tx.advance_text(l.advance), until[:1].lower() + until[1:] if until else None
 
 
@@ -326,8 +332,11 @@ def state_sub(e, state: str, gone: Optional[date], info: Tuple[Optional[pay_upco
         if info[0] is not None:
             return tx.paid_ahead_text(l.advance) if l.advance > 0 else f"≈ {tx.money(info[0].amount)}"
         return pay_upcoming.package_text(info[1]) if info[1] else None
-    if state in (STATE_PAID, STATE_EXPIRING) and l.covered_by == "money" and l.forgiven_in_last > 0 and not (l.status.period_mode == bl.LESSONS):
-        return tx.forgiven_inside_text(l.forgiven_in_last)
+    if state in (STATE_PAID, STATE_EXPIRING) and l.status.period_mode != bl.LESSONS:
+        words = [tx.forgiven_inside_text(l.forgiven_in_last)] if l.covered_by == "money" and l.forgiven_in_last > 0 else []
+        if l.cover_ahead is not None and l.cover_ahead[1] > 0:           # Б6.4: the part of the next period that was paid ahead of its start
+            words.append(tx.paid_forward_text(l.cover_ahead[1]))
+        return " · ".join(words) or None
     return None
 
 
@@ -354,14 +363,15 @@ def state_text(e, state: str, fields: dict, today: date, info: Tuple[Optional[pa
     if state == STATE_EXPIRING:
         if l.status.period_mode == bl.LESSONS and l.status.lessons_left is not None:
             return tx.lessons_left_text(l.status.lessons_left)
-        return tx.cover_text(l.covered_by, l.status.paid_until)
+        return tx.cover_text(l.covered_by, cover_day(l))
     if state == STATE_PAID and is_closed(e) and l.advance > 0:           # a closed membership with money left: the sum, never a day
         return tx.advance_text(l.advance)
     if l.status.period_mode == bl.LESSONS and l.status.lessons_left is not None:      # a paid package: how many lessons are left (before the advance: the money of a package IS the lessons)
         return tx.lessons_left_text(l.status.lessons_left)
-    if l.advance > 0 and not l.status.paid_until:
+    day = cover_day(l)
+    if l.advance > 0 and not day:
         return tx.advance_text(l.advance)
-    return tx.cover_text(l.covered_by, l.status.paid_until) if l.status.paid_until else (tx.advance_text(l.advance) if l.advance > 0 else None)
+    return tx.cover_text(l.covered_by, day) if day else (tx.advance_text(l.advance) if l.advance > 0 else None)
 
 
 def parts_of_segment(due, seg_id: str) -> list:

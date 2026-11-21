@@ -180,3 +180,24 @@ def test_b6_3_a_student_with_a_future_pause_and_nothing_paid_is_in_the_calm_tab_
     assert [(b, t["total"], t["amount_total"]) for b, t in tabs.items()] == [("expiring", 0, 0), ("active", 1, 0), ("debtors", 0, 0), ("to_pay", 0, 0)]
     summary = get(world, "/org/payments/summary")
     assert (summary["buckets"]["expiring"], summary["buckets"]["active"], summary["debt_total"], summary["due_total"]) == (0, 1, 0, 0)
+
+
+def test_b6_4_money_ahead_of_the_next_period_names_the_border_and_the_sum_and_never_contradicts_the_term(world, fixed_today):
+    # ЛП 420 000 (14 000 a day) for 30 days: November 01.11 - 30.11, December 01.12 - 30.12.  Paid 420 000 (01.11) and 98 000 ahead (20.11) = 7 days of December (98 000 / 14 000): the date INSIDE December is 07.12.
+    # 20.11: the words «Оплачено до 30.11» (the border of the last period covered in full; was: 07.12) and under them «вперёд оплачено 98 000 сум»; ``paid_until`` of the row is still 07.12.
+    # 01.12: December has begun, 98 000 of 420 000 are paid: «К оплате 322 000 до 05.12» (the term counts 5 days from 01.12) - the same sum that 98 000 ahead left.  06.12: the debt 322 000.
+    g, s = lp(world, fixed_today)
+    pay(world, s, g, amount=420_000, paid_on=D(2026, 11, 1))
+    fixed_today(D(2026, 11, 20))
+    pay(world, s, g, amount=98_000, paid_on=D(2026, 11, 20))
+    r = row(world, s, g)
+    assert (r["state_text"], r["state_sub"], r["paid_until"], r["debt_amount"], r["due_amount"]) == ("Оплачено до 30.11", "вперёд оплачено " + M(98_000), "2026-12-07", 0, 0)
+    fixed_today(D(2026, 11, 30))
+    assert (row(world, s, g)["state_text"], row(world, s, g)["state_sub"]) == ("Оплачено до 30.11", "вперёд оплачено " + M(98_000))
+    fixed_today(D(2026, 12, 1))
+    r = row(world, s, g)
+    assert (r["state"], r["due_amount"], r["due_until"], r["state_text"]) == ("to_pay", 322_000, "2026-12-05", "К оплате " + M(322_000))
+    assert "оплачено до" not in str(r).lower()
+    fixed_today(D(2026, 12, 6))
+    r = row(world, s, g)
+    assert (r["state"], r["debt_amount"], r["debt_sub"]) == ("debt", 322_000, "просрочено 1 день")

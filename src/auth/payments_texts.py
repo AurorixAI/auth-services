@@ -356,6 +356,11 @@ def paid_ahead_text(amount: int) -> str:
     return f"оплачено {money(amount)}"
 
 
+def paid_forward_text(amount: int) -> str:
+    """PAY-TAILS Б6.4: the quiet line of a student who paid the periods that have begun in full and a part of the next one that has not: ``вперёд оплачено 98 000 сум`` (the date above it is the border of the last period covered in full)."""
+    return f"вперёд оплачено {money(amount)}"
+
+
 def left_text(day: date) -> str:
     return f"ушёл {ddmm(day)}"
 

@@ -393,6 +393,7 @@ class Ledger:
     covered_by: Optional[str] = field(default=None, repr=False)
     forgiven_in_last: int = field(default=0, repr=False)         # the used forgiveness inside that period (only when ``covered_by`` is ``money``: «из них прощено N сум»)
     cover_partial: Optional[Tuple[int, int, int]] = field(default=None, repr=False)      # ``(money, forgiven, charge)`` of the period that is covered only in part (the date lies INSIDE it: the words say sums, not a day)
+    cover_ahead: Optional[Tuple[Optional[date], int]] = field(default=None, repr=False)      # PAY-TAILS Б6.4: ``(border, paid ahead)`` when the date of ``status.paid_until`` lies inside a period that has NOT begun and is paid only in part: the words name the border (the last day of the last period covered in full; ``None`` when no period is) and the sum paid ahead, never the day inside
     real_pauses: Tuple[Tuple[date, date], ...] = field(default=(), repr=False)      # PAY-DUE: the pauses the student asked for (the gap of a bridged return is not one): they move the term of payment
     open_now: bool = field(default=False, repr=False)                     # PAY-DUE: the stay is open today (a closed participation owes at once: package, transfer)
     _cache: Dict = field(default_factory=dict, repr=False, compare=False)
@@ -1606,7 +1607,7 @@ def _run_ledger(inp: LedgerInput, horizon_extra: int) -> Ledger:
         bal += e.credit - e.debit - e.outflow
         stmt.append(replace(e, balance_after=bal))
 
-    covered_by, forgiven_in_last, cover_partial = _cover_words(segments, opening, mode)
+    covered_by, forgiven_in_last, cover_partial, cover_ahead = _cover_words(segments, opening, mode)
     ledger = Ledger(
         mode=mode, segments=tuple(segments), allocations=tuple(allocations), net_money=net,
         refunded_from=refunded_from, transferred_from=transferred_from, charged=charged, paid=paid, transferred_in=transferred_in, written_off=written_off,
@@ -1617,18 +1618,21 @@ def _run_ledger(inp: LedgerInput, horizon_extra: int) -> Ledger:
         counted=tuple(held_lessons), calendar_windows=tuple(cal_windows), lessons_windows=tuple(les_windows),
         lesson_owner=tuple(lesson_owner), package_costs={sid: tuple(c) for sid, c in seg_costs.items()},
         pauses=tuple(pause_days), opening=opening, recalcs=tuple(recalcs), recalculated=recalculated,
-        real_pauses=tuple(real_pauses), open_now=open_now, covered_by=covered_by, forgiven_in_last=forgiven_in_last, cover_partial=cover_partial)
+        real_pauses=tuple(real_pauses), open_now=open_now, covered_by=covered_by, forgiven_in_last=forgiven_in_last, cover_partial=cover_partial, cover_ahead=cover_ahead)
     return ledger
 
 
-def _cover_words(segments: Sequence[Segment], opening: Optional[Opening], mode: str) -> Tuple[Optional[str], int, Optional[Tuple[int, int, int]]]:
-    """PAY-TAILS Б5.4: ``(covered_by, forgiven_in_last, cover_partial)`` of an account - read from the same prefix of covered periods as ``covered_through``.  The last covered period is the one that holds the date of
-    the coverage (a period with no covered days is not it: the one before is).  Money (a payment, a transfer in) beats the forgiveness, the forgiveness beats a recalculation; the days of an opening balance with no covered
-    period are ``opening``.  A date INSIDE a period (it is covered only in part) comes with ``cover_partial`` so that no text names that day.  Nothing here changes a sum, a day or a status."""
+def _cover_words(segments: Sequence[Segment], opening: Optional[Opening], mode: str) -> Tuple[Optional[str], int, Optional[Tuple[int, int, int]], Optional[Tuple[Optional[date], int]]]:
+    """PAY-TAILS Б5.4: ``(covered_by, forgiven_in_last, cover_partial, cover_ahead)`` of an account - read from the same prefix of covered periods as ``covered_through``.  The last covered period is the one that holds the
+    date of the coverage (a period with no covered days is not it: the one before is).  Money (a payment, a transfer in) beats the forgiveness, the forgiveness beats a recalculation; the days of an opening balance with no
+    covered period are ``opening``.  A date INSIDE a period that has begun (it is covered only in part) comes with ``cover_partial`` so that no text names that day.  A date inside a period that has NOT begun (Б6.4: ``420 000``
+    paid and ``98 000`` ahead of the next period) comes with ``cover_ahead = (border, paid ahead)``: the words name the last day of the last period covered in full and the sum ahead, because on the first day of the next
+    period the screen would ask for the rest «до» a day counted from that first day.  Nothing here changes a sum, a day or a status."""
     if mode == LESSONS:
-        return None, 0, None
+        return None, 0, None, None
     last: Optional[Segment] = None
     partial: Optional[Tuple[int, int, int]] = None
+    ahead: Optional[Tuple[Optional[date], int]] = None
     for s in segments:
         if s.unpriced:
             continue
@@ -1641,19 +1645,23 @@ def _cover_words(segments: Sequence[Segment], opening: Optional[Opening], mode: 
                 last = s
             continue
         if s.covered_days > 0:
-            last = s
             if s.begun:         # a period that has BEGUN and is paid in part has a remainder to pay: its words are sums; days paid ahead of a period that has not begun are days
+                last = s
                 partial = (s.money, s.forgiven, s.amount)
+            else:
+                border = last.days[-1] if last is not None and last.days else (opening.paid_until if opening is not None else None)
+                ahead = (border, s.money + s.forgiven)
+                last = last or s
         break
     if last is None:
-        return ("opening" if opening is not None and opening.paid_until is not None else None), 0, None
+        return ("opening" if opening is not None and opening.paid_until is not None else None), 0, None, None
     if last.money > 0:
-        return "money", last.forgiven, partial
+        return "money", last.forgiven, partial, ahead
     if last.forgiven > 0:
-        return "forgiven", 0, partial
+        return "forgiven", 0, partial, ahead
     if last.recalculated > 0:
-        return "recalc", 0, partial
-    return None, 0, partial
+        return "recalc", 0, partial, ahead
+    return None, 0, partial, ahead
 
 
 def overdue_days(through: date, today: date, pauses: Sequence[Tuple[date, date]]) -> int:
