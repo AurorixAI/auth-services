@@ -31,7 +31,7 @@ FIXED1 = bl.Regime(anchor=ps.FIXED_DAY, billing_day=1)
 BOOKS = D(2026, 9, 1)
 EARLIEST = D(2026, 9, 15)                # the earliest date the generator gives a payment / a forgiveness (the product allows 3 years)
 PROPERTIES = ("P1 debt", "P1 used", "P1 advance", "P1 advance<=money", "P1 identity", "P2 debt", "P2 advance<=money", "P2 advance today", "P2 advance back",
-              "P3 used", "P3 debt", "P3 advance", "P3 advance<=money", "P3e used", "P3e debt", "P3e advance", "P3e advance<=money", "P4 early", "P4 today", "P5 probe")
+              "P3 used", "P3 debt", "P3 advance", "P3 advance<=money", "P3e used", "P3e debt", "P3e advance", "P3e advance<=money", "P3c advance", "P3ec advance", "P4 early", "P4 today", "P5 probe")
 
 
 @dataclass(frozen=True)
@@ -303,6 +303,8 @@ def violations(inp, x):
         freed = sum(max(0, s.money - after_cost.get(s.id, 0)) for s in before.segments)
         if after.advance - before.advance > freed:
             bad.append(f"{tag} advance")
+        if after.advance - before.advance > max(0, before.charged - after.charged):       # information: the same bound by the TOTAL charge (a period changes its place on a personal chain, the id of a period is not the same after)
+            bad.append(f"{tag}c advance")
         return bad
     new = replace(inp, credits=(*inp.credits, x))
     after = bl.run_ledger(new)

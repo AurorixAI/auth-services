@@ -92,3 +92,157 @@ def test_every_path_that_changes_the_days_of_a_pause_writes_the_days_and_the_for
     (mine,) = [p for p in loader.build_input(mid).pauses if p.first == D(2026, 11, 20)]
     assert [(f, l) for _, f, l in mine.forms] == [(D(2026, 11, 22), D(2026, 11, 24)), (D(2026, 11, 22), D(2026, 11, 22)), (D(2026, 11, 22), D(2026, 11, 24)), (D(2026, 11, 20), D(2026, 11, 24))]
     assert all(x[0] <= y[0] for x, y in zip(mine.forms, mine.forms[1:])) and mine.forms[-1][1:] == (mine.first, mine.last)
+
+
+# ---------------------------------------------------------------------------------------------------------------------------- step 3.6: the worlds of B7 on the routes (numbers by hand)
+from tests.test_pay2_api_pg import preview                                    # noqa: E402
+from tests.test_pay_tails_money_pg import lp                                  # noqa: E402
+
+
+def pause_on(w, s, g, first, last, reason="Болезнь"):
+    r = owner(w).post(f"{API}/org/memberships/{membership(w, s, g).id}/pauses", json={"first_day": first, "last_day": last, "reason": reason})
+    assert r.status_code == 201, r.text
+    return r.json()["pause"]["id"]
+
+
+def periods_of(w, s, g, today):
+    return [x for x in led(w, s, g, today).segments if x.kind == "period"]
+
+
+def test_b7_1_a_pause_entered_between_the_forgiveness_and_a_payment_dated_back_leaves_no_debt(world, fixed_today):
+    # ОМ 600 000 from 01.10; October with a pause 15.10 - 31.10 costs 257 000 (6 lessons of 14).  05.11: 300 000 are forgiven (October and November are unpaid: debt 1 200 000).  07.11: the pause is
+    # entered.  08.11: a payment of 600 000 DATED 01.11.  The world of 07.11 knew only the forgiveness (it lay on October [0; 300 000]; the room became 257 000: 43 000 cut off, alive 257 000).  The line: the
+    # payment - October 257 000 + November 343 000; the forgiveness 257 000 - November.  Charged 257 000 + 600 000 = 857 000, debt 0, advance 0, used 257 000 of 300 000.
+    g, s = om(world, fixed_today, joined=D(2026, 10, 1))
+    fixed_today(D(2026, 11, 5))
+    forgive(world, s, g, 300_000)
+    fixed_today(D(2026, 11, 7))
+    pause_on(world, s, g, "2026-10-15", "2026-10-31")
+    fixed_today(D(2026, 11, 8))
+    pay(world, s, g, amount=600_000, paid_on=D(2026, 11, 1))
+    fixed_today(D(2026, 11, 10))
+    check(world, s, g, D(2026, 11, 10), charged=857_000, debt=0, advance=0, used=257_000, granted=300_000)
+    octo, nov = periods_of(world, s, g, D(2026, 11, 10))[:2]
+    assert (octo.amount, octo.money, octo.forgiven, nov.money, nov.forgiven) == (257_000, 257_000, 0, 343_000, 257_000)
+
+
+def test_b7_2_a_forgotten_payment_entered_after_the_whole_debt_was_forgiven_makes_the_forgiveness_not_needed_not_an_advance(world, fixed_today):
+    # ОМ 600 000, November not paid (the student joined 02.11).  05.11: all 600 000 are forgiven.  06.11: a forgotten payment of 600 000 DATED 03.11 is entered: November is paid in full by money, the
+    # forgiveness is not needed (used 0): debt 0, advance 0, refundable 0.  With a forgotten payment of 200 000: money 200 000 + forgiveness 400 000, debt 0, advance 0.
+    g, s = om(world, fixed_today)
+    fixed_today(D(2026, 11, 5))
+    forgive(world, s, g, 600_000)
+    fixed_today(D(2026, 11, 6))
+    pay(world, s, g, amount=600_000, paid_on=D(2026, 11, 3))
+    check(world, s, g, D(2026, 11, 6), charged=600_000, debt=0, advance=0, used=0, granted=600_000)
+
+
+def test_b7_2_a_forgotten_payment_of_a_part_is_money_and_the_forgiveness_covers_the_rest(world, fixed_today):
+    g, s = om(world, fixed_today)
+    fixed_today(D(2026, 11, 5))
+    forgive(world, s, g, 600_000)
+    fixed_today(D(2026, 11, 6))
+    pay(world, s, g, amount=200_000, paid_on=D(2026, 11, 3))
+    check(world, s, g, D(2026, 11, 6), charged=600_000, debt=0, advance=0, used=400_000, granted=600_000)
+
+
+def test_b7_3_the_personal_period_a_payment_dated_before_a_forgiveness_does_not_raise_the_debt(world, fixed_today):
+    # ЛП 420 000 from 01.10.  25.10: October is forgiven (420 000).  26.10: a payment of 420 000 DATED 01.10 (it paid October after all).  05.11: a payment of 420 000.  By the order of the dates the payment of
+    # 01.10 closes October; the forgiveness (25.10) skips November (not begun on 25.10) and burns without holding the line; the payment of 05.11 pays November.  Today 10.11: charged 840 000, money
+    # 840 000: debt 0, advance 0, used 0 of 420 000.
+    g, s = lp(world, fixed_today, joined=D(2026, 10, 1))
+    fixed_today(D(2026, 10, 25))
+    forgive(world, s, g, 420_000)
+    fixed_today(D(2026, 10, 26))
+    pay(world, s, g, amount=420_000, paid_on=D(2026, 10, 1))
+    fixed_today(D(2026, 11, 5))
+    pay(world, s, g, amount=420_000, paid_on=D(2026, 11, 5))
+    fixed_today(D(2026, 11, 10))
+    check(world, s, g, D(2026, 11, 10), charged=840_000, debt=0, advance=0, used=0, granted=420_000)
+
+
+def _october_paused_after(world, fixed_today, forgive_day, pause_day):
+    g, s = om(world, fixed_today, joined=D(2026, 10, 1))
+    for day in sorted({forgive_day, pause_day}):
+        fixed_today(day)
+        if day == forgive_day:
+            forgive(world, s, g, 600_000)
+        if day == pause_day:
+            pause_on(world, s, g, "2026-10-01", "2026-10-31")
+    fixed_today(D(2026, 11, 10))
+    return g, s
+
+
+def test_b7_d_the_pause_on_the_whole_of_october_entered_AFTER_the_forgiveness(world, fixed_today):
+    g, s = _october_paused_after(world, fixed_today, D(2026, 11, 5), D(2026, 11, 7))
+    check(world, s, g, D(2026, 11, 10), charged=600_000, debt=600_000, advance=0, used=0, granted=600_000)
+
+
+def test_b7_d_the_pause_on_the_whole_of_october_entered_BEFORE_the_forgiveness(world, fixed_today):
+    g, s = _october_paused_after(world, fixed_today, D(2026, 11, 5), D(2026, 11, 4))
+    check(world, s, g, D(2026, 11, 10), charged=600_000, debt=0, advance=0, used=600_000, granted=600_000)
+
+
+def november_world(world, fixed_today):
+    g, s = om(world, fixed_today)                           # the student joined 02.11, the clock stands on 03.11
+    return g, s
+
+
+def test_c5_prime_paid_300_forgiven_300_then_a_pause_takes_the_forgiveness_and_taking_the_pause_off_gives_it_back(world, fixed_today):
+    # November 600 000 (12 lessons).  05.11: 300 000 are forgiven; 06.11: 300 000 are paid; 12.11: a pause 17.11 - 30.11 is entered (6 lessons: 300 000).  At the moment of the pause both lie on November (the
+    # room was 600 000): the room becomes 300 000 - 300 000 are cut off the forgiveness (money first): alive 0.  Charged 300 000, money 300 000: debt 0, advance 0, used 0 of 300 000.  The pause is taken
+    # off (С5): the forgiveness comes back: charged 600 000, money 300 000 + forgiveness 300 000, debt 0, used 300 000.
+    g, s = november_world(world, fixed_today)
+    fixed_today(D(2026, 11, 5))
+    forgive(world, s, g, 300_000)
+    fixed_today(D(2026, 11, 6))
+    pay(world, s, g, amount=300_000, paid_on=D(2026, 11, 6))
+    fixed_today(D(2026, 11, 12))
+    pause_id = pause_on(world, s, g, "2026-11-17", "2026-11-30")
+    fixed_today(D(2026, 11, 20))
+    check(world, s, g, D(2026, 11, 20), charged=300_000, debt=0, advance=0, used=0, granted=300_000)
+    r = owner(world).post(f"{API}/org/pauses/{pause_id}/void", json={"reason": "Выздоровел раньше"})
+    assert r.status_code == 200, r.text
+    check(world, s, g, D(2026, 11, 20), charged=600_000, debt=0, advance=0, used=300_000, granted=300_000)
+
+
+def test_the_pause_to_450_000_cuts_150_000_of_the_forgiveness_in_both_orders_of_the_forgiveness_and_the_payment(world, fixed_today):
+    # November 600 000; 300 000 forgiven and 300 000 paid in one order, then a pause 24.11 - 30.11 (9 lessons: 450 000): 150 000 are cut off the forgiveness: money 300 000 + forgiveness 150 000 = 450 000,
+    # used 150 000 of 300 000, debt 0, advance 0.  The same when the payment comes first (05.11) and the forgiveness second (06.11).
+    g, s = november_world(world, fixed_today)
+    fixed_today(D(2026, 11, 5))
+    forgive(world, s, g, 300_000)
+    fixed_today(D(2026, 11, 6))
+    pay(world, s, g, amount=300_000, paid_on=D(2026, 11, 6))
+    fixed_today(D(2026, 11, 12))
+    pause_on(world, s, g, "2026-11-24", "2026-11-30")
+    fixed_today(D(2026, 11, 20))
+    check(world, s, g, D(2026, 11, 20), charged=450_000, debt=0, advance=0, used=150_000, granted=300_000)
+
+
+def test_the_pause_to_450_000_cuts_150_000_of_the_forgiveness_when_the_payment_came_first(world, fixed_today):
+    g, s = november_world(world, fixed_today)
+    fixed_today(D(2026, 11, 5))
+    pay(world, s, g, amount=300_000, paid_on=D(2026, 11, 5))
+    fixed_today(D(2026, 11, 6))
+    forgive(world, s, g, 300_000)
+    fixed_today(D(2026, 11, 12))
+    pause_on(world, s, g, "2026-11-24", "2026-11-30")
+    fixed_today(D(2026, 11, 20))
+    check(world, s, g, D(2026, 11, 20), charged=450_000, debt=0, advance=0, used=150_000, granted=300_000)
+
+
+def test_the_probe_of_the_payment_window_gives_what_the_record_gives(world, fixed_today):
+    # ОМ 600 000 from 01.10, October unpaid, November has begun.  05.11: 300 000 are forgiven, DATED 01.10.  07.11: a pause 01.10 - 15.10 is entered (October 7 lessons of 14: 300 000).  10.11: a payment of
+    # 600 000 dated 01.10 is TRIED in the window and then recorded.  The forgiveness (alive 300 000) fills October (it was entered first); the payment goes to November.  Both say: debt 0 after.
+    g, s = om(world, fixed_today, joined=D(2026, 10, 1))
+    fixed_today(D(2026, 11, 5))
+    forgive(world, s, g, 300_000, effective_on=D(2026, 10, 1))
+    fixed_today(D(2026, 11, 7))
+    pause_on(world, s, g, "2026-10-01", "2026-10-15")
+    fixed_today(D(2026, 11, 10))
+    probe = preview(world, membership(world, s, g), amount=600_000, paid_on="2026-10-01")["result"]
+    pay(world, s, g, amount=600_000, paid_on=D(2026, 10, 1))
+    L = led(world, s, g, D(2026, 11, 10))
+    assert (probe["unpaid_after"], probe["advance_after"]) == (L.debt, L.advance) == (0, 0)
+    assert L.written_off == 300_000

@@ -150,30 +150,52 @@ def test_k1_fixed_a_pause_entered_between_the_forgiveness_and_a_payment_dated_ba
     assert run(D(2026, 11, 7), replace(pay, on=D(2026, 11, 8))) == (857_000, 0, 0, 257_000, 300_000)
 
 
-# ---------------------------------------------------------------------------------------------------------------------------- PAY-TAILS Б7.2: a payment never raises the debt (LESSONS 160)
+# ---------------------------------------------------------------------------------------------------------------------------- PAY-TAILS Б7.2 / Б7.7: a payment never raises the debt (LESSONS 160, 161)
 # The worlds are those that the product ALLOWS (``tests/pay_tails_b7_tools.py``: facts with file:line in its header; every credit entered on a day <= today, a forgiveness not larger than the debt of
-# its entry day, a pause entered between the credits, a payment dated back before a forgiveness, a deduction for a cancelled lesson).  The same tool prints the table «credit x period» of a world and
-# shrinks a counterexample:  python tests/pay_tails_b7_tools.py smallest "P1 used" 1 20000
+# its entry day, a pause entered between the credits or the same day after a credit, a pause that runs past today or covers a whole month, a pause edited, a leaving, a payment dated back before a
+# forgiveness).  Without a lesson cancelled by the centre (the deduction is the next step) in the common month, the personal period and the packages: P1 (a payment added now), P2 (a forgiveness added
+# now), P3 / P3e (a pause entered or edited now), P4 (the oracle that rebuilds the world known at the moment of the forgiveness), P5 (the probe of the window = the record).  The same tool prints the
+# table «credit x period» of a world and shrinks a counterexample:  B7_MODE=personal B7_CANCELS=none python tests/pay_tails_b7_tools.py smallest "P3 debt" 1 20000
 from tests import pay_tails_b7_tools as tools
 
 _COUNTS = {}
+WORLDS = 1500                       # per mode in the suite; the full measure is 5 seeds x 20 000 (the tool)
 
 
-def _counts():
-    if not _COUNTS:
-        _COUNTS.update(tools.run_counts(1, 20_000)[0])
-    return _COUNTS
+def _counts(mode):
+    if mode not in _COUNTS:
+        _COUNTS[mode] = tools.run_counts(1, WORLDS, tools.Cfg(mode, "none"))[0]
+    return _COUNTS[mode]
+
+
+def _zero(keys, modes=("common", "personal", "packages")):
+    for mode in modes:
+        counts = _counts(mode)
+        assert {k: counts[k] for k in keys} == {k: 0 for k in keys}, (mode, counts)
 
 
 def test_b7_p1_a_payment_added_now_never_raises_the_debt_nor_the_used_forgiveness_and_the_advance_grows_by_no_more_than_the_payment():
-    counts = _counts()
-    assert {k: counts[k] for k in ("P1 debt", "P1 used", "P1 advance", "P1 advance<=money", "P1 identity", "flags")} == {k: 0 for k in ("P1 debt", "P1 used", "P1 advance", "P1 advance<=money", "P1 identity", "flags")}, counts
+    _zero(("P1 debt", "P1 used", "P1 advance", "P1 advance<=money", "P1 identity", "flags"))
 
 
 def test_b7_p2_a_forgiveness_added_now_never_raises_the_debt_and_the_advance_only_by_a_backdated_one_and_by_no_more_than_its_sum():
-    counts = _counts()
-    keys = ("P2 debt", "P2 advance<=money", "P2 advance today", "P2 advance back")
-    assert {k: counts[k] for k in keys} == {k: 0 for k in keys}, counts
+    _zero(("P2 debt", "P2 advance<=money", "P2 advance today", "P2 advance back"))
+
+
+def test_b7_p3_a_pause_entered_or_edited_now_never_raises_the_debt_nor_the_used_forgiveness_and_the_advance_stays_money():
+    # The common month: all of P3 / P3e.  The personal period: the same except «the advance grows by no more than the money the cut freed, period by period» (by the ID of the period): a pause on the whole
+    # first period moves the personal chain one month back (the periods change their id), 741 of 500 000 additions - the same bound by the TOTAL charge (P3c) holds and is asserted (the tool prints both).
+    # The packages (the world of a package cannot be rebuilt from the input - the lessons come already without the days of a pause): only «the advance is money»; the debt and the advance of a pause in
+    # the middle of a package are the OPEN residuals of the report (a forgiveness entered while the package had begun can lose its package when the pause moves the lessons).
+    keys = ("P3 used", "P3 debt", "P3 advance", "P3 advance<=money", "P3e used", "P3e debt", "P3e advance", "P3e advance<=money", "P3c advance", "P3ec advance")
+    _zero(keys, modes=("common",))
+    _zero(tuple(k for k in keys if k != "P3 advance"), modes=("personal",))
+    _zero(("P3 advance<=money", "P3e advance<=money"), modes=("packages",))
+
+
+def test_b7_p4_p5_no_forgiveness_lies_on_a_period_that_had_not_begun_and_the_probe_of_the_window_is_the_record():
+    _zero(("P4 early", "P4 today", "P5 probe"))
+    assert all(_counts(mode)["P4 nomatch"] == 0 for mode in ("common", "personal"))             # the periods of the older worlds are found by their place in every world of the two calendar modes
 
 
 def test_b7_named_world_a_payment_dated_before_two_forgivenesses_does_not_turn_the_debt_from_0_into_420000():
