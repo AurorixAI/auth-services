@@ -32,6 +32,7 @@ from src.models.auth import (
 )
 
 from . import billing_ledger as bl
+from .ledger_service import AUDIT_PAUSE_SET
 from .closed_period import ClosedPeriods, group_teacher_ids
 from .ops_rules import OpsError
 from . import membership_periods
@@ -75,7 +76,6 @@ logger = logging.getLogger(__name__)
 
 AUDIT_OPENING_SET = "opening_balance_set"
 AUDIT_OPENING_VOID = "opening_balance_void"
-AUDIT_PAUSE_SET = "membership_pause_set"
 AUDIT_PAUSE_VOID = "membership_pause_void"
 PAUSE_MAX_DAYS = 366
 OPENING_AHEAD_DAYS = 366
@@ -803,6 +803,7 @@ class PauseService(_Base):
             if pause is None or str(pause.id) in seen:
                 continue
             first, last = (date.fromisoformat(d) for d in snap["was"])
+            cut = (pause.first_day, pause.last_day)           # the form it has until now (the line of the journal says it: ``was``)
             if line.action == AUDIT_PAUSE_VOID:
                 if pause.voided_at is None or pause.void_reason != "ученик ушёл из группы":
                     continue
@@ -816,7 +817,7 @@ class PauseService(_Base):
             self._close_excuses(membership, first, last, actor_id)
             self._audit(str(pause.org_id), membership, actor_id, self.pay.role_of(str(pause.org_id), actor_id), AUDIT_PAUSE_SET, {
                 "actor_id": str(actor_id), "membership_id": str(membership.id), "student_id": str(pause.student_id), "pause_id": str(pause.id), "first_day": first.isoformat(),
-                "last_day": last.isoformat(), "was": snap["was"] if line.action == AUDIT_PAUSE_SET else None, "reason": "ученика вернули в день ухода", "via": "leave_undone"})
+                "last_day": last.isoformat(), "was": [cut[0].isoformat(), cut[1].isoformat()] if line.action == AUDIT_PAUSE_SET else None, "reason": "ученика вернули в день ухода", "via": "leave_undone"})
             done.append((pause, first, last))
         return done
 

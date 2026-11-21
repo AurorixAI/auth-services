@@ -25,6 +25,7 @@ from src.models.auth import (
     AttendanceExcuse,
     Group,
     GroupAttendance,
+    GroupAudit,
     GroupScheduleOneOffLesson,
     MembershipOpeningBalance,
     MembershipPause,
@@ -46,6 +47,8 @@ from . import pay_due
 from . import payment_status as ps
 from . import pricing
 from .sql_text import contains
+
+AUDIT_PAUSE_SET = "membership_pause_set"      # the line of the journal of decisions that a pause was entered / edited (its days are in the snapshot; ``logica_service`` writes it)
 
 logger = logging.getLogger(__name__)
 
@@ -285,6 +288,7 @@ class LedgerLoader:
         self.writeoffs: Dict[UUID, List[StudentWriteoff]] = {}
         self.refunds: Dict[UUID, List[StudentRefund]] = {}
         self.pauses: Dict[UUID, List[MembershipPause]] = {}
+        self.pause_lines: Dict[str, List[Tuple[datetime, Dict[str, Any]]]] = {}       # pause id -> the lines of the journal that entered / edited it, in time (Б7.7 п. 5)
         self.openings: Dict[UUID, Optional[MembershipOpeningBalance]] = {}
         self.t_in: Dict[UUID, List[MembershipTransfer]] = {}
         self.t_out: Dict[UUID, List[MembershipTransfer]] = {}
@@ -433,10 +437,19 @@ class LedgerLoader:
             StudentRefund.org_id == self.org_id, StudentRefund.membership_id.in_(found), StudentRefund.voided_at.is_(None)
         ):
             self.refunds[refund.membership_id].append(refund)
+        entered: Dict[str, List[Tuple[datetime, Dict[str, Any]]]] = {}
         for pause in self.db.query(MembershipPause).filter(
             MembershipPause.org_id == self.org_id, MembershipPause.membership_id.in_(found), MembershipPause.voided_at.is_(None)
         ):
             self.pauses[pause.membership_id].append(pause)
+            entered[str(pause.id)] = []
+        if entered:                                       # Б7.7 п. 5: the forms of the pauses in time are in the journal of decisions
+            for at, snap in (self.db.query(GroupAudit.created_at, GroupAudit.snapshot)
+                             .filter(GroupAudit.org_id == self.org_id, GroupAudit.group_id.in_({self.members[m][2].id for m in found}), GroupAudit.action == AUDIT_PAUSE_SET)
+                             .order_by(GroupAudit.created_at, GroupAudit.id)):
+                if (snap or {}).get("pause_id") in entered:
+                    entered[snap["pause_id"]].append((at, snap))
+            self.pause_lines.update(entered)
         for opening in self.db.query(MembershipOpeningBalance).filter(
             MembershipOpeningBalance.org_id == self.org_id, MembershipOpeningBalance.membership_id.in_(found),
             MembershipOpeningBalance.voided_at.is_(None),
@@ -838,6 +851,27 @@ class LedgerLoader:
             self._x_memo[transfer.id] = value
         return value
 
+    def _pause_of(self, p: MembershipPause) -> bl.Pause:
+        """Б7.7 п. 5: the pause with its FORMS in time - the moment it was entered with the days it had then, and every later edit (the lines of the journal of decisions: the days they wrote).  The form of the
+        pause at a moment is the last one at or before it.  A pause whose journal does not end in the days it has now (an old row, a change nobody wrote) is taken whole from its creation."""
+        if not p.created_at:
+            return bl.Pause(p.first_day, p.last_day)
+        lines = self.pause_lines.get(str(p.id), [])
+
+        def days(snap: Dict[str, Any]) -> Tuple[date, date]:
+            return date.fromisoformat(snap["first_day"]), date.fromisoformat(snap["last_day"])
+
+        if lines and not lines[0][1].get("was"):                 # the first line is the entering of the pause
+            first_form, edits = days(lines[0][1]), lines[1:]
+        elif lines:                                               # the entering is not in the journal: the first edit says what it was
+            first_form, edits = tuple(date.fromisoformat(d) for d in lines[0][1]["was"]), lines
+        else:
+            first_form, edits = (p.first_day, p.last_day), []
+        forms = [(p.created_at, *first_form), *((at, *days(snap)) for at, snap in edits)]
+        if forms[-1][1:] != (p.first_day, p.last_day):
+            forms = [(p.created_at, p.first_day, p.last_day)]
+        return bl.Pause(p.first_day, p.last_day, tuple(forms))
+
     def build_input(
         self,
         mid: UUID,
@@ -902,7 +936,7 @@ class LedgerLoader:
             counted_lessons=tuple(self.counted.get(mid, [])),
             expiring_days=self.settings.expiring_days,
             expiring_lessons=self.settings.expiring_lessons,
-            pauses=tuple(bl.Pause(p.first_day, p.last_day, ((p.created_at, p.first_day, p.last_day),) if p.created_at else ()) for p in self.pauses.get(mid, [])),
+            pauses=tuple(self._pause_of(p) for p in self.pauses.get(mid, [])),
             opening=self._opening_of(mid, as_of=as_of, before_transfer=before_transfer),
             centre_cancels=self._cancels_for(mid, group, membership.student_id),
             recalc_versions=self.recalc_versions,
