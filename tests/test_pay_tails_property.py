@@ -6,9 +6,12 @@ all tied to that one period.  Money first, then the forgiveness - whatever the o
 import random
 from datetime import date, datetime, timedelta
 
-from src.auth import billing_ledger as bl
+from dataclasses import replace
 
-from tests.pay2_ledger_helpers import D, T0, flat, make
+from src.auth import billing_ledger as bl
+from src.auth import payment_status as ps
+
+from tests.pay2_ledger_helpers import D, T0, flat, make, weekly
 
 PRICE = 420_000
 
@@ -59,3 +62,61 @@ def test_a_forgiveness_never_becomes_money():
         assert L.advance == L.refundable <= money, (last, money, forgiven, L.advance)
         assert L.written_off <= L.written_off_granted <= max(forgiven, 0)
         assert L.reconciles and not L.flags
+
+
+# ---------------------------------------------------------------------------------------------------------------------------- PAY-TAILS А7.2: the wider world
+# Two or three periods of the common month (billing day 1, 600 000, Tue / Thu / Fri) or of the personal period (420 000 from the day of joining); a pause entered before or after the credits; the entry day
+# of a credit later than its date; a deduction for a cancelled lesson in some worlds.  The property: «a payment entered last does not take back a forgiveness that was already USED, if no period was cut».
+# «Not cut» = the stay is open, no deduction, every pause was entered before the first credit (the filter reads the input, not the code under test; the test fails if the filter leaves too few worlds).
+
+TTF = weekly((1, 3, 4))
+FIXED1 = bl.Regime(anchor=ps.FIXED_DAY, billing_day=1)
+
+
+def world(rng):
+    common = rng.random() < 0.6
+    price = 600_000 if common else 420_000
+    today = D(2026, 11, 3) + timedelta(days=rng.randint(0, 45))
+    base = make(today=today, stays=[bl.Stay(D(2026, 10, 1))], price_at=flat(price), regimes=[FIXED1] if common else [bl.Regime()], start=D(2026, 9, 1), lesson_days=TTF)
+    pauses = ()
+    if rng.random() < 0.7:
+        first = D(2026, 10, 5) + timedelta(days=rng.randint(0, 40))
+        last = first + timedelta(days=rng.randint(2, 18))
+        entered_pause = rng.choice([D(2026, 9, 25), D(2026, 10, 4)]) if rng.random() < 0.7 else first + timedelta(days=rng.randint(10, 40))     # mostly BEFORE the credits, sometimes after
+        pauses = (bl.Pause(first, last, created_on=entered_pause),)
+    credits = []
+    for i in range(rng.randint(1, 4)):
+        on = D(2026, 10, 6) + timedelta(days=rng.randint(0, (today - D(2026, 10, 6)).days))
+        entered = min(today, on + timedelta(days=rng.choice([0, 0, 1, 3])))
+        kind = rng.choice([bl.PAYMENT, bl.WRITEOFF])
+        credits.append(bl.Credit(f"c{i}", kind, on, T0 + timedelta(minutes=i), rng.choice([100_000, 150_000, 200_000, 300_000, price]), entered_on=entered))
+    inp = replace(base, credits=tuple(credits), pauses=pauses)
+    if common and rng.random() < 0.3:
+        cancel = D(2026, 10, 13) + timedelta(days=7 * rng.randint(0, 3))
+        inp = replace(inp, centre_cancels=(bl.CentreCancel(cancel, "l"),), recalc_versions=(bl.RecalcVersion(date.min, True),))
+    return inp
+
+
+def uncut(inp, L, entered):
+    """Nothing cut a period after the first credit was entered: the stay is open, no deduction, every pause was entered by then (read from the INPUT, not from the code under test)."""
+    return not L.recalcs and all(p.created_on is not None and p.created_on <= entered for p in inp.pauses)
+
+
+def test_a_payment_entered_last_never_takes_back_a_used_forgiveness_when_nothing_was_cut():
+    rng = random.Random(20261122)
+    checked = with_forgiveness = 0
+    for trial in range(1500):
+        inp = world(rng)
+        before = bl.run_ledger(inp)
+        assert before.reconciles and not before.flags, (trial, before.flags)
+        assert before.advance == before.refundable and before.advance <= sum(c.amount for c in inp.credits if c.kind != bl.WRITEOFF)
+        late = bl.Credit("late", bl.PAYMENT, max(inp.today, max(c.on for c in inp.credits)), T0 + timedelta(minutes=999), rng.choice([100_000, 200_000, 420_000, 600_000]), entered_on=inp.today)
+        after = bl.run_ledger(replace(inp, credits=(*inp.credits, late)))
+        assert after.reconciles and not after.flags, (trial, after.flags)
+        first_entered = min(c.entered_on or c.on for c in inp.credits)
+        if after.charged != before.charged or not uncut(inp, after, first_entered):
+            continue
+        checked += 1
+        with_forgiveness += before.written_off > 0
+        assert after.written_off >= before.written_off, (trial, before.written_off, after.written_off, inp.credits, inp.pauses)
+    assert checked > 300 and with_forgiveness > 100, (checked, with_forgiveness)           # the filter must not make the property empty
