@@ -137,7 +137,7 @@ def test_4_paid_in_full_the_next_period_asks_for_the_price_minus_the_deduction_b
     assert due["suggested_amount"] == 554_000
     assert row_of(w, s)["advance"] == 46_000 and row_of(w, s)["unpaid"] == 0
     after = client(w, "owner").get(f"{API}/org/memberships/{m.id}/payments/preview", params={"amount": 554_000}).json()["result"]
-    assert after["unpaid_after"] == 0 and after["paid_until_after"] == "2026-12-05"           # 554 000 + the deduction pay the whole next period (06.11-05.12)
+    assert after["unpaid_after"] == 0 and "paid_until_after" not in after and after["after_text"] == "Оплачено до 05.12"           # the one date of the probe is the one in the words; 554 000 + the deduction pay the whole next period (06.11-05.12)
 
 
 # ---- 6. the robust day off ----------------------------------------------------------------------------------------------------------------------------------

@@ -420,7 +420,7 @@ def test_v5_the_state_on_the_day_of_issue_is_the_account_now_not_the_snapshot_of
     got = owner(world).get(f"{API}/org/payments/{pay.id}/receipt").json()
     state = got["state_on_issue"]
     assert (state["debt"], state["advance"]) == (100_000, 0) and state["as_of"] == TODAY.isoformat()
-    assert state["text"] == f"На {TODAY.strftime('%d.%m.%Y')}: оплачено 400{NB}000 из 500{NB}000{NB}сум · долг 100{NB}000{NB}сум"   # the words of the receipt dictionary (PAY-DUE 3.3), whole; PAY-TAILS Б1.5: the period is paid in PART (400 000 of 500 000) - sums, not «оплачено до 07.11»
+    assert "text" not in state and got["receipt_state_text"] == f"оплачено 400{NB}000 из 500{NB}000{NB}сум · долг 100{NB}000{NB}сум"   # the words of the receipt dictionary (PAY-DUE 3.3), whole; PAY-TAILS Б1.5: the period is paid in PART (400 000 of 500 000) - sums, not «оплачено до 07.11»
     post_payment(world, m, amount=40_000)                                               # later the student pays more: the old receipt shows the debt of TODAY
     assert owner(world).get(f"{API}/org/payments/{pay.id}/receipt").json()["state_on_issue"]["debt"] == 60_000
 

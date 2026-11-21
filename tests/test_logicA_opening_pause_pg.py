@@ -70,7 +70,7 @@ def test_opening_b_debt_and_the_payment_that_closes_it_first(world, fixed_today)
     assert (row["unpaid"], row["debt_amount"], row["due_amount"], row["due_until"], row["status"], row["days_overdue"], row["overdue_days"]) == (463_000, 250_000, 213_000, "2026-10-25", "active", None, 21)      # the opening debt is a debt at once; the period that begins today is «К оплате» until the 5th day
     assert row["paid_until"] is None
     pv = owner(world).get(f"{API}/org/memberships/{m.id}/payments/preview", params={"amount": 300_000}).json()
-    assert pv["result"]["paid_until_after"] == "2026-10-22" and pv["result"]["unpaid_after"] == 163_000
+    assert "paid_until_after" not in pv["result"] and pv["result"]["unpaid_after"] == 163_000      # one date in the preview: the one in after_text; 22.10 lies inside a period, so the words name sums
     assert pv["result"]["summary_text"] == (f"Погасит долг {tx.money(250_000)} · к оплате {tx.money(50_000)} из {tx.money(213_000)} → "
                                             f"оплачено {tx.num(50_000)} из {tx.money(213_000)} · к оплате {tx.money(163_000)} до 25.10")      # PAY-TAILS Б1.5: 22.10 lay INSIDE the period (50 000 of 213 000): sums, not a day
     created = post_payment(world, m, amount=300_000)

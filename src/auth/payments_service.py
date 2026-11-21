@@ -2534,8 +2534,9 @@ class PaymentService:
         entry = self._entry_of(org_id, payment.membership_id, today)
         account = entry.ledger
         cover = pv.cover_phrase(account, entry.due, pv.is_closed(entry))          # PAY-TAILS Б1.5: a day only on the border of a period, sums inside it, nothing for a closed membership
-        extra_state = ReceiptState(as_of=today, debt=account.debt, advance=account.advance, paid_until=account.status.paid_until,
-                                   text=tx.receipt_state_text(today, account.debt, account.advance, cover, partial=pv.partial_words(account, entry.due, pv.is_closed(entry)) is not None))
+        closed = pv.is_closed(entry)
+        extra_state = ReceiptState(as_of=today, debt=account.debt, advance=account.advance, paid_until=account.status.paid_until)
+        state_text = tx.receipt_state_text(account.debt, account.advance, cover, partial=pv.partial_words(account, entry.due, closed) is not None, closed=closed)
         snap = self.db.query(PaymentReceiptSnapshot.snapshot).filter(PaymentReceiptSnapshot.payment_id == payment.id).scalar()
         extra: Dict[str, Any] = {"valid_from": payment.valid_from, "valid_to": payment.valid_to}   # legacy receipts
         if isinstance(snap, dict):
@@ -2570,7 +2571,7 @@ class PaymentService:
             created_at=_iso(payment.created_at),
             voided_at=_iso(payment.voided_at),
             void_reason=payment.void_reason,
-            issued_at=_iso(_utcnow()), state_on_issue=extra_state, receipt_state_text=cover, is_copy=int(payment.print_count or 0) > 0, print_count=int(payment.print_count or 0),
+            issued_at=_iso(_utcnow()), state_on_issue=extra_state, receipt_state_text=state_text, is_copy=int(payment.print_count or 0) > 0, print_count=int(payment.print_count or 0),
             void_note=f"Оплата отменена {tx.ddmm(bc.utc_to_business_wall(payment.voided_at).date())}" if payment.voided_at else None,
             replaced_by_receipt_no=replaced_by[0] if replaced_by else None,
             replaces_receipt_no=replaces[0] if replaces else None,

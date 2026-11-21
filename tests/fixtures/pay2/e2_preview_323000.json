@@ -90,7 +90,6 @@
     "overdue_days_after": null,
     "advance_after": 0,
     "paid_until_before": null,
-    "paid_until_after": "2026-10-31",
     "status_after": "active",
     "partial_credit_after": 0,
     "lessons": null,

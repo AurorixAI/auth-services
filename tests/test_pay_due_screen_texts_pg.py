@@ -120,7 +120,7 @@ def test_the_probe_of_a_payment_says_what_stays_in_the_words_of_the_server(pg_se
     # B joined 06.10: its October is a debt too, November begins on 06.11 (nothing yet): 600 000 settle the debt completely
     assert ask(ms[1], 100_000)["after_text"] == f"Останется: долг 500{NB}000{NB}сум"
     full = ask(ms[0], 1_200_000)
-    assert full["after_text"].startswith("Оплачено до ") and full["after_text"] == f"Оплачено до {full['paid_until_after'][8:10]}.{full['paid_until_after'][5:7]}"
+    assert "paid_until_after" not in full and full["after_text"] == "Оплачено до 30.11"      # Oct 600 000 + Nov 600 000 paid in full: the border of November; the date lives only in the words
 
 
 def test_free_and_no_price_have_their_own_words(pg_session, clock):

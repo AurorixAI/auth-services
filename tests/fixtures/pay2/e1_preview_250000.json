@@ -125,7 +125,6 @@
     "overdue_days_after": 32,
     "advance_after": 0,
     "paid_until_before": "2026-09-27",
-    "paid_until_after": "2026-10-12",
     "status_after": "active",
     "partial_credit_after": 14334,
     "lessons": null,

@@ -829,7 +829,6 @@ class ReceiptState(PayModel):
     debt: int = 0
     advance: int = 0
     paid_until: Optional[date] = None
-    text: str
 
 
 class ReceiptOut(BaseModel):
@@ -875,7 +874,7 @@ class ReceiptOut(BaseModel):
     # Money-1 V5 (additive): the moment of issue (naive UTC), the account on that day, «копия» for every print after the first, the note of a cancelled payment, the line that this is not a fiscal cheque
     issued_at: Optional[str] = None
     state_on_issue: Optional[ReceiptState] = None
-    receipt_state_text: Optional[str] = None      # PAY-TAILS Б1.5: the coverage on the receipt - «оплачено до 30.11» (a period closed by money) / «оплачено 100 000 из 420 000 сум · к оплате 320 000 сум до 23.11» (in part); null for a closed membership and a forgiven period
+    receipt_state_text: Optional[str] = None      # the ONE state of the receipt on the day of issue (``state_on_issue.as_of``), a whole phrase without a date: «не оплачено 100 000 сум, оплачено до 14.11» / «оплачено 100 000 из 420 000 сум · к оплате 320 000 сум до 05.11» / «расчёт закрыт»
     is_copy: bool = False
     print_count: int = 0
     void_note: Optional[str] = None
@@ -935,7 +934,6 @@ class PreviewResult(PayModel):
     overdue_days_after: Optional[int] = None
     advance_after: int = 0
     paid_until_before: Optional[date_type] = None
-    paid_until_after: Optional[date_type] = None
     status_after: MembershipStatus = "none"
     partial_credit_after: int = 0
     lessons: Optional[PreviewLessons] = None

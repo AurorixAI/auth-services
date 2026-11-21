@@ -6497,18 +6497,6 @@
             ],
             "title": "Overdue Days After"
           },
-          "paid_until_after": {
-            "anyOf": [
-              {
-                "format": "date",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Paid Until After"
-          },
           "paid_until_before": {
             "anyOf": [
               {
@@ -6567,7 +6555,6 @@
           "overdue_days_after",
           "advance_after",
           "paid_until_before",
-          "paid_until_after",
           "status_after",
           "partial_credit_after",
           "lessons",

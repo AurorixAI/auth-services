@@ -52,16 +52,18 @@ def opening_over_payments_text(total: int, covered_until: date) -> str:
     return f"У ученика уже есть оплаты на {money(total)} — покрытие станет до {ddmm(covered_until)}"
 
 
-def receipt_state_text(day: date, debt: int, advance: int, cover: Optional[str] = None, partial: bool = False) -> str:
-    """Money-1 V5: ``На 21.10.2026: не оплачено 100 000 сум, оплачено до 14.11`` (the account of the student on the day the receipt is issued).  PAY-TAILS Б1.5: ``cover`` is the phrase of the coverage that the account
-    allows (``cover_phrase``: a day only on the border of a period, sums inside it, nothing for a closed membership or a forgiven period); a period paid in part (``partial``) says its own remainder, so the head is not
-    repeated: ``На 21.10.2026: оплачено 400 000 из 500 000 сум · долг 100 000 сум``."""
+def receipt_state_text(debt: int, advance: int, cover: Optional[str] = None, partial: bool = False, closed: bool = False) -> str:
+    """The ONE state of the receipt on the day it is issued, a whole phrase without a date (the day is ``state_on_issue.as_of``): ``не оплачено 100 000 сум, оплачено до 14.11`` / ``аванс 50 000 сум`` / ``всё оплачено, оплачено до 30.11``.
+    PAY-TAILS Б1.5: ``cover`` is the phrase of the coverage as far as the words allow (``cover_phrase``); a period paid in part (``partial``) says its own remainder and the head is not repeated:
+    ``оплачено 100 000 из 420 000 сум · к оплате 320 000 сум до 05.11``; a closed membership is ``расчёт закрыт``."""
+    if closed:
+        return SETTLED_TEXT[0].lower() + SETTLED_TEXT[1:]
     if partial and cover:
-        return f"На {day.strftime('%d.%m.%Y')}: {cover}"
+        return cover
     parts = [f"не оплачено {money(debt)}" if debt else (f"аванс {money(advance)}" if advance else "всё оплачено")]
     if cover:
         parts.append(cover)
-    return f"На {day.strftime('%d.%m.%Y')}: " + ", ".join(parts)
+    return ", ".join(parts)
 
 
 def individual_price_ends_text(amount: int, group_name: str, new_amount: Optional[int]) -> str:

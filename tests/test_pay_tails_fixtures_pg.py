@@ -110,6 +110,7 @@ def test_the_words_of_a_state_and_the_receipts(world, fixed_today):
     fixed_today(D(2026, 11, 21))
     forgive(world, u, g, 220_000)
     leave(world, g, u)
+    check("receipt_closed_membership", owner(world).get(f"{API}/org/payments/{pid(part)}/receipt").json())
     check("statement_settled_with_used_forgiveness", get(world, f"/org/memberships/{membership(world, u, g).id}/statement"))
     check("statement_forgiven_until", get(world, f"/org/memberships/{membership(world, t, g).id}/statement"))
     fixed_today(D(2026, 11, 22))

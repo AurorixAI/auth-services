@@ -1198,7 +1198,8 @@ def test_k1_the_preview_of_a_correction_of_a_transferred_student_is_the_account_
     p = _c1_world(two, monkeypatch, price_a=20_000, amount=500_000)
     result, row = _k1_both(two, p, amount)
     real = _c1_replace(two, p, amount)["row"]
-    assert (result["unpaid_after"], result["paid_until_after"]) == (row["unpaid"], row["paid_until"]) == (real["unpaid"], real["paid_until"])
+    assert "paid_until_after" not in result      # the one date of the probe is in its words (after_text); the account of the row is the account after the save
+    assert result["unpaid_after"] == row["unpaid"] == real["unpaid"] and row["paid_until"] == real["paid_until"]
 
 
 def test_k1_the_preview_of_a_correction_of_a_student_who_left_without_a_transfer_is_the_account_after_the_save(two):
@@ -1207,4 +1208,4 @@ def test_k1_the_preview_of_a_correction_of_a_student_who_left_without_a_transfer
     two.db.query(_SG).filter(_SG.student_id == two.student.id, _SG.group_id == two.group.id).update({"is_active": False})
     two.db.commit()
     result, row = _k1_both(two, p, 200_000)
-    assert (result["unpaid_after"], result["paid_until_after"]) == (row["unpaid"], row["paid_until"])
+    assert "paid_until_after" not in result and result["unpaid_after"] == row["unpaid"]

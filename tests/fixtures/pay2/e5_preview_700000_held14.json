@@ -143,7 +143,6 @@
     "overdue_days_after": null,
     "advance_after": 0,
     "paid_until_before": null,
-    "paid_until_after": null,
     "status_after": "expired",
     "partial_credit_after": 0,
     "lessons": {

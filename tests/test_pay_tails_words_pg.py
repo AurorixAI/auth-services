@@ -85,14 +85,14 @@ def test_the_receipt_of_a_closed_period_says_paid_until_and_of_a_part_says_sums(
     g, s = lp(world, fixed_today)
     made = pay(world, s, g, amount=420_000, paid_on=D(2026, 11, 1))
     rc = owner(world).get(f"{API}/org/payments/{made['payment']['id'] if 'payment' in made else made['id']}/receipt").json()
-    assert rc["receipt_state_text"] == "оплачено до 30.11" and rc["state_on_issue"]["text"].endswith("оплачено до 30.11")
+    assert rc["receipt_state_text"] == "всё оплачено, оплачено до 30.11" and "text" not in rc["state_on_issue"]      # the one state of the day: debt-free + the coverage; the date lives in as_of
     t = fresh_student(world, "Частичный")
     add(world, t, group=g, mode="add")
     made = pay(world, t, g, amount=100_000, paid_on=D(2026, 11, 1))
     rc = owner(world).get(f"{API}/org/payments/{made['payment']['id'] if 'payment' in made else made['id']}/receipt").json()
     text = rc["receipt_state_text"]
     assert text.startswith("оплачено " + tx.num(100_000) + " из " + M(420_000) + " · ") and M(320_000) in text and "оплачено до" not in text      # 420 000 - 100 000 = 320 000: no day inside the period
-    assert "оплачено до" not in rc["state_on_issue"]["text"]
+    assert "text" not in rc["state_on_issue"] and rc["state_on_issue"]["debt"] == 320_000
 
 
 def test_the_sub_line_of_a_debtor_has_no_day_inside_a_period(world, fixed_today):
@@ -118,7 +118,7 @@ def test_a_closed_membership_receipt_has_no_paid_until(world, fixed_today):
     fixed_today(D(2026, 11, 10))
     leave(world, g, s)
     rc = owner(world).get(f"{API}/org/payments/{made['payment']['id'] if 'payment' in made else made['id']}/receipt").json()
-    assert rc["receipt_state_text"] is None and "оплачено до" not in rc["state_on_issue"]["text"]
+    assert rc["receipt_state_text"] == "расчёт закрыт" and "text" not in rc["state_on_issue"]      # a closed membership: no coverage day, no debt/advance words
 
 
 def test_om_a_period_forgiven_whole_says_forgiven_until_and_a_transfer_from_a_group_is_money(world, fixed_today):

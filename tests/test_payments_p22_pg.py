@@ -601,7 +601,7 @@ def test_receipt_content(world):
         "note": "Наличные", "accepted_by_name": "Иван Owner", "created_at": p["created_at"], "voided_at": None,
         "void_reason": None, "replaced_by_receipt_no": None, "replaces_receipt_no": None, "replaces_amount": None,
         "recalc": [],                                           # PAY-F: no cancelled lesson was deducted
-        "is_copy": False, "print_count": 0, "void_note": None, "receipt_state_text": None, "disclaimer": "Не является фискальным чеком",      # Money-1 V5
+        "is_copy": False, "print_count": 0, "void_note": None, "receipt_state_text": "аванс 1\u00a0250\u00a0000\u00a0сум", "disclaimer": "Не является фискальным чеком",      # Money-1 V5
     }
 
 

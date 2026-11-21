@@ -536,7 +536,7 @@ def preview_result(before: bl.Ledger, after: bl.Ledger, credit_id: str, price_to
     return PreviewResult(
         allocations=allocs, unpaid_after=after.debt, debt_amount_after=due_after.debt_amount, due_amount_after=due_after.due_amount,
         due_until_after=due_after.due_until, overdue_days_after=due_after.overdue_days if due_after.debt_amount > 0 else None,
-        advance_after=after.advance, paid_until_before=before.status.paid_until, paid_until_after=after.status.paid_until,
+        advance_after=after.advance, paid_until_before=before.status.paid_until,
         status_after=status_without_paid_until(after.status.status, after.debt),
         partial_credit_after=after.partial_credit, lessons=lessons, summary_text=text,
         after_text=tx.after_text(due_after.debt_amount, due_after.due_amount, cover_until(after, closed), after.lessons.left if lessons else None, after.advance, after.covered_by),
