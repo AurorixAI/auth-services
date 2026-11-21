@@ -41,7 +41,11 @@ def test_scheduled_is_the_nearest_future_individual_price_for_any_row(world):
     assert rows[str(s0.id)]["price"]["amount"] == 400_000                                              # the price today is untouched
     assert rows[str(s1.id)]["price"]["source"] == "group" and rows[str(s1.id)]["price"]["scheduled"]["amount"] == 450_000
     assert rows[str(s2.id)]["price"]["scheduled"] is None
-    # «цена группы снова» from a day = amount null
+    # PAY-TAILS Б1.6 (e1f7be8): «цена группы снова» for a student WITHOUT an individual price writes nothing (no row, nothing scheduled) ...
+    put_override(world, s2, amount=None, valid_from=day(30), reason=None)
+    assert status_items(world)[str(s2.id)]["price"]["scheduled"] is None
+    # ... and for a student who HAS one it is a scheduled row with amount null (the group price from that day)
+    put_override(world, s2, amount=500_000, reason="скидка", valid_from=day(-5))
     put_override(world, s2, amount=None, valid_from=day(30), reason=None)
     got = status_items(world)[str(s2.id)]["price"]["scheduled"]
     assert got["amount"] is None and got["valid_from"] == day(30).isoformat()
