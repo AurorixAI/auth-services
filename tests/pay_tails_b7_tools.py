@@ -345,6 +345,29 @@ def period_key(s):
     return s.slot if s.slot is not None else (s.kind, s.package_no, s.id if s.package_no is None else "")
 
 
+def personal_period(inp):
+    """A personal period (a payment-date chain of days), not a common month and not packages."""
+    return inp.regimes[0].mode != bl.LESSONS and inp.regimes[0].anchor != ps.FIXED_DAY
+
+
+def deductions_by_place(L):
+    """``{key of a period: the sum of its deductions for the lessons the centre cancelled}`` of a ledger."""
+    key = {s.id: period_key(s) for s in L.segments}
+    out = {}
+    for line in L.recalcs:
+        out[key[line.segment_id]] = out.get(key[line.segment_id], 0) + line.amount
+    return out
+
+
+def personal_slack(before, after):
+    """Б7.10 п. 2: in a personal period a pause shifts the borders of the periods, so the deduction of a cancelled lesson may move to another PLACE (or go, when the lesson falls on the pause): D = the deductions by places.
+    The debt may grow by sum over places of max(0, D after - D before) (a period became cheaper: the forgiveness of it is cut), the used forgiveness by sum of max(0, D before - D after) (money that pushed the forgiveness
+    out of a place is not pushed any more).  Returns ``(for used, for debt)``."""
+    d0, d1 = deductions_by_place(before), deductions_by_place(after)
+    places = set(d0) | set(d1)
+    return sum(max(0, d0.get(k, 0) - d1.get(k, 0)) for k in places), sum(max(0, d1.get(k, 0) - d0.get(k, 0)) for k in places)
+
+
 def violations(inp, x):
     """The names of the properties that the addition of ``x`` (a payment, a forgiveness, a pause or an edit of a pause - all entered now) breaks."""
     before = bl.run_ledger(inp)
@@ -360,9 +383,10 @@ def violations(inp, x):
         if isinstance(x, PauseEdit) and x.kind == "shorten":      # the days only shrink: the charge may grow, nothing else is promised
             return bad
         n_grow = max(0, (after.charged - after.recalculated) - (before.charged - before.recalculated))     # Б7.9 п. 1: the PURE charge N = charged - deductions; a pause over a cancelled lesson loses the deduction (a personal period is shifted, not cheapened)
-        if after.written_off - before.written_off > n_grow:
+        slack_used, slack_debt = personal_slack(before, after) if personal_period(inp) else (0, 0)          # Б7.10 п. 2: only a personal period (a pause shifts its borders, a deduction changes its place); a common month and packages: none
+        if after.written_off - before.written_off > n_grow + slack_used:
             bad.append(f"{tag} used")
-        if after.debt - before.debt > n_grow:
+        if after.debt - before.debt > n_grow + slack_debt:
             bad.append(f"{tag} debt")
         cut = {}
         for line in after.recalcs:                                                         # R4: a deduction of a period takes its place INSIDE the period: the money room is the charge minus the deductions
