@@ -3587,7 +3587,7 @@ class AuthService:
         slots = [slot for slot in (group.schedule or []) if isinstance(slot, dict)]
         result: List[Dict[str, Any]] = []
         # O1: no lesson before the slot's "valid from"; O4: none whose start lies in an inactive (archived) interval of the group
-        intervals = schedule_rules.parse_intervals(group)
+        intervals = [] if schedule_rules.pattern_only() else schedule_rules.parse_intervals(group)      # PAY-TAILS R7: the denominator (pattern) is the FULL month, archive does not shrink it
         slot_starts = {self._lesson_id_for_slot(group, slot): schedule_rules.slot_valid_from(group, slot) for slot in slots}
         current_day = date_from
         while current_day <= date_to:

@@ -610,7 +610,7 @@ class LedgerLoader:
         """The lessons of ``group`` in ``start .. end``.  ``pattern=True``: the group's FULL schedule pattern, ignoring the ``validFrom`` of the slots - the
         denominator of the proration of a partial period (a partial month costs price x the student's lessons / the lessons of a full month by the schedule,
         also for a group created mid-month).  The numerator (``pattern=False``) counts only real lessons.  Archive intervals are real absence of the group:
-        they cut both.  ``regular=True`` (PAY-F, a cell of the «Общий месяц» from ``REGULAR_SCHEDULE_FROM``): the extra one-off lessons are left out, in the numerator and in the
+        they cut the numerator only (PAY-TAILS R7: the full month is the denominator, the archive of a group never changes the charge of a closed stay).  ``regular=True`` (PAY-F, a cell of the «Общий месяц» from ``REGULAR_SCHEDULE_FROM``): the extra one-off lessons are left out, in the numerator and in the
         denominator alike (a copy of a move is left out in every case, a cancelled regular lesson stays)."""
         key = (group.id, start, end, pattern, regular)
         if key in self._lesson_days_cache:

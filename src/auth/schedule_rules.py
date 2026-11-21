@@ -65,6 +65,11 @@ def ignoring_valid_from():
         _PATTERN_ONLY.reset(token)
 
 
+def pattern_only() -> bool:
+    """True inside ``ignoring_valid_from``: the FULL pattern of the group (the denominator of a partial period).  Archive intervals do not shrink it (PAY-TAILS R7)."""
+    return _PATTERN_ONLY.get()
+
+
 def _own_valid_from(group: Group, slot: Dict[str, Any], *, warn: bool = True) -> str:
     value = slot.get("validFrom")
     if isinstance(value, str) and len(value) == 10:
