@@ -140,7 +140,7 @@ def test_a_package_centre_a_one_day_stay_without_a_mark_charges_nothing_and_with
     assert marked.lessons.used == 1, marked.lessons
 
 
-def test_an_old_forgiveness_on_a_one_day_stay_is_an_honest_finding_of_the_night_and_not_an_advance(world, fixed_today):
+def test_an_old_forgiveness_on_a_one_day_stay_is_an_information_finding_of_the_night_and_not_an_advance(world, fixed_today):
     # data of the stage: the stay was charged 38 000 under the old rule and the owner forgave 38 000; now the stay charges 0: the forgiveness has no debt to cover -> I-1 «writeoff» (honest finding of old data)
     from src.models.auth import StudentWriteoff
 
@@ -154,9 +154,10 @@ def test_an_old_forgiveness_on_a_one_day_stay_is_an_honest_finding_of_the_night_
     led = account(world, m.id)
     assert (led.charged, led.advance, led.debt, led.written_off, led.written_off_granted) == (0, 0, 0, 0, 38_000)      # PAY-TAILS: no charge, no debt, NO advance (a forgiveness is not money); nothing of the 38 000 was used
     result = mr.run(world.db, apply=True, only=[world.org.id])
-    # PAY-TAILS А7.5: the rows equal what the ledger took in (38 000) and the USED part is 0 <= 0, but the sum ENTERED is above everything the begun periods would cost (0): the honest finding of old data
-    # returns (the old meaning of this test), while the advance stays 0 - the forgiveness is not money
-    assert [i["key"] for i in result["items"] if i["org"] == str(world.org.id) and i["invariant"] == "I-1"] == [f"membership:{m.id}:writeoff"]
+    # PAY-TAILS Б6.1: the rows equal what the ledger took in (38 000) and the USED part is 0 <= 0: no I-1 (nothing is wrong with the calculation); the sum ENTERED is above everything the begun periods would cost
+    # (0): it is told as the information finding of old data (expected 0, actual 38 000), while the advance stays 0 - the forgiveness is not money
+    assert [i["key"] for i in result["items"] if i["org"] == str(world.org.id) and i["invariant"] == "I-1"] == []
+    assert [(i["key"], i["expected"], i["actual"]) for i in result["info"] if i["org"] == str(world.org.id)] == [(f"membership:{m.id}:forgiveness_over_nominal", 0, 38_000)]
 
 
 # ---- С2: the forecast «хватит до» of a package counts the lessons from «Оплата с», not from today -------------------------------------------------------------

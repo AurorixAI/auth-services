@@ -11,6 +11,16 @@ pytestmark = needs_pg
 API = "/api/v1/auth"
 
 
+def night(w):
+    """The night reconciliation of the centre of the world (the real run, nothing saved): the keys of its I-1 findings and its information findings (PAY-TAILS Б6.1)."""
+    from src.auth import money_reconcile as mr
+
+    result = mr.run(w.db, apply=False, only=[w.org.id])
+    assert result["failed"] == [], result["failedWhy"]
+    org = str(w.org.id)
+    return [i["key"] for i in result["items"] if i["org"] == org and i["invariant"] == "I-1"], [(i["what"], i["key"], i["expected"], i["actual"]) for i in result["info"] if i["org"] == org]
+
+
 def test_c11_a_certificate_through_the_requests_route_makes_a_lesson_not_counted_and_the_forgiveness_covers_only_what_is_left(world):
     # Package centre: 500 000 for 10 lessons = 50 000 a lesson.  s1 attends two lessons and is «excused» (pending) at the third: three lessons are counted = 150 000 charged.  Forgiven 150 000: debt 0, used 150 000.
     # The request «по справке» for the third lesson is CONFIRMED through the route: two lessons are counted = 100 000 charged.  The forgiveness uses 100 000 (the other 50 000 are thrown away: NOT a paid
@@ -42,6 +52,8 @@ def test_c11_a_certificate_through_the_requests_route_makes_a_lesson_not_counted
     assert (two.charged, two.debt, two.advance, two.refundable, two.written_off, two.written_off_granted) == (100_000, 0, 0, 0, 100_000, 150_000), two
     assert (two.lessons.covered, two.lessons.used, two.lessons.left) == (2, 2, 0)
     assert two.reconciles and not two.flags
+    # Б6.1: the night says no I-1 (used 100 000 <= charged 100 000); the information finding: entered 150 000 against the nominal 2 lessons x 50 000 = 100 000
+    assert night(world) == ([], [("forgiveness_over_nominal", f"membership:{m}:forgiveness_over_nominal", 100_000, 150_000)])
 
 
 def test_c13_an_opening_debt_forgiven_then_corrected_down_through_the_openings_route(world, fixed_today):
@@ -57,6 +69,7 @@ def test_c13_an_opening_debt_forgiven_then_corrected_down_through_the_openings_r
     r = owner(world).put(f"{API}/org/memberships/{m.id}/opening-balance", json={"debt_amount": 60_000, "debt_on": "2026-09-30", "reason": "Исправление остатка"})
     assert r.status_code == 200, r.text
     check(world, s, g, D(2026, 11, 5), charged=480_000, debt=380_000, advance=0, used=100_000, granted=100_000)
+    assert night(world) == ([], [])                                  # Б6.1: entered 100 000 <= the nominal 480 000: no I-1 and no information finding
 
 
 def test_c12_a_price_lowered_backdated_lowers_the_used_forgiveness_and_gives_no_advance(world, fixed_today):
@@ -72,6 +85,7 @@ def test_c12_a_price_lowered_backdated_lowers_the_used_forgiveness_and_gives_no_
     r = owner(world).put(f"{API}/org/groups/{g.id}/price", json={"amount": 300_000, "valid_from": "2000-01-01", "correction": True, "correction_reason": "Опечатка в цене"})
     assert r.status_code == 200, r.text
     check(world, s, g, D(2026, 11, 10), charged=300_000, debt=0, advance=0, used=100_000, granted=220_000)
+    assert night(world) == ([], [])                                  # Б6.1: used 100 000 <= charged 300 000; entered 220 000 <= the nominal 300 000: nothing to tell
 
 
 def test_a_payment_entered_backdated_after_the_forgiveness_pays_the_period_the_forgiveness_could_not_reach(world, fixed_today):
@@ -89,3 +103,17 @@ def test_a_payment_entered_backdated_after_the_forgiveness_pays_the_period_the_f
     L = check(world, s, g, D(2026, 11, 10), charged=840_000, debt=0, advance=0, used=0, granted=420_000)
     octo, nov = [x for x in L.segments if x.kind == "period"][:2]
     assert (octo.money, octo.forgiven, nov.money, nov.forgiven) == (420_000, 0, 420_000, 0)
+
+
+def test_c12b_a_price_lowered_below_the_entered_forgiveness_is_told_not_counted_by_the_night(world, fixed_today):
+    # ЛП 420 000 from 01.11: paid 100 000 (01.11), forgiven 320 000 (02.11): 100 000 + 320 000 = the price.  10.11: the price in force is CORRECTED to 300 000.  Charged 300 000: money 100 000 first, the forgiveness
+    # covers the other 200 000 (used 200 000 of 320 000), debt 0, advance 0.  Night (Б6.1): no I-1 (used 200 000 <= charged 300 000); information: entered 320 000 above the nominal 300 000.
+    g, s = lp(world, fixed_today)
+    pay(world, s, g, amount=100_000, paid_on=D(2026, 11, 1))
+    fixed_today(D(2026, 11, 2))
+    forgive(world, s, g, 320_000)
+    fixed_today(D(2026, 11, 10))
+    r = owner(world).put(f"{API}/org/groups/{g.id}/price", json={"amount": 300_000, "valid_from": "2000-01-01", "correction": True, "correction_reason": "Опечатка в цене"})
+    assert r.status_code == 200, r.text
+    check(world, s, g, D(2026, 11, 10), charged=300_000, debt=0, advance=0, used=200_000, granted=320_000)
+    assert night(world) == ([], [("forgiveness_over_nominal", f"membership:{membership(world, s, g).id}:forgiveness_over_nominal", 300_000, 320_000)])

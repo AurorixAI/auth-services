@@ -131,15 +131,28 @@ def check_rows(org_id: UUID, membership_id: Any, ledger, rows: RowSums) -> List[
     # it is thrown away by the calculation)
     if rows.written_off != ledger.written_off_granted:
         out.append(Found(org_id, "I-1", f"membership:{sid}:writeoff_rows", sid, None, rows.written_off, ledger.written_off_granted, {"what": "writeoff_rows"}))
-    # PAY-TAILS А7.5: the USED forgiveness is never above the charge, and the sum ENTERED is never above what the begun periods would cost without a cut (a leaving may cut a period AFTER it was
-    # forgiven: entered 420 000 against a charge of 294 000 is lawful; entered 99 000 000 against a month of 450 000 cannot come out of the product)
-    ceiling = max(getattr(ledger, "nominal_charged", ledger.charged), ledger.charged, 0)
-    if ledger.written_off > max(ledger.charged, 0) or ledger.written_off_granted > ceiling:
-        out.append(Found(org_id, "I-1", f"membership:{sid}:writeoff", sid, None, ceiling, max(ledger.written_off, ledger.written_off_granted), {"what": "writeoff_exceeds_charged"}))
+    # PAY-TAILS А7.5 / Б6.1: the USED forgiveness is never above the charge.  The sum ENTERED above what the begun periods would cost is NOT an I-1 (a certificate, a price corrected down, a stay cut by a
+    # leaving make it lawful): it is the information finding of ``check_info``
+    if ledger.written_off > max(ledger.charged, 0):
+        out.append(Found(org_id, "I-1", f"membership:{sid}:writeoff", sid, None, max(ledger.charged, 0), ledger.written_off, {"what": "writeoff_exceeds_charged"}))
     # PAY-TAILS А7.5: an advance is money only (Р4): the flag of the calculation is a finding, not a second number on a screen
     if F_ADVANCE_EXCEEDS_MONEY in getattr(ledger, "flags", ()):
         out.append(Found(org_id, "I-1", f"membership:{sid}:advance", sid, None, ledger.paid + ledger.transferred_in - ledger.refunded - ledger.transferred_out, ledger.advance, {"what": "advance_exceeds_money"}))
     return out
+
+
+INFO = "INFO"                                    # the level of a finding that is told, not counted: not in the findings of I-1, not in the letter, not in the table of findings
+INFO_FORGIVENESS = "forgiveness_over_nominal"
+
+
+def check_info(org_id: UUID, membership_id: Any, ledger) -> List[Found]:
+    """PAY-TAILS Б6.1: the forgiveness ENTERED above the nominal sum of the begun periods (a certificate confirmed later, a price corrected down, a stay cut after the forgiveness): lawful on these ways of the
+    product, but worth a look when nothing explains it - so it is told on its own name and never counted as I-1."""
+    nominal = max(getattr(ledger, "nominal_charged", ledger.charged), ledger.charged, 0)
+    if ledger.written_off_granted <= nominal:
+        return []
+    sid = str(membership_id)
+    return [Found(org_id, INFO, f"membership:{sid}:{INFO_FORGIVENESS}", sid, None, nominal, ledger.written_off_granted, {"what": INFO_FORGIVENESS, "level": "info"})]
 
 
 # ====================================================================================================== pure checks: I-2
@@ -348,9 +361,9 @@ def _row_sums(db, org_id: UUID, ids: List[UUID]) -> Dict[UUID, RowSums]:
 
 
 def reconcile_org(db, org_id: Any, today: Optional[date] = None, *, snapshots: Optional[List[Tuple[Any, Optional[date], Optional[int], Optional[int]]]] = None,
-                  plan: Optional[List[Tuple[UUID, "mrows.RowVerdict"]]] = None, gaps: Optional[Dict[str, int]] = None) -> List[Found]:
+                  plan: Optional[List[Tuple[UUID, "mrows.RowVerdict"]]] = None, gaps: Optional[Dict[str, int]] = None, info: Optional[List[Found]] = None) -> List[Found]:
     """All five checks over one centre.  ``snapshots`` (when given) is filled with the new ``(membership_id, covered_through, lessons_covered, paid)`` for ``run`` to store; ``plan`` with the
-    comparison of the money rows (what ``run`` writes to the baseline); ``gaps`` with what the night could not check, by reason."""
+    comparison of the money rows (what ``run`` writes to the baseline); ``gaps`` with what the night could not check, by reason; ``info`` with the information findings (told, not counted)."""
     from .payments_service import PaymentService
 
     today = today or bc.business_today()
@@ -376,6 +389,8 @@ def reconcile_org(db, org_id: Any, today: Optional[date] = None, *, snapshots: O
             for item in (check_identity(org_uuid, mid, ledger), check_statement(org_uuid, mid, ledger), *check_rows(org_uuid, mid, ledger, sums.get(mid, RowSums()))):
                 if item is not None:
                     found.append(item)
+            if info is not None:
+                info.extend(check_info(org_uuid, mid, ledger))
             now = coverage_of(ledger)
             before = (old[mid].covered_through, old[mid].lessons_covered, old[mid].paid) if mid in old else None
             if before is None:
@@ -601,6 +616,7 @@ def _run_locked(db, *, apply: bool, mail: bool, today: Optional[date], budget_se
     _gap(not_checked, GAP_CENTRE_INACTIVE, int(inactive.scalar() or 0))
     db.rollback()
     findings: List[Found] = []
+    told: List[Found] = []                                   # the information findings of all the centres (Б6.1): in the answer, not in the table, not in the letter
     snapshots: Dict[UUID, List[Tuple[Any, Optional[date], Optional[int], Optional[int]]]] = {}
     plans: Dict[UUID, "mrows.RowVerdict"] = {}
     read_at: Dict[UUID, datetime] = {}                       # the moment each centre began to be read: the snapshot is «as of» it, not of the end of the run (a record made while the run goes is NEWER than the snapshot)
@@ -618,8 +634,10 @@ def _run_locked(db, *, apply: bool, mail: bool, today: Optional[date], budget_se
             snaps: List[Tuple[Any, Optional[date], Optional[int], Optional[int]]] = []
             plan: List[Tuple[UUID, "mrows.RowVerdict"]] = []
             centre_gaps: Dict[str, int] = {}
-            mine = reconcile_org(db, org_id, today, snapshots=snaps, plan=plan, gaps=centre_gaps)
+            centre_told: List[Found] = []
+            mine = reconcile_org(db, org_id, today, snapshots=snaps, plan=plan, gaps=centre_gaps, info=centre_told)
             findings.extend(mine)
+            told.extend(centre_told)
             snapshots[org_id] = snaps
             plans[org_id] = plan[0][1]
             for reason, count in centre_gaps.items():          # only a centre that WAS checked adds to the counters (a failed one is named as failed)
@@ -639,7 +657,8 @@ def _run_locked(db, *, apply: bool, mail: bool, today: Optional[date], budget_se
     out: Dict[str, Any] = {"centres": len(orgs), "failed": failed, "failedWhy": why, "findings": len(findings), "new": new_count, "apply": apply, "mail": "off",
                            "rows": rows_seen, "baselined": sum(v.baselined for v in plans.values()), "firstCentres": sum(1 for v in plans.values() if v.first), "notChecked": dict(sorted(not_checked.items())),
                            "byInvariant": {k: sum(1 for f in findings if f.invariant == k) for k in INVARIANT_TEXT},
-                           "items": [{"org": str(f.org_id), "invariant": f.invariant, "key": f.subject_key, "month": f.month, "expected": f.expected, "actual": f.actual} for f in findings]}
+                           "items": [{"org": str(f.org_id), "invariant": f.invariant, "key": f.subject_key, "month": f.month, "expected": f.expected, "actual": f.actual} for f in findings],
+                           "info": [{"org": str(f.org_id), "level": "info", "what": f.details["what"], "key": f.subject_key, "expected": f.expected, "actual": f.actual} for f in told]}
     if not apply:
         return out
     partial = any(not_checked.get(reason) for reason in PAYROLL_GAPS)      # a payroll that was not recalculated is not «checked»: the run is not clean
