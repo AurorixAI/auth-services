@@ -308,3 +308,36 @@ def test_b11_12_a_pause_taken_off_by_a_human_with_the_words_of_the_leaving_is_a_
     assert r.status_code == 200, r.text
     fixed_today(D(2026, 11, 12))
     check(world, s, g, D(2026, 11, 12), charged=600_000, debt=0, advance=0, used=600_000, granted=600_000)
+
+
+# ---------------------------------------------------------------------------------------------------------------------------- Б11.13 п. 1 - 2: the LAST line that takes a pause off decides
+def leave_cancel_human_void_world(world, fixed_today):
+    # November 600 000, Tue / Thu / Fri; 05.11 the whole month is forgiven (600 000); 07.11 a pause 24 - 30.11; 10.11 a leaving (takes the pause off, ``via`` leave) and its cancel the same day (the pause is back);
+    # 11.11 a HUMAN takes the pause off with the words of the leaving.  The pause never was (С5): 12.11 November 600 000, debt 0, advance 0, used 600 000.
+    g, s = om_at(world, fixed_today, D(2026, 11, 1))
+    fixed_today(D(2026, 11, 5))
+    forgive(world, s, g, 600_000)
+    fixed_today(D(2026, 11, 7))
+    pause_id = pause_on(world, s, g, "2026-11-24", "2026-11-30")
+    fixed_today(D(2026, 11, 10))
+    leave(world, g, s)
+    add(world, s, group=g, mode="add")
+    fixed_today(D(2026, 11, 11))
+    r = owner(world).post(f"{API}/org/pauses/{pause_id}/void", json={"reason": "ученик ушёл из группы"})
+    assert r.status_code == 200, r.text
+    return g, s
+
+
+def test_b11_13_the_last_line_of_the_pause_decides_a_leaving_cancelled_then_a_human_takes_the_pause_off(world, fixed_today):
+    g, s = leave_cancel_human_void_world(world, fixed_today)
+    fixed_today(D(2026, 11, 12))
+    check(world, s, g, D(2026, 11, 12), charged=600_000, debt=0, advance=0, used=600_000, granted=600_000)
+
+
+def test_b11_13_the_same_world_a_second_leaving_and_its_cancel_do_not_bring_the_pause_back(world, fixed_today):
+    # Guard: 12.11 a leaving and its cancel the same day give back only what THIS leaving took off - the pause a human took off on 11.11 stays off: the same numbers.
+    g, s = leave_cancel_human_void_world(world, fixed_today)
+    fixed_today(D(2026, 11, 12))
+    leave(world, g, s)
+    add(world, s, group=g, mode="add")
+    check(world, s, g, D(2026, 11, 12), charged=600_000, debt=0, advance=0, used=600_000, granted=600_000)
