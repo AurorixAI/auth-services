@@ -675,6 +675,9 @@ def deductions_by_place(L):
     return out
 
 
+NO_CANCEL_WORLDS = {}         # kind -> [(world, growth)] of the events with a nonzero allowance in a world WITHOUT a cancelled lesson
+TOLERANCE_KINDS = {}          # Б11.13 п. 4: kind of the event -> [events checked, events with a nonzero allowance, of them in a world with a cancelled lesson]
+EVENT = [None, None]          # [kind, world] of the event being checked (set by ``run_counts``)
 TOLERANCE = [0, 0]            # Б11.12 п. 4: [events checked with ``place_growth``, events where it was NOT zero] - the tool prints it (in a common month a pause entered now must give zero)
 
 
@@ -696,6 +699,12 @@ def place_growth(before, after):
     grow = sum(max(0, n1.get(k, 0) - n0.get(k, 0)) for k in set(n0) | set(n1))
     TOLERANCE[0] += 1
     TOLERANCE[1] += grow > 0
+    row = TOLERANCE_KINDS.setdefault(EVENT[0], [0, 0, 0])
+    row[0] += 1
+    row[1] += grow > 0
+    row[2] += grow > 0 and bool(EVENT[1] is not None and EVENT[1].centre_cancels)
+    if grow > 0 and not (EVENT[1] is not None and EVENT[1].centre_cancels):
+        NO_CANCEL_WORLDS.setdefault(EVENT[0], []).append((EVENT[1], grow))
     return grow
 
 
@@ -923,10 +932,13 @@ def run_counts(seed, n, cfg=Cfg()):
     found = {}
     worlds = pays = forgs = 0
     TOLERANCE[:] = [0, 0]
+    TOLERANCE_KINDS.clear()
+    NO_CANCEL_WORLDS.clear()
     for _ in range(n):
         inp = allowed_world(rng, cfg)
         worlds += 1
         for kind in (bl.PAYMENT, bl.WRITEOFF, "pause", "edit", "cancel", "leave", "transfer", "undo", "relapse_pay", "relapse_forgive", "return", "same", "amount", "restore"):
+            EVENT[0], EVENT[1] = kind, inp
             x = (new_payment(rng, inp) if kind == bl.PAYMENT else new_forgiveness(rng, inp) if kind == bl.WRITEOFF
                  else new_pause(rng, inp) if kind == "pause" else new_pause_edit(rng, inp) if kind == "edit" else new_cancel(rng, inp) if kind == "cancel" and inp.centre_cancels
                  else new_leave(rng, inp, kind) if kind in ("leave", "transfer") else new_undo(rng, inp) if kind == "undo" else new_relapse(rng, inp, kind[8:]) if kind.startswith("relapse_") else new_return(rng, inp) if kind == "return"
@@ -983,6 +995,9 @@ def main(argv):
             total["_tolerance events/nonzero"] = tuple(a + b for a, b in zip(total.get("_tolerance events/nonzero", (0, 0)), tolerance))
             total["_worlds/payments/forgivenesses"] = tuple(a + b for a, b in zip(total.get("_worlds/payments/forgivenesses", (0, 0, 0)), size))
         print(" | ".join(f"{k}: {v}" for k, v in total.items()))
+        print("tolerance by kind (kind: checked / nonzero / nonzero with a cancelled lesson): " + " | ".join(f"{k}: {v[0]} / {v[1]} / {v[2]}" for k, v in TOLERANCE_KINDS.items() if v[1]))
+        for k, worlds_ in NO_CANCEL_WORLDS.items():
+            print(f"nonzero WITHOUT a cancelled lesson, kind {k}: {len(worlds_)} events; smallest world: " + repr(min(worlds_, key=lambda w: (len(w[0].credits), len(w[0].pauses)))[0])[:900])
     elif cmd == "smallest":
         prop, seed, n = argv[2], int(argv[3]), int(argv[4])
         _, found, _ = run_counts(seed, n, cfg)
