@@ -382,3 +382,42 @@ def test_the_probe_of_a_type_of_lessons_the_save_and_the_sheet_after_say_the_sam
     got = payf_client(w, "owner").get(f"{API}/org/payroll/sheets/{sheet_id}").json()
     assert got["stale"] is True and got["total_amount"] == 125_000, got.get("stale")
     assert sheet(w, "2026-10")["total_amount"] == 250_000
+
+
+# ---------------------------------------------------------------------------------------------------------------------------- Б11.11 п. 3: a probe leaves nothing behind (step 8.5 writes the row of the journal in a probe and relies on the rollback)
+
+
+def _rows(w):
+    """The rows a write leaves: the journal (``GroupAudit``), the pauses (voided ones too), the payments (voided ones too)."""
+    from src.models.auth import GroupAudit, MembershipPause, StudentPayment
+
+    w.db.expire_all()
+    return {"journal": w.db.query(GroupAudit).count(), "pauses": w.db.query(MembershipPause).count(), "payments": w.db.query(StudentPayment).count()}
+
+
+def test_a_probe_of_a_pause_and_of_a_payment_leaves_no_row_of_the_journal_no_pause_and_no_payment(world, fixed_today):
+    # A pause 24.11 - 30.11 (entered 03.11), 05.11 forgiven 225 000, 10.11 paid 225 000.  On 12.11 five probes - an edit of the pause, a new pause, taking a pause off, the correction of the payment and its
+    # cancel - change nothing in the base: the same number of rows of the journal, of pauses and of payments.  (The same calls SAVED do write: the check is not empty.)
+    g, s, pause_id = pause_to_edit(world, fixed_today)
+    fixed_today(D(2026, 11, 5))
+    forgive(world, s, g, 225_000)
+    fixed_today(D(2026, 11, 10))
+    payment = pay(world, s, g, amount=225_000, paid_on=D(2026, 11, 10))["payment"]
+    fixed_today(D(2026, 11, 12))
+    mid = membership(world, s, g).id
+    before = _rows(world)
+    probes = [
+        ("patch", f"{API}/org/pauses/{pause_id}", {"first_day": "2026-11-17", "reason": "Болезнь продлилась"}),
+        ("post", f"{API}/org/memberships/{mid}/pauses", {"first_day": "2026-11-16", "last_day": "2026-11-20", "reason": "Ещё одна"}),
+        ("post", f"{API}/org/pauses/{pause_id}/void", {"reason": "Поставили по ошибке"}),
+        ("post", f"{API}/org/payments/{payment['id']}/replace", {"amount": 300_000, "paid_on": "2026-11-10", "method": "cash", "reason": "Неверная сумма"}),
+        ("post", f"{API}/org/payments/{payment['id']}/void", {"reason": "Деньги не пришли"}),
+    ]
+    for method, url, body in probes:
+        r = getattr(owner(world), method)(url, params={"dry_run": "true"}, json=body)
+        assert r.status_code in (200, 201), (url, r.text)
+        assert _rows(world) == before, (url, before, _rows(world))
+    r = owner(world).post(probes[1][1], json=probes[1][2])                          # the same call saved: a pause and a row of the journal appear
+    assert r.status_code == 201, r.text
+    after = _rows(world)
+    assert (after["pauses"], after["journal"]) == (before["pauses"] + 1, before["journal"] + 1) and after["payments"] == before["payments"], (before, after)
