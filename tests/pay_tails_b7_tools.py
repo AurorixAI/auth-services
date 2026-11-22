@@ -204,7 +204,7 @@ def base_world(rng, cfg=Cfg()):
     stay_last = None
     if rng.random() < 0.2:                                                                                    # a leaving, the stay is cut on a day inside the account
         stay_last = D(2026, 10, 12) + timedelta(days=rng.randint(0, max(0, (today - D(2026, 10, 13)).days)))
-    left_at = at(stay_last, rng.choice([5, 25, 45, 90, 700])) if stay_last is not None and rng.random() < 0.5 else None      # Б11.8: the leaving is an event with a moment (or has none: «after all the records»)
+    left_at = at(stay_last, rng.choice([5, 25, 45, 90, 700])) if stay_last is not None else None      # Б11.8: the leaving is an event with a moment (the product always writes it; a leaving WITHOUT a moment - «after all the records» - is a virtual cut and old rows, not a world of the generator: a payment entered now would then come BEFORE it)
     stays = [mk_stay(D(2026, 10, 1), stay_last, None, left_at)]
     back = None
     if stay_last is not None and mode != "packages" and rng.random() < 0.3:                                   # Б11.8 п. 8: a return to the group (a second piece of the stay) after a gap
