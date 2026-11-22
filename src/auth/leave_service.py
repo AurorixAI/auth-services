@@ -29,7 +29,7 @@ from . import payment_status as ps
 from . import payments_texts as tx
 from . import pricing
 from .logica_service import AUDIT_OPENING_SET, AUDIT_OPENING_VOID, PauseService
-from .membership_periods import close_period
+from .membership_periods import close_period, naive_utc
 from .payments_schemas import (
     FreshBalance,
     LeaveMembership,
@@ -103,11 +103,11 @@ def cancel_forgiveness_of_empty_stay(db: Session, membership: StudentGroup, peri
     """Money-2 У4: the stay that has just been closed is of NO day (opened and closed on one business day without a counted mark, ``ls.stay_of_period``): the debt it had is gone, so the forgiveness
     given to it while it was open would stand as an advance (and the night would name it, I-1).  The live forgiveness of THIS stay is cancelled by the closing itself, in the same transaction, with a line
     of the journal of decisions (the author is the one who closes; the same line as the cancel by hand - no check of the age or of the role here); a debt that comes back later with a mark is an ordinary
-    debt.  A forgiveness dated before the day the stay opened belongs to an earlier stay of the membership and is left alone.  Returns the ids of the cancelled forgivenesses."""
+    debt.  A forgiveness entered BEFORE the stay opened (Б11.19 п. 3: by the moment of the record, not by its date) belongs to an earlier stay of the membership and is left alone.  Returns the ids of the cancelled forgivenesses."""
     day = ps.business_date(period.joined_at)
     if period.left_at is None or ps.business_date(period.left_at) != day:
         return []
-    rows = (db.query(StudentWriteoff).filter(StudentWriteoff.membership_id == membership.id, StudentWriteoff.voided_at.is_(None), StudentWriteoff.effective_on >= day)
+    rows = (db.query(StudentWriteoff).filter(StudentWriteoff.membership_id == membership.id, StudentWriteoff.voided_at.is_(None))
             .with_for_update().all())
     if not rows:
         return []
@@ -116,7 +116,7 @@ def cancel_forgiveness_of_empty_stay(db: Session, membership: StudentGroup, peri
     loader.load_facts([membership.id])
     if ls.stay_of_period(period, loader.marked_of(membership.id)) is not None:
         return []
-    gone = loader.forgiveness_to_cancel(membership.id, day)          # Ф1: only the forgiveness that would stand as an advance - one function with the window
+    gone = loader.forgiveness_to_cancel(membership.id, naive_utc(period.joined_at))          # Ф1 (Б11.19 п. 3): the records made since the piece was opened that the account after the closing does not use - one function with the window
     rows = [r for r in rows if r.id in gone]
     if not rows:
         return []

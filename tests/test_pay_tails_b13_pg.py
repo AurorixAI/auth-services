@@ -303,3 +303,78 @@ def test_b11_14_guard_an_ordinary_return_does_not_carry_the_moment_the_window_is
     assert done.status_code == 200, done.text
     after = check(world, s, g, D(2026, 11, 20), charged=450_000, debt=0, advance=150_000, used=150_000, granted=150_000)
     assert (m["money"]["charged_after_leave"], m["money"]["debt_amount"], m["money"]["advance"]) == (450_000, 0, 150_000) and after.refundable == 150_000
+
+
+# ---------------------------------------------------------------------------------------------------------------------------- Б11.19 п. 3: the rule Ф1 by the MOMENT of the record and by the use in the account after the closing
+def ordinary_return_then_leave(world, fixed_today, *, forgiven_before_return, paid_after, forgiven_on=None):
+    # ОМ 600 000, Tue / Thu / Fri; since 01.11; 05.11 paid 300 000; 20.11 he leaves (01 - 20.11 = 9 lessons = 450 000, debt 150 000); then, the same day, in one of the two orders: 150 000 are forgiven (before the ordinary return or
+    # after it) and the parent pays 150 000 (``paid_after``); the second leaving the same day.  The window of the second leaving is read before it.  A return after the leaving with NO forgiveness between is the CANCEL of the
+    # leaving (the records after it count as made before the second leaving, Б11.12); the return is an ORDINARY one only when a forgiveness stands between (the cancel is forbidden then).
+    g, s = om_at(world, fixed_today, D(2026, 11, 1))
+    fixed_today(D(2026, 11, 5))
+    pay(world, s, g, amount=300_000, paid_on=D(2026, 11, 5))
+    fixed_today(D(2026, 11, 20))
+    leave(world, g, s)
+    if forgiven_before_return:
+        forgive(world, s, g, 150_000, effective_on=forgiven_on)
+    add(world, s, group=g, mode="add")
+    if not forgiven_before_return:
+        forgive(world, s, g, 150_000, effective_on=forgiven_on)
+    if paid_after:
+        pay(world, s, g, amount=150_000, paid_on=D(2026, 11, 20))
+    url = f"{API}/org/groups/{g.id}/students/{s.id}"
+    (m,) = owner(world).get(f"{url}/leave-preview").json()["memberships"]
+    done = owner(world).post(f"{url}/leave", json={})
+    assert done.status_code == 200, done.text
+    return g, s, m["money"]
+
+
+def kept_forgiveness(world, s, g):
+    from src.models.auth import StudentWriteoff
+
+    rows = world.db.query(StudentWriteoff).filter(StudentWriteoff.membership_id == membership(world, s, g).id).all()
+    return [(r.amount, r.voided_at is None) for r in rows]
+
+
+def test_b11_15_f1_b_the_forgiveness_entered_before_the_return_is_the_record_of_the_real_stay_and_stays(world, fixed_today):
+    # Б11.15 (was «as it is»: the forgiveness was cancelled by the DATE).  The forgiveness 150 000 was entered BEFORE the ordinary return - after the first, real leaving: it covers the real debt of that stay.  The payment 150 000
+    # after the return is the money of a stay that never began.  Charged 450 000, debt 0, used 150 000, advance 150 000, to give back 150 000, the record of the forgiveness is not cancelled.  Window = answer = account.
+    g, s, money = ordinary_return_then_leave(world, fixed_today, forgiven_before_return=True, paid_after=True)
+    after = check(world, s, g, D(2026, 11, 20), charged=450_000, debt=0, advance=150_000, used=150_000, granted=150_000)
+    assert (money["charged_after_leave"], money["debt_amount"], money["advance"]) == (450_000, 0, 150_000) and after.refundable == 150_000
+    assert kept_forgiveness(world, s, g) == [(150_000, True)]
+
+
+def test_b11_19_f1_v_after_the_cancel_without_a_payment_the_forgiveness_of_the_real_debt_stays(world, fixed_today):
+    # The return has no «Оплата с» and no forgiveness stands before it: it is the CANCEL of the leaving (a return the same day takes no «Оплата с»: 409 ``LEAVE_UNDO_NO_START``).  The forgiveness 150 000 is entered after it, no payment
+    # (the guard of Money-2: a forgiveness of the REAL debt of an earlier stay is left): the account after the closing uses it: charged 450 000, debt 0 (the forgiveness covers 150 000), used 150 000, advance 0.
+    g, s, money = ordinary_return_then_leave(world, fixed_today, forgiven_before_return=False, paid_after=False)
+    after = check(world, s, g, D(2026, 11, 20), charged=450_000, debt=0, advance=0, used=150_000, granted=150_000)
+    assert (money["charged_after_leave"], money["debt_amount"], money["advance"]) == (450_000, 0, 0) and after.refundable == 0
+    assert kept_forgiveness(world, s, g) == [(150_000, True)]
+
+
+def test_b11_19_f1_g_a_forgiveness_dated_back_but_entered_during_the_empty_stay_is_cancelled(world, fixed_today):
+    # A new student of 20.11 (Friday: one lesson of 50 000 is charged today); the same day 50 000 are forgiven DATED 19.11 (back); the student is taken out the same day with no counted mark: the stay is of no day, nothing is
+    # charged - the forgiveness would stand as an advance.  It was entered after the stay was opened, the account after the closing does not use it (placings 0): cancelled by the closing, whatever its date says.
+    # Charged 0, debt 0, advance 0, used 0; the window says the same.
+    g, s = om_at(world, fixed_today, D(2026, 11, 20))
+    forgive(world, s, g, 50_000, effective_on=D(2026, 11, 19))
+    url = f"{API}/org/groups/{g.id}/students/{s.id}"
+    (m,) = owner(world).get(f"{url}/leave-preview").json()["memberships"]
+    done = owner(world).post(f"{url}/leave", json={})
+    assert done.status_code == 200, done.text
+    after = led(world, s, g, D(2026, 11, 20))
+    assert (m["money"]["charged_after_leave"], m["money"]["debt_amount"], m["money"]["advance"]) == (after.charged, after.debt, after.advance) == (0, 0, 0)
+    assert (after.written_off, after.written_off_granted, after.refundable) == (0, 0, 0)
+    assert kept_forgiveness(world, s, g) == [(50_000, False)]
+
+
+def test_b11_19_f1_v_the_return_without_pay_from_is_the_cancel_and_the_payment_after_it_counts_before_the_leaving(world, fixed_today):
+    # The same world but the return has no «Оплата с» and no forgiveness stands between: it is the CANCEL of the leaving (Б11.12: a record made between the cancel and the second leaving is made BEFORE the leaving).  The
+    # parent has paid 300 000 + 150 000 = 450 000 = the charge of 01 - 20.11: nothing is owed, the forgiveness 150 000 entered after the cancel is not used by the account and is cancelled by the closing: charged 450 000,
+    # debt 0, used 0, advance 0, to give back 0 - the family does not leave money at the centre.  Window = answer = account.
+    g, s, money = ordinary_return_then_leave(world, fixed_today, forgiven_before_return=False, paid_after=True)
+    after = check(world, s, g, D(2026, 11, 20), charged=450_000, debt=0, advance=0, used=0, granted=0)
+    assert (money["charged_after_leave"], money["debt_amount"], money["advance"]) == (450_000, 0, 0) and after.refundable == 0
+    assert kept_forgiveness(world, s, g) == [(150_000, False)]

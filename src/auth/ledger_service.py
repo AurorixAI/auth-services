@@ -337,7 +337,7 @@ class LedgerLoader:
         self.counted: Dict[UUID, List[bl.CountedLesson]] = {}
         self.marks: Dict[UUID, Set[date]] = {}      # Money-2 У3: membership id -> the days of its ONE-DAY stays on which the student has a counted mark of a lesson (read once per load, see ``load_marks``)
         self._x_memo: Dict[UUID, int] = {}
-        self._emptied: List[UUID] = []      # Ф1: the memberships whose closing cancels the forgiveness of a stay of no day (judged after the load)
+        self._emptied: Dict[UUID, datetime] = {}      # Ф1: the memberships whose closing cancels the forgiveness of a stay of no day (judged after the load) -> the moment that piece was opened
         self._x_active: Set[UUID] = set()
         self._guard_hits = 0
         self._indexed: Set[Tuple[UUID, str]] = set()
@@ -435,10 +435,10 @@ class LedgerLoader:
         if any(v.on for v in self.recalc_versions):       # after the last hop: the schedule is preloaded for ALL the groups at once
             self._load_cancels({g.id for _, _, g, _ in self.members.values()})
         self._prices()
-        for mid in self._emptied:                  # the window and the answer read the account as the closing will leave it
-            gone = self.forgiveness_to_cancel(mid, self.today)
+        for mid, opened in self._emptied.items():                  # the window and the answer read the account as the closing will leave it
+            gone = self.forgiveness_to_cancel(mid, opened)
             self.writeoffs[mid] = [w for w in self.writeoffs.get(mid, []) if w.id not in gone]
-        self._emptied = []
+        self._emptied = {}
 
     def _load_batch(self, ids: List[UUID]) -> None:
         rows = (
@@ -550,9 +550,10 @@ class LedgerLoader:
             self._load_counted([self.members[m][:3] for m in found])
         self._load_left_days(found, periods)       # after the counted lessons: for a package the day he left belongs to the group that COUNTED a lesson of his that day
         for mid in found:
-            if mid in self.closing and any(p.left_at is None and p.joined_at is not None and ps.business_date(p.joined_at) == self.today
-                                           and stay_of_period(p, self.marked_of(mid), self.today) is None for p in periods.get(mid, [])):
-                self._emptied.append(mid)           # Money-2 У4 / Ф1: the closing will cancel the forgiveness that would stand as an advance - judged in ``load_facts`` when the prices are there
+            empty = [p for p in periods.get(mid, []) if mid in self.closing and p.left_at is None and p.joined_at is not None and ps.business_date(p.joined_at) == self.today
+                     and stay_of_period(p, self.marked_of(mid), self.today) is None]
+            if empty:
+                self._emptied[mid] = membership_periods.naive_utc(empty[0].joined_at)           # Money-2 У4 / Ф1: the closing will cancel the forgiveness that would stand as an advance - judged in ``load_facts`` when the prices are there
 
     def _load_chains(self) -> None:
         """Б11.1: a corrected or restored payment was entered when its FIRST record was: one read of the chains of the payments just loaded (``earlier_versions``: one query per step of a chain)."""
@@ -823,20 +824,20 @@ class LedgerLoader:
                     self.left_days.setdefault(membership.student_id, {}).setdefault(membership.id, set()).add(run[1])
                     self.left_names.setdefault(membership.student_id, {}).setdefault(run[1], set()).add(group.name)
 
-    def forgiveness_to_cancel(self, mid: UUID, day: date) -> Set[UUID]:
-        """Money-2 Ф1: of the live forgivenesses dated ``day`` or later of a membership whose stay of ``day`` is of NO day (the stay is already closed in the load, or is judged as closed by ``closing``) - the ids that are
-        to be cancelled by the closing: the ones that would stand as an advance.  A forgiveness that covers the REAL debt of an earlier stay (he left with a debt, came back, was forgiven and taken out by mistake) is left.
-        The latest (by the time of the record) is tried first: it is cancelled when the debt stays 0 without it; so with no real debt all of them go, with a real debt of D only what exceeds D goes (the tail of the
-        latest ones), and a forgiveness that cannot be taken off without the debt appearing is kept whole.  ONE function for the record (``leave_service.cancel_forgiveness_of_empty_stay``) and the window (``closing``)."""
+    def forgiveness_to_cancel(self, mid: UUID, opened: datetime) -> Set[UUID]:
+        """Money-2 Ф1 by the MOMENT of the record (Б11.19 п. 3): of the live forgivenesses of a membership whose last piece of the stay is of NO day (it is already closed in the load, or is judged as closed by ``closing``) - the ids
+        that the closing cancels: the ones ENTERED not before the piece was opened (``opened`` - the moment it was opened: a record made before the return is a record of the real stay) and that the account AFTER the closing does not
+        use at all (the sum of their placings is 0 - the ledger itself says it, so the order of the buttons does not matter).  A forgiveness that covers the REAL debt of an earlier stay, or part of it, is left (the account shows
+        «used N of M»).  The latest record is tried first.  ONE function for the record (``leave_service.cancel_forgiveness_of_empty_stay``) and the window (``closing``)."""
         mine = list(self.writeoffs.get(mid, []))
-        cands = sorted((w for w in mine if w.effective_on >= day), key=lambda w: (w.created_at or datetime.min, str(w.id)), reverse=True)
+        cands = sorted((w for w in mine if (w.created_at or datetime.min) >= opened), key=lambda w: (w.created_at or datetime.min, str(w.id)), reverse=True)
         gone: Set[UUID] = set()
         try:
             for w in cands:
-                self.writeoffs[mid] = [x for x in mine if x.id not in gone and x.id != w.id]
+                self.writeoffs[mid] = [x for x in mine if x.id not in gone]
                 self._x_memo.clear()
                 inp = self.build_input(mid)
-                if inp is not None and bl.run_ledger(bl.sliced_input(inp, self.today)).debt == 0:
+                if inp is not None and sum(a.amount for a in bl.run_ledger(bl.sliced_input(inp, self.today)).allocations if a.credit_id == str(w.id)) == 0:
                     gone.add(w.id)
         finally:
             self.writeoffs[mid] = mine
