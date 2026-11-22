@@ -1964,16 +1964,16 @@ class PaymentService:
     # ------------------------------------------------ write-off and refund
 
     def _audit(self, org_id: str, membership: StudentGroup, actor_id: str, actor_role: str, action: str,
-               snapshot: Dict[str, Any], consequence: Optional[Dict[str, str]] = None, at: Optional[datetime] = None) -> None:
+               snapshot: Dict[str, Any], consequence: Optional[Dict[str, str]] = None, at: Optional[datetime] = None) -> GroupAudit:
         """One line of the journal of decisions, in the transaction of the action.  ``consequence`` (G3M Р3-2): the payroll sentence of the answer, worked out before the real run (``money_effects.run_with_effects(journal=True)``)."""
         snapshot = {**snapshot, **(consequence or {})}
-        self.db.add(
-            GroupAudit(
-                org_id=UUID(str(org_id)), group_id=membership.group_id, actor_id=UUID(str(actor_id)),
-                actor_role=actor_role if actor_role in ("owner", "admin", "teacher") else "admin",
-                action=action, snapshot=snapshot, created_at=at or _utcnow(),      # the one clock (Money-1 V2: the journal of decisions reads the business day of this moment)
-            )
+        line = GroupAudit(
+            org_id=UUID(str(org_id)), group_id=membership.group_id, actor_id=UUID(str(actor_id)),
+            actor_role=actor_role if actor_role in ("owner", "admin", "teacher") else "admin",
+            action=action, snapshot=snapshot, created_at=at or _utcnow(),      # the one clock (Money-1 V2: the journal of decisions reads the business day of this moment)
         )
+        self.db.add(line)
+        return line
 
     def role_of(self, org_id: str, actor_id: str) -> str:
         """The role of the author in the centre for a line of the journal (``admin`` when the author is not a member any more)."""

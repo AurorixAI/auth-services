@@ -189,8 +189,8 @@ class _Base:
                 return True
         return False
 
-    def _audit(self, org_id: str, membership: StudentGroup, actor_id: str, actor_role: str, action: str, snapshot: Dict[str, Any]) -> None:
-        self.pay._audit(org_id, membership, actor_id, actor_role, action, snapshot)
+    def _audit(self, org_id: str, membership: StudentGroup, actor_id: str, actor_role: str, action: str, snapshot: Dict[str, Any]) -> GroupAudit:
+        return self.pay._audit(org_id, membership, actor_id, actor_role, action, snapshot)
 
     def _row(self, org_id: str, membership_id: UUID, today: date):
         return self.pay._rows([self.pay._entry_of(org_id, membership_id, today)])[0]
@@ -666,6 +666,12 @@ class PauseService(_Base):
             if body.reason is not None:
                 row.reason = body.reason.strip() or None
             self.db.flush()
+            # Б11.4: the line of the journal is the FORM of the pause in time (the moment and the days of the edit) - written BEFORE the accounts are read, the probe included (a rollback takes it away), so the
+            # probe, the answer of the save and the ledger after say the same numbers; the sums are added to the line below
+            line = self._audit(org_id, membership, actor_id, actor_role, AUDIT_PAUSE_SET, {
+                "actor_id": str(actor_id), "membership_id": str(membership.id), "student_id": str(membership.student_id),
+                "pause_id": str(row.id), "first_day": first.isoformat(), "last_day": last.isoformat(), "reason": row.reason, "was": [old[0].isoformat(), old[1].isoformat()]})
+            self.db.flush()
             self._close_excuses(membership, first, last, actor_id)       # newly covered days only change anything; closed ones stay closed
             others = self._others(org_id, family, was, membership.id, done=not dry_run)
             after = self.pay._entry_of(org_id, row.membership_id, today).ledger
@@ -675,11 +681,7 @@ class PauseService(_Base):
             change_reason = None
             if after.charged != before.charged and not dry_run:      # M3: a change that moves money says why (the dry run only shows the impact)
                 change_reason = self.pay._check_reason(body.reason)
-            if not dry_run:
-                self._audit(org_id, membership, actor_id, actor_role, AUDIT_PAUSE_SET, {
-                    "actor_id": str(actor_id), "membership_id": str(membership.id), "student_id": str(membership.student_id),
-                    "pause_id": str(row.id), "first_day": first.isoformat(), "last_day": last.isoformat(), "reason": change_reason or row.reason,
-                    "was": [old[0].isoformat(), old[1].isoformat()], "charged_before": before.charged, "charged_after": after.charged, **self._other_facts(others[0])})
+            line.snapshot = {**line.snapshot, "reason": change_reason or row.reason, "charged_before": before.charged, "charged_after": after.charged, **self._other_facts(others[0])}
             out = self._saved(org_id, membership, row, before, after, money=money, owner=owner, dry_run=dry_run, today=today,
                               first=min(first, old[0]), last=max(last, old[1]), others=others)
             if dry_run:
