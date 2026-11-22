@@ -133,10 +133,24 @@ def stay_of_period(period, marked: Callable[[date], bool] = lambda day: False, c
     return bl.Stay(first, last, period.joined_at, period.left_at)
 
 
+def _carry_leaving(kept: bl.Stay, dropped) -> bl.Stay:
+    """Б11.12 п. 1: a piece of no day (``stay_of_period`` is None) that was opened on the very day the PREVIOUS kept piece ended - the leaving, its cancel (a new period), the leaving again - is dropped, but its leaving is
+    the LAST event of the stay: the moment of the leaving of the kept piece becomes the later of the two.  Else a record entered between the cancel and the second leaving would count as entered AFTER the leaving."""
+    if kept.last is None or kept.left_at is None or dropped.left_at is None or dropped.joined_at is None or ps.business_date(dropped.joined_at) != kept.last or dropped.left_at <= kept.left_at:
+        return kept
+    return replace(kept, left_at=dropped.left_at)
+
+
 def stays_of_membership(membership: StudentGroup, periods: Sequence, marked: Callable[[date], bool] = lambda day: False, close_on: Optional[date] = None) -> List[bl.Stay]:
     """The ledger stays of a membership from its periods; a legacy row without periods is one stay by its own dates (NOT a membership whose only stay charges
     nothing: R3 №2)."""
-    spans = [stay for stay in (stay_of_period(p, marked, close_on) for p in periods) if stay is not None]
+    spans: List[bl.Stay] = []
+    for p in periods:
+        stay = stay_of_period(p, marked, close_on)
+        if stay is not None:
+            spans.append(stay)
+        elif spans:
+            spans[-1] = _carry_leaving(spans[-1], p)
     if not periods and membership.joined_at:
         return [bl.Stay(ps.business_date(membership.joined_at),
                         None if membership.is_active or not membership.left_at else ps.business_date(membership.left_at), membership.joined_at,

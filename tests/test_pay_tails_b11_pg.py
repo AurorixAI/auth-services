@@ -256,3 +256,38 @@ def test_b11_3_the_pause_entered_after_the_forgiveness_leaves_the_opening_debt_p
 
 def test_b11_3_the_pause_entered_before_the_forgiveness_gives_the_same_account(world, fixed_today):
     opening_world(world, fixed_today, pause_first=True)
+
+
+# ---------------------------------------------------------------------------------------------------------------------------- Б11.12 п. 1: leaving, cancel, a payment, leaving again - the same day
+def relapse_world(world, fixed_today, marked):
+    # ОМ 600 000, Tue / Thu / Fri; the student since 01.11; 05.11 300 000 are forgiven (November: debt 300 000).  20.11: he leaves, is taken back the same day (the cancel of the leaving), the parent pays 300 000
+    # (inside the debt), and he leaves AGAIN.  ``marked``: a counted mark of the lesson of 20.11 (Friday).
+    g, s = om_at(world, fixed_today, D(2026, 11, 1))
+    fixed_today(D(2026, 11, 5))
+    forgive(world, s, g, 300_000)
+    fixed_today(D(2026, 11, 20))
+    leave(world, g, s)
+    add(world, s, group=g, mode="add")
+    pay(world, s, g, amount=300_000, paid_on=D(2026, 11, 20))
+    if marked:
+        from tests.money1b_helpers import hold_lessons
+
+        hold_lessons(world, s, [D(2026, 11, 20)], group=g)
+    leave(world, g, s)
+    return g, s
+
+
+def test_b11_12_leave_cancel_payment_leave_again_the_forgiveness_is_cut_not_turned_into_an_advance(world, fixed_today):
+    # November 01 - 20.11 = 9 lessons (3 5 6 10 12 13 17 19 20) = 450 000.  The forgiveness 300 000 was entered when the whole month stood; the payment 300 000 was entered while he was in the group - BEFORE the
+    # second leaving.  The world of the second leaving: the month costs 450 000, the money 300 000 and the forgiveness cut to 150 000: used 150 000, debt 0, advance 0 (nothing to give back).
+    # (The piece opened by the cancel and closed the same day has no day and fell out; the leaving of the first piece was the EARLIER one: the payment counted as made AFTER the leaving and the forgiveness 300 000
+    # was left whole: used 300 000, advance 150 000.)
+    g, s = relapse_world(world, fixed_today, marked=False)
+    check(world, s, g, D(2026, 11, 20), charged=450_000, debt=0, advance=0, used=150_000, granted=300_000)
+    assert led(world, s, g, D(2026, 11, 20)).refundable == 0
+
+
+def test_b11_12_the_same_world_with_a_counted_mark_on_the_day_of_the_leaving_is_the_same(world, fixed_today):
+    # The guard: with a counted mark of the lesson of 20.11 the second piece is a real stay of one day and does not fall out: the same numbers.
+    g, s = relapse_world(world, fixed_today, marked=True)
+    check(world, s, g, D(2026, 11, 20), charged=450_000, debt=0, advance=0, used=150_000, granted=300_000)
