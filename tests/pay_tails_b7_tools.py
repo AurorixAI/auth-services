@@ -345,6 +345,8 @@ def new_pause_edit(rng, inp):
     stay_last = inp.stays[-1].last
     if rng.random() < 0.6:
         first, last = p.first - timedelta(days=rng.randint(0, 10)), p.last + timedelta(days=rng.randint(0, 15))
+        if len(inp.stays) > 1:                                              # a pause lies inside a piece of the stay: it does not grow into the gap before a return
+            first = max(first, inp.stays[-1].first)
         if stay_last is not None:
             last = min(last, stay_last)
         if (first, last) == (p.first, p.last) or last < first:
@@ -505,17 +507,18 @@ def event_violations(inp, x):
             bad.append("P3u advance>=")
         if x.kind == "transfer" and after.advance + carried < before.advance:
             bad.append("P3u transfer")
-        cut = {}
-        for line in after.recalcs:
-            cut[line.segment_id] = cut.get(line.segment_id, 0) + line.amount
-        after_cost = {period_key(s): s.amount - cut.get(s.id, 0) for s in after.segments if s.begun}
-        freed = sum(max(0, s.money - after_cost.get(period_key(s), 0)) for s in before.segments)
-        if after.advance + carried - before.advance > freed:
-            bad.append("P3u advance<=freed")
-        if after.debt > before.debt:
-            bad.append("P3u debt")
-        if after.written_off > before.written_off:
-            bad.append("P3u used")
+        if x.kind == "leave":                                   # a transfer takes money OUT of an account (the outflow lies on the credits and moves what covers what): only the advance is promised there (above)
+            cut = {}
+            for line in after.recalcs:
+                cut[line.segment_id] = cut.get(line.segment_id, 0) + line.amount
+            after_cost = {period_key(s): s.amount - cut.get(s.id, 0) for s in after.segments if s.begun}
+            freed = sum(max(0, s.money - after_cost.get(period_key(s), 0)) for s in before.segments)
+            if after.advance - before.advance > freed:
+                bad.append("P3u advance<=freed")
+            if after.debt > before.debt:
+                bad.append("P3u debt")
+            if after.written_off > before.written_off:
+                bad.append("P3u used")
     elif isinstance(x, UndoLeave):                                  # P7: the leaving cancelled the same day = the account before the leaving
         if state_of(apply_undo(inp)) != state_of(inp):
             bad.append("P7 undo")
