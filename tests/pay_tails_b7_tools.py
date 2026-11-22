@@ -20,6 +20,7 @@ import os
 import random
 import sys
 from dataclasses import dataclass, replace
+from types import SimpleNamespace
 from datetime import date, datetime, timedelta
 
 _TREE = os.environ.get("B7_TREE") or os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -36,7 +37,7 @@ TTF = weekly((1, 3, 4))
 FIXED1 = bl.Regime(anchor=ps.FIXED_DAY, billing_day=1)
 BOOKS = D(2026, 9, 1)
 EARLIEST = D(2026, 9, 15)                # the earliest date the generator gives a payment / a forgiveness (the product allows 3 years)
-PROPERTIES = ("P1c debt", "P1c advance", "P1c used", "P3u advance>=", "P3u advance<=freed", "P3u advance<=money", "P3u debt", "P3u used", "P3u transfer", "P6 same", "P6 amount", "P6b restore", "P7 undo",
+PROPERTIES = ("P1c debt", "P1c advance", "P1c used", "P3u advance>=", "P3u advance<=freed", "P3u advance<=money", "P3u debt", "P3u used", "P3u transfer", "P6 same", "P6 amount", "P6b restore", "P7 undo", "P7 relapse",
               "P1 debt", "P1 used", "P1 advance", "P1 advance<=money", "P1 identity", "P2 debt", "P2 advance<=money", "P2 advance today", "P2 advance back",
               "P3 used", "P3 debt", "P3 advance", "P3 advance<=money", "P3k used", "P3k debt", "P3k advance", "P3k advance<=money", "P3e used", "P3e debt", "P3e advance", "P3e advance<=money", "P3c advance", "P3ec advance", "P4 early", "P4 today", "P5 probe")
 
@@ -383,6 +384,14 @@ class UndoLeave:
 
 
 @dataclass(frozen=True)
+class Relapse:
+    """Б11.12 п. 5: a leaving entered NOW, cancelled, a record (a payment or a forgiveness, ``record``) entered, and the student leaves AGAIN the same day.  The input is what the loader builds from the periods the product
+    writes: ``stays_of_membership`` of the two periods (the second opened by the cancel and closed by the second leaving - a stay of no day when there is no mark)."""
+
+    record: object
+
+
+@dataclass(frozen=True)
 class Return:
     """A return to the group entered NOW: a second piece of the stay (the student left earlier)."""
 
@@ -419,11 +428,33 @@ def apply_leave(inp, moment=None):
     return with_pauses(replace(inp, stays=stays), pauses, past)
 
 
+UNDO_MINUTE, RECORD_MINUTE, RELEAVE_MINUTE = 910, 920, 930      # the order inside the day: the leaving (900), its cancel, the record, the second leaving
+
+
+def periods_after_undo(inp, releave=None):
+    """The periods the product writes for the LAST stay of ``inp`` when it was left at ``leave_moment`` and the leaving was cancelled (``open_period``: a NEW period opened at the cancel, the first one stays closed at
+    the leaving); ``releave`` = the moment of a second leaving (closes the second one)."""
+    last = inp.stays[-1]
+    joined = last.joined_at or at(last.first, 0)
+    first = SimpleNamespace(joined_at=joined, left_at=leave_moment(inp), billing_from=last.first)
+    second = SimpleNamespace(joined_at=at(inp.today, UNDO_MINUTE), left_at=releave, billing_from=None)
+    return SimpleNamespace(joined_at=joined, left_at=None, is_active=True), [first, second]
+
+
+def stays_after_undo(inp, releave=None):
+    """Б11.12 п. 5 (lesson 166): the stays of the account after the cancel - built by the LOADER of the head under test (``ledger_service.stays_of_membership`` on the two periods), not by hand: a property that is
+    red on a defect of the loader sees it."""
+    from src.auth import ledger_service as ls
+    membership, periods = periods_after_undo(inp, releave)
+    return (*inp.stays[:-1], *ls.stays_of_membership(membership, periods, lambda day: False))
+
+
 def apply_undo(before, moment=None):
-    """The input after the leaving was cancelled the same day.  The fixed loader erases what the leaving wrote to the pauses (Б11.8 п. 2): the input is the one BEFORE.  An older head reads the cancel as a new form
-    of every pause it restored (the moment of the cancel, the days it had before): a pause that was cut is «extended» then."""
+    """The input after the leaving was cancelled the same day, in the form the PRODUCT writes: two touching pieces (the one closed by the leaving with its moment, the one the cancel opened - open); the cut of the
+    pauses is erased (Б11.8 п. 2: the line ``leave_undone``), so the pauses are the ones BEFORE the leaving.  An older head reads the cancel as a new form of every pause it restored (the moment of the cancel, the
+    days it had before): a pause that was cut is «extended» then."""
     if NEW_LEAVE:
-        return before
+        return replace(before, stays=stays_after_undo(before))
     undo, left = at(before.today, 950), leave_moment(before)
     pauses = []
     for p in before.pauses:
@@ -436,6 +467,25 @@ def apply_undo(before, moment=None):
         else:
             pauses.append(p)
     return replace(before, pauses=tuple(pauses))
+
+
+def with_record(inp, record):
+    """``record`` entered between the cancel and the second leaving (its moment is fixed here)."""
+    return replace(inp, credits=(*inp.credits, replace(record, created_at=at(inp.today, RECORD_MINUTE))))
+
+
+def apply_relapse(inp, record):
+    """The input after: a leaving, its cancel, ``record``, a second leaving - all the same day.  Stays by the loader; the pauses are cut by the SECOND leaving (the first cut was erased by the cancel)."""
+    new = with_record(inp, record)
+    pauses, past = leave_pauses(new.pauses, getattr(new, "past_pauses", ()), new.today, at(new.today, RELEAVE_MINUTE))
+    if not NEW_LEAVE:
+        return apply_leave(new, at(new.today, RELEAVE_MINUTE))
+    return with_pauses(replace(new, stays=stays_after_undo(new, at(new.today, RELEAVE_MINUTE))), pauses, past)
+
+
+def oracle_relapse(inp, record):
+    """What the model says: ONE leaving at the moment of the second one, the record entered before it."""
+    return apply_leave(with_record(inp, record), at(inp.today, RELEAVE_MINUTE))
 
 
 def apply_return(inp):
@@ -453,6 +503,14 @@ def new_leave(rng, inp, kind="leave"):
 
 def new_undo(rng, inp):
     return UndoLeave() if can_leave(inp) else None
+
+
+def new_relapse(rng, inp, kind):
+    """Б11.12 п. 5: a leaving, its cancel, a payment (``kind`` "pay") or a forgiveness (``kind`` "forgive"), a second leaving - the same day."""
+    if not can_leave(inp):
+        return None
+    record = new_payment(rng, inp, "rel") if kind == "pay" else new_forgiveness(rng, inp, "rel")
+    return Relapse(record) if record is not None else None
 
 
 def new_return(rng, inp):
@@ -522,6 +580,13 @@ def event_violations(inp, x):
     elif isinstance(x, UndoLeave):                                  # P7: the leaving cancelled the same day = the account before the leaving
         if state_of(apply_undo(inp)) != state_of(inp):
             bad.append("P7 undo")
+    elif isinstance(x, Relapse):                                    # P7 relapse (Б11.12 п. 5): leave, cancel, a record, leave again = the account of ONE leaving the record is entered before
+        new = apply_relapse(inp, x.record)
+        after = bl.run_ledger(new)
+        if after.flags or not after.reconciles:
+            bad.append("flags")
+        if state_of(new) != state_of(oracle_relapse(inp, x.record)):
+            bad.append("P7 relapse")
     elif isinstance(x, Return):
         after = bl.run_ledger(apply_return(inp))
         if after.flags or not after.reconciles:
@@ -610,25 +675,33 @@ def deductions_by_place(L):
     return out
 
 
+TOLERANCE = [0, 0]            # Б11.12 п. 4: [events checked with ``place_growth``, events where it was NOT zero] - the tool prints it (in a common month a pause entered now must give zero)
+
+
 def place_growth(before, after):
     """Б11.9 п. 2 (replaces the allowance of step 7.3): the growth of the debt and of the used forgiveness is bounded by the sum over PLACES of max(0, N after - N before), N of a place = charged minus the deductions of
-    it, a place with no pair counts zero.  For a common month a pause entered now gives zero here (every place only gets cheaper): the property stays strict."""
+    it.  Б11.12 п. 4: only the places that HAVE BEGUN count (a place that has not begun costs nothing, its length depends on the money: it was a blind spot of up to 1 000 000 in a common month).  For a common month a
+    pause entered now gives zero here (every place only gets cheaper): the property stays strict."""
     def n_by_place(L):
         cut = {}
         for line in L.recalcs:
             cut[line.segment_id] = cut.get(line.segment_id, 0) + line.amount
         out = {}
         for s in L.segments:
-            out[period_key(s)] = out.get(period_key(s), 0) + s.amount - cut.get(s.id, 0)
+            if s.begun:
+                out[period_key(s)] = out.get(period_key(s), 0) + s.amount - cut.get(s.id, 0)
         return out
 
     n0, n1 = n_by_place(before), n_by_place(after)
-    return sum(max(0, n1.get(k, 0) - n0.get(k, 0)) for k in set(n0) | set(n1))
+    grow = sum(max(0, n1.get(k, 0) - n0.get(k, 0)) for k in set(n0) | set(n1))
+    TOLERANCE[0] += 1
+    TOLERANCE[1] += grow > 0
+    return grow
 
 
 def violations(inp, x):
     """The names of the properties that the addition of ``x`` (a payment, a forgiveness, a pause or an edit of a pause - all entered now) breaks."""
-    if isinstance(x, (Leave, UndoLeave, Return, Correct)):
+    if isinstance(x, (Leave, UndoLeave, Relapse, Return, Correct)):
         return event_violations(inp, x)
     before = bl.run_ledger(inp)
     if isinstance(x, (bl.Pause, PauseEdit)):                       # Б7.5 P3: a pause entered now; Б7.7: an edit of a pause is the same entry
@@ -809,7 +882,7 @@ def describe(inp, x):
         lines.append(f"  pause {p.first}..{p.last} entered {pause_moment(p):%d.%m %H:%M}")
     for c in inp.centre_cancels:
         lines.append(f"  cancel {c.day} entered {getattr(c, 'entered', datetime.min):%d.%m %H:%M}; setting " + ", ".join(f"{v.effective_from} {v.on} made {getattr(v, 'entered', datetime.min):%d.%m %H:%M}" for v in inp.recalc_versions))
-    if isinstance(x, (Leave, UndoLeave, Return, Correct)):
+    if isinstance(x, (Leave, UndoLeave, Relapse, Return, Correct)):
         lines.append(f"  ADDED  {x}  (today {inp.today}; stays " + ", ".join(f"{t.first}..{t.last} left {getattr(t, 'left_at', None)}" for t in inp.stays) + f"; opening {inp.opening})")
     elif isinstance(x, bl.Pause):
         lines.append(f"  ADDED  pause {x.first}..{x.last} entered {pause_moment(x):%d.%m %H:%M}")
@@ -827,6 +900,8 @@ def apply_x(inp, x):
         return apply_leave(inp)
     if isinstance(x, UndoLeave):
         return apply_undo(inp)
+    if isinstance(x, Relapse):
+        return apply_relapse(inp, x.record)
     if isinstance(x, Return):
         return apply_return(inp)
     if isinstance(x, Correct):
@@ -847,13 +922,14 @@ def run_counts(seed, n, cfg=Cfg()):
     counts["P4 nomatch"] = 0
     found = {}
     worlds = pays = forgs = 0
+    TOLERANCE[:] = [0, 0]
     for _ in range(n):
         inp = allowed_world(rng, cfg)
         worlds += 1
-        for kind in (bl.PAYMENT, bl.WRITEOFF, "pause", "edit", "cancel", "leave", "transfer", "undo", "return", "same", "amount", "restore"):
+        for kind in (bl.PAYMENT, bl.WRITEOFF, "pause", "edit", "cancel", "leave", "transfer", "undo", "relapse_pay", "relapse_forgive", "return", "same", "amount", "restore"):
             x = (new_payment(rng, inp) if kind == bl.PAYMENT else new_forgiveness(rng, inp) if kind == bl.WRITEOFF
                  else new_pause(rng, inp) if kind == "pause" else new_pause_edit(rng, inp) if kind == "edit" else new_cancel(rng, inp) if kind == "cancel" and inp.centre_cancels
-                 else new_leave(rng, inp, kind) if kind in ("leave", "transfer") else new_undo(rng, inp) if kind == "undo" else new_return(rng, inp) if kind == "return"
+                 else new_leave(rng, inp, kind) if kind in ("leave", "transfer") else new_undo(rng, inp) if kind == "undo" else new_relapse(rng, inp, kind[8:]) if kind.startswith("relapse_") else new_return(rng, inp) if kind == "return"
                  else new_correct(rng, inp, kind) if kind in ("same", "amount", "restore") else None)
             if x is None:
                 continue
@@ -864,6 +940,7 @@ def run_counts(seed, n, cfg=Cfg()):
                 counts[name] = counts.get(name, 0) + 1
                 found.setdefault(name, []).append((inp, x))
             counts["P4 nomatch"] += oracle_p4(apply_x(inp, x))[1]
+    counts["_tolerance events/nonzero"] = tuple(TOLERANCE)
     return counts, found, (worlds, pays, forgs)
 
 
@@ -900,8 +977,10 @@ def main(argv):
         total = {}
         for seed in range(int(argv[2]), int(argv[2]) + (int(argv[4]) if len(argv) > 4 else 1)):
             counts, _, size = run_counts(seed, int(argv[3]), cfg)
+            tolerance = counts.pop("_tolerance events/nonzero")
             for k, v in counts.items():
                 total[k] = total.get(k, 0) + v
+            total["_tolerance events/nonzero"] = tuple(a + b for a, b in zip(total.get("_tolerance events/nonzero", (0, 0)), tolerance))
             total["_worlds/payments/forgivenesses"] = tuple(a + b for a, b in zip(total.get("_worlds/payments/forgivenesses", (0, 0, 0)), size))
         print(" | ".join(f"{k}: {v}" for k, v in total.items()))
     elif cmd == "smallest":
