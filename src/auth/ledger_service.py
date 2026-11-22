@@ -15,7 +15,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timedelta
-from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Set, Tuple
+from typing import Any, Callable, Collection, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 from uuid import UUID
 
 from sqlalchemy import and_, exists, or_
@@ -51,6 +51,7 @@ from .sql_text import contains
 
 AUDIT_PAUSE_VOID = "membership_pause_void"      # the line of the journal that a pause was voided (by a human, or by a leaving: then it has ``via``; ``logica_service`` writes it)
 LEAVE_VIA = ("leave", "transfer", "archive")      # what ended the stay, written as ``via`` on the lines a leaving makes
+AUDIT_LEFT = "student_left_group"      # the line of the journal that a student left a group; a cancel of the leaving writes the same action with ``event = "leave_undone"`` (``leave_undo``)
 AUDIT_PAUSE_SET = "membership_pause_set"      # the line of the journal of decisions that a pause was entered / edited (its days are in the snapshot; ``logica_service`` writes it)
 
 logger = logging.getLogger(__name__)
@@ -135,24 +136,30 @@ def stay_of_period(period, marked: Callable[[date], bool] = lambda day: False, c
     return bl.Stay(first, last, period.joined_at, period.left_at)
 
 
-def _carry_leaving(kept: bl.Stay, dropped) -> bl.Stay:
-    """Б11.12 п. 1: a piece of no day (``stay_of_period`` is None) that was opened on the very day the PREVIOUS kept piece ended - the leaving, its cancel (a new period), the leaving again - is dropped, but its leaving is
-    the LAST event of the stay: the moment of the leaving of the kept piece becomes the later of the two.  Else a record entered between the cancel and the second leaving would count as entered AFTER the leaving."""
+def _carry_leaving(kept: bl.Stay, dropped, undone: Collection[datetime]) -> bl.Stay:
+    """Б11.12 п. 1 / Б11.14 п. 1: a piece of no day (``stay_of_period`` is None) that was opened by the CANCEL of the leaving of the PREVIOUS kept piece - the leaving, its cancel (a new period), the leaving again - is dropped,
+    but its leaving is the LAST event of the stay: the moment of the leaving of the kept piece becomes the later of the two.  Else a record entered between the cancel and the second leaving would count as entered AFTER
+    the leaving.  The sign is the LINE of the journal (``undone``: the moments of the leavings a cancel took back, ``student_left_group`` / ``leave_undone``), not the dates (lesson 167): an ORDINARY return of the day
+    of the leaving (the cancel is forbidden after a forgiveness) opens the same piece, and the first leaving stays the real one."""
     if kept.last is None or kept.left_at is None or dropped.left_at is None or dropped.joined_at is None or ps.business_date(dropped.joined_at) != kept.last or dropped.left_at <= kept.left_at:
+        return kept
+    if membership_periods.naive_utc(kept.left_at) not in undone:
         return kept
     return replace(kept, left_at=dropped.left_at)
 
 
-def stays_of_membership(membership: StudentGroup, periods: Sequence, marked: Callable[[date], bool] = lambda day: False, close_on: Optional[date] = None) -> List[bl.Stay]:
+def stays_of_membership(membership: StudentGroup, periods: Sequence, marked: Callable[[date], bool] = lambda day: False, close_on: Optional[date] = None,
+                        undone_at: Callable[[UUID], Collection[datetime]] = lambda membership_id: ()) -> List[bl.Stay]:
     """The ledger stays of a membership from its periods; a legacy row without periods is one stay by its own dates (NOT a membership whose only stay charges
-    nothing: R3 №2)."""
+    nothing: R3 №2).  ``undone_at(membership id)``: the moments of the leavings of the membership that a cancel took back (Б11.14 п. 1), asked ONLY when a piece falls out; the default - none, the moment is not carried.
+    The readers of the DAYS (the left days, the first day) do not pass it: the carried moment moves no day."""
     spans: List[bl.Stay] = []
     for p in periods:
         stay = stay_of_period(p, marked, close_on)
         if stay is not None:
             spans.append(stay)
         elif spans:
-            spans[-1] = _carry_leaving(spans[-1], p)
+            spans[-1] = _carry_leaving(spans[-1], p, undone_at(membership.id))
     if not periods and membership.joined_at:
         return [bl.Stay(ps.business_date(membership.joined_at),
                         None if membership.is_active or not membership.left_at else ps.business_date(membership.left_at), membership.joined_at,
@@ -506,8 +513,20 @@ class LedgerLoader:
         ):
             self.openings[opening.membership_id] = opening
         self.load_marks([(self.members[m][0], self.members[m][2]) for m in found], periods)         # after the pauses (a lesson of a day of a pause is nobody's lesson)
+        undone: Optional[Dict[UUID, Set[datetime]]] = None       # Б11.14 п. 1: read ONCE per list, and only when a piece of a participation falls out (an ordinary list has no new query)
+
+        def undone_at(membership_id: UUID) -> Collection[datetime]:
+            nonlocal undone
+            if undone is None:
+                undone = {}
+                for (snap,) in (self.db.query(GroupAudit.snapshot).filter(GroupAudit.org_id == self.org_id, GroupAudit.group_id.in_({self.members[m][2].id for m in found}), GroupAudit.action == AUDIT_LEFT)):
+                    snap = snap or {}
+                    if snap.get("event") == "leave_undone" and snap.get("membership_id") and snap.get("left_at"):
+                        undone.setdefault(UUID(str(snap["membership_id"])), set()).add(membership_periods.naive_utc(datetime.fromisoformat(snap["left_at"])))
+            return undone.get(membership_id, ())
+
         for mid in found:
-            self.stays[mid] = stays_of_membership(self.members[mid][0], periods.get(mid, []), self.marked_of(mid), self.today if mid in self.closing else None)
+            self.stays[mid] = stays_of_membership(self.members[mid][0], periods.get(mid, []), self.marked_of(mid), self.today if mid in self.closing else None, undone_at)
         touched: Set[Tuple[str, UUID]] = set()
         for t in self.db.query(MembershipTransfer).filter(
             MembershipTransfer.org_id == self.org_id, MembershipTransfer.voided_at.is_(None),

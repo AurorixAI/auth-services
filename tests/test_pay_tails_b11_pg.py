@@ -341,3 +341,37 @@ def test_b11_13_the_same_world_a_second_leaving_and_its_cancel_do_not_bring_the_
     leave(world, g, s)
     add(world, s, group=g, mode="add")
     check(world, s, g, D(2026, 11, 12), charged=600_000, debt=0, advance=0, used=600_000, granted=600_000)
+
+
+# ---------------------------------------------------------------------------------------------------------------------------- Б11.14 п. 1: the moment of a leaving is carried only for the piece a CANCEL opened (lessons 165, 167)
+def ordinary_return_world(world, fixed_today, *, pay_from, second_leaving, forgiven_on=None):
+    # ОМ 600 000, Tue / Thu / Fri; since 01.11; 05.11 300 000 paid; 20.11 he leaves (01 - 20.11 = 9 lessons = 450 000, debt 150 000); the same day 150 000 are forgiven (the cancel of the leaving is forbidden now);
+    # the same day an ORDINARY return (``pay_from``: «Оплата с» - 24.11 or none); the parent pays 150 000 (``paid_on``); ``second_leaving`` - the second leaving: 22.11 (the piece has not begun: it falls out)
+    # or 20.11 (the same day).  The leaving of the first piece is a REAL one: the forgiveness was entered after it and stays (used 150 000), the payment 150 000 - money of a stay that never began: advance 150 000.
+    g, s = om_at(world, fixed_today, D(2026, 11, 1))
+    fixed_today(D(2026, 11, 5))
+    pay(world, s, g, amount=300_000, paid_on=D(2026, 11, 5))
+    fixed_today(D(2026, 11, 20))
+    leave(world, g, s)
+    forgive(world, s, g, 150_000, effective_on=forgiven_on)
+    add(world, s, group=g, mode="add", **({"pay_from": pay_from} if pay_from else {}))
+    paid_on = D(2026, 11, 20) if second_leaving == D(2026, 11, 20) else D(2026, 11, 21)
+    fixed_today(paid_on)
+    pay(world, s, g, amount=150_000, paid_on=paid_on)
+    fixed_today(second_leaving)
+    leave(world, g, s)
+    return g, s
+
+
+def test_b11_14_an_ordinary_return_on_the_day_of_the_leaving_then_a_second_leaving_keeps_the_first_leaving_real_with_pay_from(world, fixed_today):
+    # The forgiveness 150 000 after the real leaving is final; the payment 150 000 of 21.11 is for the stay from 24.11 that never began: charged 450 000, debt 0, used 150 000, advance (and the limit of a refund) 150 000.
+    # (The moment of the leaving moved to the second one: the forgiveness «burned», used 0, advance 0.)
+    g, s = ordinary_return_world(world, fixed_today, pay_from="2026-11-24", second_leaving=D(2026, 11, 22))
+    check(world, s, g, D(2026, 11, 22), charged=450_000, debt=0, advance=150_000, used=150_000, granted=150_000)
+    assert led(world, s, g, D(2026, 11, 22)).refundable == 150_000
+
+
+def test_b11_14_the_same_world_without_pay_from_and_the_second_leaving_the_same_day(world, fixed_today):
+    g, s = ordinary_return_world(world, fixed_today, pay_from=None, second_leaving=D(2026, 11, 20), forgiven_on=D(2026, 11, 19))
+    check(world, s, g, D(2026, 11, 20), charged=450_000, debt=0, advance=150_000, used=150_000, granted=150_000)
+    assert led(world, s, g, D(2026, 11, 20)).refundable == 150_000
