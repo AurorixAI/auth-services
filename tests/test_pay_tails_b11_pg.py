@@ -375,3 +375,28 @@ def test_b11_14_the_same_world_without_pay_from_and_the_second_leaving_the_same_
     g, s = ordinary_return_world(world, fixed_today, pay_from=None, second_leaving=D(2026, 11, 20), forgiven_on=D(2026, 11, 19))
     check(world, s, g, D(2026, 11, 20), charged=450_000, debt=0, advance=150_000, used=150_000, granted=150_000)
     assert led(world, s, g, D(2026, 11, 20)).refundable == 150_000
+
+
+# ---------------------------------------------------------------------------------------------------------------------------- Б11.14 п. 2 (lessons 164, 168): the window, the answer and the account after are the same numbers
+def test_b11_14_the_window_and_the_answer_of_taking_a_pause_off_after_a_cancelled_leaving_say_what_the_account_says(world, fixed_today):
+    # The world of Б11.13 п. 1: 05.11 the whole month is forgiven (600 000); 07.11 a pause 24 - 30.11; 10.11 a leaving and its cancel (the pause is back: a line ``leave_undone``); 11.11 a HUMAN takes the pause off.
+    # The four numbers - the window (``dry_run``), ``impact`` of the answer, ``row`` of the answer and the account after: debt 0, advance 0, used 600 000 (the pause never was).  (The pause was still «taken off by the
+    # leaving» for the account before the record: the window and ``impact`` said debt 150 000.)
+    g, s = om_at(world, fixed_today, D(2026, 11, 1))
+    fixed_today(D(2026, 11, 5))
+    forgive(world, s, g, 600_000)
+    fixed_today(D(2026, 11, 7))
+    pause_id = pause_on(world, s, g, "2026-11-24", "2026-11-30")
+    fixed_today(D(2026, 11, 10))
+    leave(world, g, s)
+    add(world, s, group=g, mode="add")
+    fixed_today(D(2026, 11, 11))
+    url, body = f"{API}/org/pauses/{pause_id}/void", {"reason": "ученик ушёл из группы"}
+    probe = owner(world).post(url, params={"dry_run": "true"}, json=body)
+    assert probe.status_code == 200, probe.text
+    saved = owner(world).post(url, json=body)
+    assert saved.status_code == 200, saved.text
+    row, after = saved.json()["row"], led(world, s, g, D(2026, 11, 11))
+    numbers = lambda i: (i["debt_after"], i["advance_after"])
+    assert numbers(probe.json()["impact"]) == numbers(saved.json()["impact"]) == (row["unpaid"], row["advance"]) == (after.debt, after.advance) == (0, 0)
+    assert after.written_off == 600_000

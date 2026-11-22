@@ -499,6 +499,8 @@ class LedgerLoader:
                     continue
                 if action == AUDIT_PAUSE_SET:
                     entered[snap["pause_id"]].append((at, snap))
+                    if snap.get("via") == "leave_undone":      # Б11.14 п. 2: the cancel of the leaving gave the pause back: it is no more «taken off by a leaving» (the window of a human's void reads it before his line is written)
+                        by_leave.discard(snap["pause_id"])
                 elif snap.get("via") in LEAVE_VIA:         # the LAST line that voids the pause decides (b11.13 p.1): a leaving, its cancel and then a human's void is a pause a human took off
                     by_leave.add(snap["pause_id"])
                 else:
