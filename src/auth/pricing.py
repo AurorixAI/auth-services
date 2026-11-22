@@ -955,8 +955,8 @@ class PricingService:
 
     def money_impact(
         self, org_id: str, ids: Sequence[UUID], *, what_if, valid_from: date, today: date, first_price: bool = False,
-    ) -> Tuple[Dict[str, Any], List[Dict[str, str]]]:
-        """``(PriceImpactMoney as a dict, memberships that are BLOCKED)`` - the ledger "what if" before / after.
+    ) -> Tuple[Dict[str, Any], List[Dict[str, str]], List[Dict[str, str]]]:
+        """``(PriceImpactMoney as a dict, memberships that are BLOCKED, memberships whose forgiveness would become an advance)`` - the ledger "what if" before / after.
 
         ``what_if(books) -> books``: the price books with the change.  A membership is blocked when the price is backdated, it already has
         money (a payment, a write-off, a refund, a transfer in) and the change alters what was CHARGED for periods that have begun
@@ -965,7 +965,10 @@ class PricingService:
         Money-1 B3: the account is read on the day the change REACHES the students, ``as_of = max(valid_from, today)`` - a price announced for 01.12 says what 01.12 does to a package paid
         in advance (12 -> 10 lessons, ДЫРА-01: the window used to read the account TODAY and said «ничего не меняется»); a backdated price is read today as before.  Every student who
         moves is listed (up to ``IMPACT_ITEMS``) with the debt, the advance, «оплачено до» and the lessons of a package before -> after and a sentence; the students with an
-        individual price are listed apart (their price does not follow the group)."""
+        individual price are listed apart (their price does not follow the group).
+
+        Б11.8 п. 9: a backdated change that RAISES the advance of a membership with a forgiveness used (the forgiveness lowered or the money moved to the advance) turned a forgiven debt into an overpayment the family could take back in cash - those memberships are the
+        third answer (a correction of a «typo» is refused for them: ``refuse_forgiveness_to_advance``)."""
         from dataclasses import replace
 
         from . import billing_ledger as bl
@@ -980,13 +983,13 @@ class PricingService:
                  "days_lost_total": 0, "lessons_lost_total": 0, "next_period_students": 0, "next_period_delta_total": 0, "backdated": backdated, "as_of": reach, "items_total": 0,
                  "truncated": False, "text": mw.summary_text(0, 0, 0, 0), "items": [], "override_students": [], "override_total": 0, "override_truncated": False}
         if not ids:
-            return empty, []
+            return empty, [], []
         old_loader = ls.LedgerLoader(self.db, str(org_id), today)
         old_loader.load_facts(ids)
         new_loader = ls.LedgerLoader(self.db, str(org_id), today)
         new_loader.load_facts(ids)
         new_loader.books = what_if(new_loader.books)
-        items, blocked, overrides = [], [], []
+        items, blocked, overrides, converted = [], [], [], []
         new_debt = less_adv = days_lost = lessons_lost = next_count = 0
         debt_delta = advance_delta = next_delta = 0
         for mid in ids:
@@ -1001,6 +1004,8 @@ class PricingService:
             name = person_name(student.last_name, student.first_name) or "—"
             if backdated and has_money and after.charged != before.charged and not first_price:
                 blocked.append({"membership_id": str(mid), "student_name": name})
+            if backdated and before.written_off > 0 and after.advance > before.advance:        # the advance GROWS where a forgiveness covered the charge (in the ledger the older forgiveness keeps its place and the money goes to the advance: used 300 000 -> 300 000, advance 0 -> 300 000)
+                converted.append({"membership_id": str(mid), "student_name": name})
             price_new = new_loader.books.price(mid, membership.group_id, reach)
             if price_new.source == SOURCE_OVERRIDE and price_new.amount is not None and membership.is_active:
                 group_before = old_loader.books.price(mid, membership.group_id, reach).group_amount
@@ -1035,7 +1040,7 @@ class PricingService:
                 "advance_delta": advance_delta, "days_lost_total": days_lost, "lessons_lost_total": lessons_lost, "next_period_students": next_count, "next_period_delta_total": next_delta,
                 "backdated": backdated, "as_of": reach, "items_total": len(items), "truncated": len(items) > IMPACT_ITEMS,
                 "text": mw.summary_text(len(items), debt_delta, advance_delta, days_lost, lessons_lost, next_count, next_delta),
-                "items": items[:IMPACT_ITEMS], "override_students": overrides[:IMPACT_ITEMS], "override_total": len(overrides), "override_truncated": len(overrides) > IMPACT_ITEMS}, blocked
+                "items": items[:IMPACT_ITEMS], "override_students": overrides[:IMPACT_ITEMS], "override_total": len(overrides), "override_truncated": len(overrides) > IMPACT_ITEMS}, blocked, converted
 
     def _running_periods_without_price(self, org_id: str, ids: Sequence[UUID], today: date, valid_from: Optional[date] = None) -> Tuple[Optional[date], int]:
         """``(the earliest first billable day of the period that is running and has no price, how many students have such a period)`` - the day the FIRST price of a group must reach back to.
@@ -1065,6 +1070,15 @@ class PricingService:
                 if position:
                     starts.append(ledger.counted[-position].day)
         return (min(starts) if starts else None), len(starts)
+
+    @staticmethod
+    def _refuse_forgiveness_to_advance(converted: List[Dict[str, str]]) -> None:
+        """Б11.8 п. 9: a correction of a «typo» of a price backdated is refused when for at least one student it turns a forgiven debt into an advance (409, the list of the students)."""
+        if converted:
+            n = len(converted)
+            raise PriceConflict(
+                f"У {n} {payments_texts.plural(n, 'ученика', 'учеников', 'учеников')} исправление превратит прощённый долг в переплату. Сначала отмените прощение долга, затем исправьте цену.",
+                code="PRICE_CORRECTION_FORGIVENESS", count=n, students=converted[:BACKDATE_LIST])
 
     @staticmethod
     def _refuse_backdate(blocked: List[Dict[str, str]]) -> None:
@@ -1143,7 +1157,7 @@ class PricingService:
             if first_price:
                 impact["first_price"] = first_price_info(requested_from, valid_from, unpriced_now)
             book = load_books(self.db, [group.id], []).group_book(group.id).with_step(valid_from, amount)
-            money, blocked = self.money_impact(
+            money, blocked, converted = self.money_impact(
                 org_id, money_ids, valid_from=valid_from, today=today, first_price=first_price,
                 what_if=lambda books: books.with_group_books({group.id: book}))
             impact["money"] = money
@@ -1154,6 +1168,7 @@ class PricingService:
                     raise PriceInvalid("Исправить можно только цену с той же датой «действует с» и другой суммой: для новой цены укажите новую дату", code="CORRECTION_NOT_APPLICABLE")
                 from .payroll_service import PayrollService  # lazy: payroll pulls in the payments service
 
+                self._refuse_forgiveness_to_advance(converted)                                                                                  # Б11.8 п. 9
                 self._refuse_closed(org_id, PayrollService(self.db).sheets_changed_by_group_price(org_id, group.id, book, valid_from))          # (б) a closed month is not bypassed
                 correction_reason = check_correction_reason(correction_reason) if not dry_run else clean_text(correction_reason)           # (в)
                 impact["correction"] = {"students": released, "reason": correction_reason}
@@ -1413,7 +1428,7 @@ class PricingService:
                 raise PriceConflict(warnings[0]["text"], code="PRICE_UNUSUAL", new=amount)
             rows = [(d, a, r) for d, a, r in old_book._rows if d != valid_from] + [(valid_from, amount, reason)]
             new_book = OverrideBook(rows)
-            money, blocked = self.money_impact(
+            money, blocked, converted = self.money_impact(
                 org_id, [membership.id], valid_from=valid_from, today=today,
                 what_if=lambda books: books.with_override_books({membership.id: new_book}))
             from .payroll_service import PayrollService  # lazy: payroll pulls in the payments service
@@ -1424,6 +1439,7 @@ class PricingService:
                 same_day = next((r for d, r_amount, r_reason in old_book._rows if d == valid_from for r in [(r_amount, r_reason)]), None)
                 if same_day is None or (same_day[0] == amount and (same_day[1] or None) == (reason or None)):
                     raise PriceInvalid("Исправить можно только цену с той же датой «действует с» и другой суммой или причиной: для новой цены укажите новую дату", code="CORRECTION_NOT_APPLICABLE")
+                self._refuse_forgiveness_to_advance(converted)                                                                                  # Б11.8 п. 9
                 self._refuse_closed(org_id, sheets)
                 correction_reason = check_correction_reason(correction_reason or reason) if not dry_run else clean_text(correction_reason or reason)      # also for «вернуть цену группы»
                 blocked = []
