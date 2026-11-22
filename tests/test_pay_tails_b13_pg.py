@@ -378,3 +378,19 @@ def test_b11_19_f1_v_the_return_without_pay_from_is_the_cancel_and_the_payment_a
     after = check(world, s, g, D(2026, 11, 20), charged=450_000, debt=0, advance=0, used=0, granted=0)
     assert (money["charged_after_leave"], money["debt_amount"], money["advance"]) == (450_000, 0, 0) and after.refundable == 0
     assert kept_forgiveness(world, s, g) == [(150_000, False)]
+
+
+# ---------------------------------------------------------------------------------------------------------------------------- Б11.18 п. 5: the probe of an edit of a pause asks the reason as the save does
+def test_b11_18_p5_the_probe_of_an_edit_that_moves_money_without_a_reason_is_refused_like_the_save(world, fixed_today):
+    # The pause 24 - 30.11 is edited to 17 - 30.11 (the charge changes: 450 000 -> 300 000) WITHOUT a reason: the probe says 422 ``REASON_REQUIRED`` as the save does (was: the probe 200 and the save 422 - a window that
+    # promises what the record refuses); nothing is written.  With a reason both say 200 and the same numbers.
+    g, s = world_b11_18(world, fixed_today, forgive_first=True)
+    fixed_today(D(2026, 11, 10))
+    pause_id = pause_on(world, s, g, "2026-11-24", "2026-11-30")
+    url, body = f"{API}/org/pauses/{pause_id}", {"first_day": "2026-11-17"}
+    probe = owner(world).patch(url, params={"dry_run": "true"}, json=body)
+    saved = owner(world).patch(url, json=body)
+    assert (probe.status_code, saved.status_code) == (422, 422), (probe.text, saved.text)
+    assert probe.json()["detail"]["code"] == saved.json()["detail"]["code"] == "REASON_REQUIRED"
+    check(world, s, g, D(2026, 11, 10), charged=450_000, debt=0, advance=0, used=150_000, granted=300_000)           # nothing was written
+    edit_pause(world, s, g, pause_id, D(2026, 11, 10), "2026-11-17", "2026-11-30", debt=0, advance=0, charged=300_000, used=0, granted=300_000)
