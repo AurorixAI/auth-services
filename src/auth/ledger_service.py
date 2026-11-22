@@ -951,7 +951,7 @@ class LedgerLoader:
         pause at a moment is the last one at or before it.  A pause whose journal does not end in the days it has now (an old row, a change nobody wrote) is taken whole from its creation.
         Б11.8 п. 2: what a LEAVING wrote to the pause (the cut: a line ``via`` leave / transfer / archive) is a form while the leaving stands; the cancel of the leaving (``leave_undone``) erases it and its own line:
         the pause is what the last HUMAN made of it.  A pause taken off by a leaving carries the moment it was taken off (``voided_at``)."""
-        voided = p.voided_at if p.void_reason == LEAVE_VOID_REASON else None
+        voided = p.voided_at
         if not p.created_at:
             return bl.Pause(p.first_day, p.last_day, voided_at=voided)
         lines = self.pause_lines.get(str(p.id), [])
