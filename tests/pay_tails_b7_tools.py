@@ -731,7 +731,7 @@ def explain(inp):
     may = bl._may_lie(worlds)
     alive = bl._alive_forgiveness(worlds, credits, net)
     amounts = {c.id: (alive[c.id] if c.kind == bl.WRITEOFF else net[c.id]) for c in credits}
-    main, _ = bl._tie(segments, credits, amounts, getattr(bl, "_line_room", lambda recalcs: (lambda s: s.capacity))(recalcs), may)
+    main, _ = bl._tie(segments, credits, amounts, bl._line_room(recalcs), may)
     tied = {c.id: {s.id: sum(a for cc, a in main[s.id] if cc.id == c.id) for s in segments} for c in credits}
     lines = [f"today {inp.today}  charged {L.charged}  debt {L.debt}  advance {L.advance}  used {L.written_off} of {L.written_off_granted}  covered_through {L.covered_through}"]
     lines.append("  pauses: " + (", ".join(f"{p.first}..{p.last} entered {pause_moment(p):%d.%m %H:%M}" for p in inp.pauses) or "-") + "   centre cancels: " + (", ".join(f"{c.day} entered {getattr(c, 'entered', datetime.min):%d.%m %H:%M}" for c in inp.centre_cancels) or "-"))
@@ -741,7 +741,7 @@ def explain(inp):
         cells = []
         for s in segments:
             got = placed.parts.get((s.id, c.id), 0)
-            cells.append(f"| cap {s.capacity} tied {tied[c.id][s.id]} placed {got}".ljust(46))
+            cells.append(f"| place {bl._line_room(recalcs)(s)} tied {tied[c.id][s.id]} placed {got}".ljust(46))
         gone = net[c.id] - sum(placed.parts.get((s.id, c.id), 0) for s in segments) - sum(a for cid, a in placed.leftover if cid == c.id)
         left = sum(a for cid, a in placed.leftover if cid == c.id)
         lines.append(f"  {c.id:5s} {c.kind[:3]} {c.on} {c.created_at:%d.%m %H:%M} {net[c.id]}{' alive ' + str(alive[c.id]) if c.kind == bl.WRITEOFF and alive[c.id] != net[c.id] else ''}".ljust(52) + "".join(cells) + f"| burned {gone}, leftover {left}")

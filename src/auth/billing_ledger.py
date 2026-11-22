@@ -272,8 +272,6 @@ class Segment:
     # PAY-TAILS А6.1: what the period would cost WITHOUT the cut of a leaving, a transfer, an archive of the student or a pause (``None`` = the same as ``amount``).  Credits are tied
     # to periods by their order on the NOMINAL line, so that "which period is this payment / forgiveness for" never depends on what happened to the stay afterwards.
     nominal_amount: Optional[int] = field(default=None, repr=False)
-    # PAY-TAILS Б7.7: what the period would cost without the cut of a leaving but WITHOUT the days of the pauses of THIS world (``None`` = the same as ``nominal_amount``): see ``capacity``
-    room: Optional[int] = field(default=None, repr=False)
     # PAY-TAILS Б7.7: the PLACE of the period among the periods of the account, the same in every world (see ``_worlds``): a cell of the fixed billing day - ``("c", start of the cell)``;
     # a period of a personal chain - ``("p", first day of the piece of the stay, number in the chain)``; a package - ``("k", number of the chain of its regime window, number of the package)``; ``None`` (the opening debt) = no other world
     slot: Optional[tuple] = field(default=None, repr=False)
@@ -281,11 +279,6 @@ class Segment:
     @property
     def nominal(self) -> int:
         return self.amount if self.nominal_amount is None else max(self.nominal_amount, self.amount)
-
-    @property
-    def capacity(self) -> int:
-        """Б11.8 п. 7: the room of the period on the line of the tying = what it is charged (a cut by a pause or by a LEAVING is a cut of the place: the leaving is an event of the replay, not a nominal room)."""
-        return self.amount
 
     @property
     def unpaid(self) -> int:
@@ -697,13 +690,8 @@ class _Gen:
 
         value, basis, in_part, whole_n, first_lesson = charge(days)
         nominal_amount = value if nominal_days is None else charge(nominal_days)[0]
-        room: Optional[int] = None
-        if nominal_days is not None and self.inp.pauses:
-            kept = [d for d in nominal_days if not _is_paused(_merge_pauses(self.inp.pauses), d)]
-            if len(kept) < len(nominal_days):
-                room = charge(kept)[0] if kept else 0
         return Segment(amount=value, basis=basis, lessons_in_part=in_part, lessons_in_period=whole_n, first_lesson=first_lesson,
-                       nominal_amount=nominal_amount, room=room, slot=slot, **common)
+                       nominal_amount=nominal_amount, slot=slot, **common)
 
     # ---------------------------------------------------------------- calendar: payment date
 
@@ -1247,10 +1235,10 @@ def _line_cut(recalcs: Sequence[RecalcLine]) -> Dict[str, int]:
 
 
 def _line_room(recalcs: Sequence[RecalcLine]) -> Callable[[Segment], int]:
-    """R4: THE room of a period on the line of the tying: what the pauses of the world leave of the nominal sum, MINUS the deductions of the period (a deduction cheapens the period like a pause: the money and
-    the forgiveness tied to it are not more than ``room - deductions``; the deduction itself takes its place inside the period)."""
+    """Б11.8 п. 7: THE place of a period on the line of the tying and in every world = what it is CHARGED minus the deductions of the period (a pause and a leaving cut the charge itself - they are events of the replay;
+    a deduction cheapens the period like them: the money and the forgiveness tied to it are not more than this; the deduction itself takes its place inside the period)."""
     cut = _line_cut(recalcs)
-    return lambda s: s.capacity - cut.get(s.id, 0)
+    return lambda s: s.amount - cut.get(s.id, 0)
 
 
 def _slots_of(segments: Sequence[Segment], recalcs: Sequence[RecalcLine] = ()) -> Dict[tuple, Tuple[date, int]]:
@@ -1400,13 +1388,12 @@ def _alive_forgiveness(worlds: Sequence[_World], credits: Sequence[Credit], net:
 
 
 def _place_credits(segments: Sequence[Segment], credits: Sequence[Credit], net: Dict[str, int], recalcs: Sequence[RecalcLine], worlds: Sequence[_World]) -> _Placed:
-    """PAY-TAILS А6.1-А6.2, Б7.7.  1) Every credit (payment, transfer in, forgiveness) is tied to a period by its ORDER ``(on, created_at, id)`` on ONE line: the room of a period is the nominal sum
-    (what it would cost without the cut of a leaving, a transfer or an archive of the student) minus ALL the pauses AND the deductions for the lessons the centre cancelled (R4: ``_line_room``); a forgiveness goes by its ALIVE sum (``_alive_forgiveness``: what the pauses entered after
-    it cut off) and only on a period that had begun in the world known at the moment it was entered and has begun today (``_may_lie``): «which period is this credit for» never depends on what
-    happened to the stay afterwards.  2) Inside a period of the actual sum ``A``: the money first (``m = min(tied money, A)``), then the deductions for cancelled lessons, then the forgiveness
-    (``f = min(tied forgiveness, A - m - r)``): a forgiveness never covers a charge money has already paid, and what no charge needs is thrown away - it is not an advance, not a refund, not a
-    payment of another period.  3) The money that a cut period leaves over (and a deduction that found no charge) goes on, oldest first, into the unfilled part of the periods; what is still left is the
-    advance."""
+    """PAY-TAILS А6.1-А6.2, Б7.7, Б11.8.  1) Every credit (payment, transfer in, forgiveness) is tied to a period by its ORDER ``(on, created_at, id)`` on ONE line: the place of a period is what it is CHARGED minus the
+    deductions for the lessons the centre cancelled (``_line_room``; a pause and a leaving have already cut the charge); a forgiveness goes by its ALIVE sum (``_alive_forgiveness``: what the events of truncation - a pause, a
+    leaving - entered after it cut off) and only on a period that had begun in the world known at the moment it was entered and has begun today (``_may_lie``): «which period is this credit for» never depends on what
+    happened to the stay afterwards.  2) What is tied to a period never exceeds its place, so inside a period there is nothing to choose: the money, the deductions and the forgiveness tied to it are laid on it as they
+    are (a forgiveness never covers a charge money has already paid - the money and the forgiveness together fill the place and no more); what no period holds - a forgiveness that found no place - is thrown away, it is
+    not an advance, not a refund, not a payment of another period.  3) The money that no period holds is the advance (``leftover``, oldest first)."""
     may = _may_lie(worlds)
     alive = _alive_forgiveness(worlds, credits, net)
     amounts = {c.id: (alive[c.id] if c.kind == WRITEOFF else net[c.id]) for c in credits}
@@ -1415,63 +1402,24 @@ def _place_credits(segments: Sequence[Segment], credits: Sequence[Credit], net: 
     by_segment: Dict[str, List[RecalcLine]] = {}
     for line in recalcs:
         by_segment.setdefault(line.segment_id, []).append(line)
-    queue: List[List] = []                    # [credit id, amount, is a deduction]
-    room: Dict[str, int] = {}
 
     def put(seg_id: str, credit_id: str, amount: int) -> None:
         out.parts[(seg_id, credit_id)] = out.parts.get((seg_id, credit_id), 0) + amount
 
-    def lay_forgiveness(s: Segment, left: int) -> int:
-        """The forgiveness tied to the period covers what money and deductions left of its charge; returns the room that is still free."""
+    for s in segments:
         for c, a in tied[s.id]:
             if c.kind != WRITEOFF:
-                continue
-            take = min(a, left)
-            left -= take
-            if take:
-                put(s.id, c.id, take)
-                out.forgiven[s.id] += take
-                out.used_by[c.id] = out.used_by.get(c.id, 0) + take
-        return left
-
-    for s in segments:
-        left = s.amount
+                put(s.id, c.id, a)
+                out.money[s.id] += a
+        for line in by_segment.get(s.id, ()):
+            put(s.id, line.id, line.amount)
+            out.recalculated[s.id] += line.amount
         for c, a in tied[s.id]:
             if c.kind == WRITEOFF:
-                continue
-            take = min(a, left)
-            left -= take
-            if take:
-                put(s.id, c.id, take)
-                out.money[s.id] += take
-            if a > take:
-                queue.append([c.id, a - take, False])
-        for line in by_segment.get(s.id, ()):
-            take = min(line.amount, left)
-            left -= take
-            if take:
-                put(s.id, line.id, take)
-                out.recalculated[s.id] += take
-            if line.amount > take:
-                queue.append([line.id, line.amount - take, True])
-        room[s.id] = lay_forgiveness(s, left)
-    for c in credits:                          # money beyond the last period (the horizon holds as many periods as the credits need: normally nothing)
-        rest = net[c.id] - tied_total[c.id]
-        if rest > 0 and c.kind != WRITEOFF:
-            queue.append([c.id, rest, False])
-    for s in segments:
-        while room[s.id] > 0 and queue:
-            head = queue[0]
-            take = min(head[1], room[s.id])
-            head[1] -= take
-            room[s.id] -= take
-            put(s.id, head[0], take)
-            (out.recalculated if head[2] else out.money)[s.id] += take
-            if head[1] == 0:
-                queue.pop(0)
-    out.parts = {k: v for k, v in out.parts.items() if v > 0}
-    out.used_by = {k: v for k, v in out.used_by.items() if v > 0}
-    out.leftover = [(cid, amount) for cid, amount, _ in queue if amount > 0]
+                put(s.id, c.id, a)
+                out.forgiven[s.id] += a
+                out.used_by[c.id] = out.used_by.get(c.id, 0) + a
+    out.leftover = [(c.id, net[c.id] - tied_total[c.id]) for c in credits if c.kind != WRITEOFF and net[c.id] - tied_total[c.id] > 0]      # money beyond the last period (the horizon holds as many periods as the credits need: normally nothing)
     return out
 
 
