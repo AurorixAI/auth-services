@@ -3,6 +3,8 @@ The numbers are printed (``-s``); the test only keeps the cost within a loose bo
 import time
 from datetime import date
 
+import pytest
+
 from tests.money1b_helpers import add, fresh_student
 from tests.pg_world import needs_pg, pg_session, world  # noqa: F401  (fixtures)
 from tests.test_pay2_api_pg import API, fixed_today, owner  # noqa: F401  (fixtures)
@@ -140,3 +142,66 @@ def test_the_nightly_run_over_300_accounts_with_a_forgiveness_before_and_after_i
     if os.environ.get("PAYTAILS_PERF_FILE"):
         open(os.environ["PAYTAILS_PERF_FILE"], "a", encoding="utf-8").write(line + "\n")
     assert after < 120
+
+
+QUERIES = {}
+
+
+def count_queries(w, **params):
+    """The number of SQL statements of ONE read of the list (the engine of the test session)."""
+    from sqlalchemy import event
+
+    engine = w.db.get_bind()
+    n = []
+
+    def on(conn, cursor, statement, parameters, context, executemany):
+        n.append(statement)
+
+    w.db.expire_all()
+    event.listen(engine, "before_cursor_execute", on)
+    try:
+        r = owner(w).get(f"{API}/org/payments/status", params={"bucket": "active", "limit": 500, **params})
+    finally:
+        event.remove(engine, "before_cursor_execute", on)
+    assert r.status_code == 200, r.text
+    return len(n), r.json()
+
+
+@pytest.mark.parametrize("rows", [30, 300])
+def test_the_number_of_queries_of_the_list_does_not_grow_with_the_pauses_a_leaving_took_off(world, fixed_today, rows):
+    # PAY-TAILS Б11.12 п. 2 (lesson 165): «a pause taken off by a leaving» is read from the journal (a line that voids the pause with ``via``) - in the same query as the forms of the pauses, NOT one query per row.
+    # A third of the rows: a pause 17 - 30.11 entered on 03.11 and taken off by the leaving of 10.11; a third: the same pause voided by a HUMAN with the words of the leaving; the list is read on 24.11.  The number of
+    # statements is the same for 30 and for 300 rows.
+    from tests.test_payments_service_pg import pay
+    from tests.test_pay_tails_b77_pg import pause_on
+
+    g = world_om(world, fixed_today, today=D(2026, 11, 3))
+    g.max_students = None
+    world.db.commit()
+    ids = [fresh_student(world, f"Ученик{i:03d}") for i in range(rows)]
+    r = owner(world).post(f"{API}/org/groups/{g.id}/students/bulk", params={"mode": "add"}, json={"student_ids": [str(s.id) for s in ids]})
+    assert r.status_code == 200 and r.json()["added"] == rows, r.text[:300]
+    pauses = {}
+    for k, s in enumerate(ids):
+        pay(world, s, g, amount=300_000, paid_on=D(2026, 11, 3))
+        if k % 3 != 2:
+            pauses[k] = pause_on(world, s, g, "2026-11-17", "2026-11-30")
+    fixed_today(D(2026, 11, 8))
+    for k, s in enumerate(ids):
+        if k % 3 == 1:
+            assert owner(world).post(f"{API}/org/pauses/{pauses[k]}/void", json={"reason": "ученик ушёл из группы"}).status_code == 200
+    fixed_today(D(2026, 11, 10))
+    for k, s in enumerate(ids):
+        if k % 3 == 0:
+            assert owner(world).post(f"{API}/org/groups/{g.id}/students/{s.id}/leave", json={}).status_code == 200
+    fixed_today(D(2026, 11, 24))
+    count, page = count_queries(world, bucket="debtors")
+    assert page["total"] > 0
+    line = f"PERF queries rows={rows}: {count}"
+    print(line)
+    import os
+    if os.environ.get("PAYTAILS_PERF_FILE"):
+        open(os.environ["PAYTAILS_PERF_FILE"], "a", encoding="utf-8").write(line + "\n")
+    QUERIES[rows] = count
+    if len(QUERIES) == 2:
+        assert QUERIES[30] == QUERIES[300], QUERIES

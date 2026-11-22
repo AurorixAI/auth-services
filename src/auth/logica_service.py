@@ -32,7 +32,7 @@ from src.models.auth import (
 )
 
 from . import billing_ledger as bl
-from .ledger_service import AUDIT_PAUSE_SET, LEAVE_VOID_REASON
+from .ledger_service import AUDIT_PAUSE_SET, AUDIT_PAUSE_VOID, LEAVE_VOID_REASON
 from .closed_period import ClosedPeriods, group_teacher_ids
 from .ops_rules import OpsError
 from . import membership_periods
@@ -76,7 +76,6 @@ logger = logging.getLogger(__name__)
 
 AUDIT_OPENING_SET = "opening_balance_set"
 AUDIT_OPENING_VOID = "opening_balance_void"
-AUDIT_PAUSE_VOID = "membership_pause_void"
 PAUSE_MAX_DAYS = 366
 OPENING_AHEAD_DAYS = 366
 OPENING_MIN_DATE = date(2020, 1, 1)

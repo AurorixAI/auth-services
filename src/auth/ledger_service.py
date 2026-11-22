@@ -49,6 +49,8 @@ from . import payment_status as ps
 from . import pricing
 from .sql_text import contains
 
+AUDIT_PAUSE_VOID = "membership_pause_void"      # the line of the journal that a pause was voided (by a human, or by a leaving: then it has ``via``; ``logica_service`` writes it)
+LEAVE_VIA = ("leave", "transfer", "archive")      # what ended the stay, written as ``via`` on the lines a leaving makes
 AUDIT_PAUSE_SET = "membership_pause_set"      # the line of the journal of decisions that a pause was entered / edited (its days are in the snapshot; ``logica_service`` writes it)
 
 logger = logging.getLogger(__name__)
@@ -470,18 +472,31 @@ class LedgerLoader:
         ):
             self.refunds[refund.membership_id].append(refund)
         entered: Dict[str, List[Tuple[datetime, Dict[str, Any]]]] = {}
+        taken_off: Dict[str, Tuple[MembershipPause, UUID]] = {}            # the voided pauses the WORDS of the reason ask about: the journal decides (Б11.12 п. 2)
         for pause in self.db.query(MembershipPause).filter(
             MembershipPause.org_id == self.org_id, MembershipPause.membership_id.in_(found),
-            or_(MembershipPause.voided_at.is_(None), MembershipPause.void_reason == LEAVE_VOID_REASON),        # the live ones, and the ones a leaving took off (Б11.8: one query)
+            or_(MembershipPause.voided_at.is_(None), MembershipPause.void_reason == LEAVE_VOID_REASON),        # the live ones, and the ones that MAY be taken off by a leaving (a preselect only: Б11.12 п. 2, lesson 165)
         ):
-            (self.pauses if pause.voided_at is None else self.past_pauses)[pause.membership_id].append(pause)      # a cancelled leaving gave its pauses back: they are live
+            if pause.voided_at is None:                    # a cancelled leaving gave its pauses back: they are live
+                self.pauses[pause.membership_id].append(pause)
+            else:
+                taken_off[str(pause.id)] = (pause, pause.membership_id)
             entered[str(pause.id)] = []
         if entered:                                       # Б7.7 п. 5: the forms of the pauses in time are in the journal of decisions
-            for at, snap in (self.db.query(GroupAudit.created_at, GroupAudit.snapshot)
-                             .filter(GroupAudit.org_id == self.org_id, GroupAudit.group_id.in_({self.members[m][2].id for m in found}), GroupAudit.action == AUDIT_PAUSE_SET)
-                             .order_by(GroupAudit.created_at, GroupAudit.id)):
-                if (snap or {}).get("pause_id") in entered:
+            by_leave: Set[str] = set()                     # Б11.12 п. 2: «taken off by a leaving» = a line of the journal that VOIDS the pause with ``via`` leave / transfer / archive; the words of a human are not a sign
+            for action, at, snap in (self.db.query(GroupAudit.action, GroupAudit.created_at, GroupAudit.snapshot)
+                                     .filter(GroupAudit.org_id == self.org_id, GroupAudit.group_id.in_({self.members[m][2].id for m in found}), GroupAudit.action.in_((AUDIT_PAUSE_SET, AUDIT_PAUSE_VOID)))
+                                     .order_by(GroupAudit.created_at, GroupAudit.id)):
+                snap = snap or {}
+                if snap.get("pause_id") not in entered:
+                    continue
+                if action == AUDIT_PAUSE_SET:
                     entered[snap["pause_id"]].append((at, snap))
+                elif snap.get("via") in LEAVE_VIA:
+                    by_leave.add(snap["pause_id"])
+            for pause_id, (pause, mid) in taken_off.items():
+                if pause_id in by_leave:
+                    self.past_pauses[mid].append(pause)
             self.pause_lines.update(entered)
         for opening in self.db.query(MembershipOpeningBalance).filter(
             MembershipOpeningBalance.org_id == self.org_id, MembershipOpeningBalance.membership_id.in_(found),

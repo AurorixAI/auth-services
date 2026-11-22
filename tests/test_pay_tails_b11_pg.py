@@ -291,3 +291,20 @@ def test_b11_12_the_same_world_with_a_counted_mark_on_the_day_of_the_leaving_is_
     # The guard: with a counted mark of the lesson of 20.11 the second piece is a real stay of one day and does not fall out: the same numbers.
     g, s = relapse_world(world, fixed_today, marked=True)
     check(world, s, g, D(2026, 11, 20), charged=450_000, debt=0, advance=0, used=150_000, granted=300_000)
+
+
+# ---------------------------------------------------------------------------------------------------------------------------- Б11.12 п. 2: the words of the reason are not a sign (lesson 165)
+def test_b11_12_a_pause_taken_off_by_a_human_with_the_words_of_the_leaving_is_a_pause_that_never_was(world, fixed_today):
+    # November 600 000; 05.11 the whole month is forgiven (600 000); 07.11 a pause 24 - 30.11 (3 lessons 24 26 27: November 450 000, the forgiveness cut to 450 000); 10.11 a HUMAN takes the pause off with the reason
+    # exactly «ученик ушёл из группы».  The pause was not there (С5): the forgiveness is whole again, November 600 000: debt 0, used 600 000.  (The words were taken for the sign of a leaving: the pause was «known
+    # until 10.11» - debt 150 000, used 450 000.)
+    g, s = om_at(world, fixed_today, D(2026, 11, 1))
+    fixed_today(D(2026, 11, 5))
+    forgive(world, s, g, 600_000)
+    fixed_today(D(2026, 11, 7))
+    pause_id = pause_on(world, s, g, "2026-11-24", "2026-11-30")
+    fixed_today(D(2026, 11, 10))
+    r = owner(world).post(f"{API}/org/pauses/{pause_id}/void", json={"reason": "ученик ушёл из группы"})
+    assert r.status_code == 200, r.text
+    fixed_today(D(2026, 11, 12))
+    check(world, s, g, D(2026, 11, 12), charged=600_000, debt=0, advance=0, used=600_000, granted=600_000)
