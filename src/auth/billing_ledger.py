@@ -1246,6 +1246,33 @@ def _line_room(recalcs: Sequence[RecalcLine]) -> Callable[[Segment], int]:
     return lambda s: s.amount - cut.get(s.id, 0)
 
 
+def place_key(s: Segment) -> tuple:
+    """Б11.11: the KEY of a period in the model - its ``slot`` (the same in every world); a period with no slot (a package of an old chain) - its kind and number."""
+    return s.slot if s.slot is not None else (s.kind, s.package_no, s.id if s.package_no is None else "")
+
+
+def places(ledger: "Ledger") -> Dict[tuple, Tuple[int, int, int]]:
+    """Б11.11: ``{place: (N, money, forgiveness used)}`` of an account, N = what the period is CHARGED minus the deductions of the period (the room of the place, as ``_line_room``)."""
+    cut = _line_cut(ledger.recalcs)
+    out: Dict[tuple, Tuple[int, int, int]] = {}
+    for s in ledger.segments:
+        n, m, f = out.get(place_key(s), (0, 0, 0))
+        out[place_key(s)] = (n + s.amount - cut.get(s.id, 0), m + s.money, f + s.forgiven)
+    return out
+
+
+def forgiveness_became_money(before: "Ledger", after: "Ledger") -> bool:
+    """Б11.11 п. 1: a correction of a price made a forgiven debt into money (or let a forgiveness pay a later month).  By the rule of the model a period that gets cheaper first lowers the forgiveness and the money of the
+    family stays; the correction of a price is not an event of the model, and an OLDER forgiveness stays where it was and pushes the money out.  True when for some place ``p``: ``N_after[p] < N_before[p]`` and
+    ``forgiveness_after[p] > max(0, N_after[p] - money_before[p])`` (the places of the two accounts are matched by their key)."""
+    was, now = places(before), places(after)
+    for key, (n_after, _money, forgiven_after) in now.items():
+        n_before, money_before, _f = was.get(key, (0, 0, 0))
+        if n_after < n_before and forgiven_after > max(0, n_after - money_before):
+            return True
+    return False
+
+
 def _slots_of(segments: Sequence[Segment], recalcs: Sequence[RecalcLine] = ()) -> Dict[tuple, Tuple[date, int]]:
     room = _line_room(recalcs)
     return {s.slot: (s.days[0] if s.days else s.period_start, room(s)) for s in segments if s.slot is not None}

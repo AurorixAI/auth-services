@@ -598,7 +598,7 @@ def oracle_p4(inp):
 
 def period_key(s):
     """Б7.8 4.1: the key of a period is the one of the MODEL: a common month / a personal period - its ``slot`` (start of the cell; piece of the stay and the number in the chain); a package - its number."""
-    return s.slot if s.slot is not None else (s.kind, s.package_no, s.id if s.package_no is None else "")
+    return bl.place_key(s)                                                          # Б11.11: one function in ``src/``, the properties and the price check say the same key
 
 
 def deductions_by_place(L):

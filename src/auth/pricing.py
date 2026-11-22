@@ -967,7 +967,7 @@ class PricingService:
         moves is listed (up to ``IMPACT_ITEMS``) with the debt, the advance, «оплачено до» and the lessons of a package before -> after and a sentence; the students with an
         individual price are listed apart (their price does not follow the group).
 
-        Б11.8 п. 9: a backdated change that RAISES the advance of a membership with a forgiveness used (the forgiveness lowered or the money moved to the advance) turned a forgiven debt into an overpayment the family could take back in cash - those memberships are the
+        Б11.11 п. 1: a backdated change that makes a period cheaper where an OLDER forgiveness stays and pushes the money out (``bl.forgiveness_became_money``, by places: the forgiven debt becomes the money of the family or pays a later month) - those memberships are the
         third answer (a correction of a «typo» is refused for them: ``refuse_forgiveness_to_advance``)."""
         from dataclasses import replace
 
@@ -1004,7 +1004,7 @@ class PricingService:
             name = person_name(student.last_name, student.first_name) or "—"
             if backdated and has_money and after.charged != before.charged and not first_price:
                 blocked.append({"membership_id": str(mid), "student_name": name})
-            if backdated and before.written_off > 0 and after.advance > before.advance:        # the advance GROWS where a forgiveness covered the charge (in the ledger the older forgiveness keeps its place and the money goes to the advance: used 300 000 -> 300 000, advance 0 -> 300 000)
+            if backdated and bl.forgiveness_became_money(before, after):                      # Б11.11 п. 1: by PLACES - a place gets cheaper and the older forgiveness stays on it and pushes the money out (to the advance or to a later month)
                 converted.append({"membership_id": str(mid), "student_name": name})
             price_new = new_loader.books.price(mid, membership.group_id, reach)
             if price_new.source == SOURCE_OVERRIDE and price_new.amount is not None and membership.is_active:
