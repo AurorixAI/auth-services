@@ -413,7 +413,7 @@ class RoundTrip:
 
 def new_roundtrip(rng, inp, between=False, then=""):
     e = new_pause_edit(rng, inp)
-    if e is None:
+    if e is None or e.kind != "extend":                               # a pause shortened and then lengthened back is NOT a way back: the lengthening is a contraction entered AFTER the forgiveness (it burns what the shortened world let lie)
         return None
     p = inp.pauses[e.index]
     if p.cuts and p.forms[-1][0] in p.cuts:                           # the last line of the pause is a cut of a leaving: a human's edit after it is a NEW human form (a different world), not a way back
