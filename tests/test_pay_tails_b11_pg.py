@@ -400,3 +400,22 @@ def test_b11_14_the_window_and_the_answer_of_taking_a_pause_off_after_a_cancelle
     numbers = lambda i: (i["debt_after"], i["advance_after"])
     assert numbers(probe.json()["impact"]) == numbers(saved.json()["impact"]) == (row["unpaid"], row["advance"]) == (after.debt, after.advance) == (0, 0)
     assert after.written_off == 600_000
+
+
+# ---------------------------------------------------------------------------------------------------------------------------- Б11.14 п. 3 (lesson 168): the window of a leaving, its answer and the account after - the same numbers
+def test_b11_14_u1_the_window_of_the_leaving_its_answer_and_the_account_after_are_the_same_numbers(world, fixed_today):
+    # The world of У1 (a leaving takes off a future pause): before the leaving debt 0, advance 600 000, used 450 000.  The window (``leave-preview``, before the confirmation), the answer of the leaving (``recalc``, ``others``) and the account after: charged 450 000, debt 0, advance 600 000, used 450 000.
+    g, s = november_with_forgiveness_and_money(world, fixed_today)
+    fixed_today(D(2026, 11, 20))
+    url = f"{API}/org/groups/{g.id}/students/{s.id}"
+    window = owner(world).get(f"{url}/leave-preview")
+    assert window.status_code == 200, window.text
+    probe = next(m for m in window.json()["memberships"] if m["membership_id"] == str(membership(world, s, g).id))
+    done = owner(world).post(f"{url}/leave", json={})
+    assert done.status_code == 200, done.text
+    after = led(world, s, g, D(2026, 11, 20))
+    shown = probe["money"]
+    assert (shown["charged_after_leave"], shown["debt_amount"], shown["advance"]) == (after.charged, after.debt, after.advance) == (450_000, 0, 600_000)
+    assert after.written_off == 450_000
+    lines = lambda r: [(x["label"], x["before"], x["after"]) for x in (r or {}).get("lines", [])]     # the sentences are future in the window and past in the answer by design: the numbers are compared
+    assert lines(done.json()["recalc"]) == lines(probe["recalc"])
