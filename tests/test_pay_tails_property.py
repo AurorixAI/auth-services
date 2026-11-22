@@ -249,3 +249,19 @@ def test_b7_r4_the_personal_period_with_cancelled_lessons_keeps_p1_p2_p4_p5_p3k_
     counts = _with_cancels("personal")
     assert {k: counts[k] for k in keys} == {k: 0 for k in keys}, counts
     assert counts["P3 advance"] == 0 and counts["P3e advance"] == 0 and counts["P3 advance<=money"] == 0
+
+
+# ---------------------------------------------------------------------------------------------------------------------------- PAY-TAILS Б11.8 step 8: the leaving, its cancel, the correction of a payment
+NEW_KEYS = ("P1c debt", "P1c advance", "P1c used", "P3u advance>=", "P3u advance<=freed", "P3u advance<=money", "P3u debt", "P3u used", "P3u transfer", "P6 same", "P6 amount", "P6b restore", "P7 undo")
+
+
+def test_b11_8_the_leaving_the_cancel_of_it_the_correction_of_a_payment_and_the_payment_dated_today_keep_the_properties_at_zero():
+    # P1c: a payment dated today lowers the debt by min(x, debt), the advance grows by max(0, x - debt), the used forgiveness stays - after a leaving too.  P3u: a leaving entered now never lowers the advance, grows it by no more
+    # than the money that lay on the cut / vanished places, never raises the debt or the used forgiveness (a transfer: advance after + carried >= advance before).  P6 / P6b: a correction without a change, a correction of the sum
+    # and a cancel + a restoration are the payment of the first record.  P7: a leaving cancelled the same day is the account before it.  The common month, the personal period and the packages, with and without a cancelled lesson.
+    for mode in ("common", "personal", "packages"):
+        counts = _counts(mode)
+        assert {k: counts[k] for k in NEW_KEYS} == {k: 0 for k in NEW_KEYS}, (mode, counts)
+    for mode in ("common", "personal"):
+        counts = _with_cancels(mode)
+        assert {k: counts[k] for k in NEW_KEYS} == {k: 0 for k in NEW_KEYS}, (mode, "with cancels", counts)
