@@ -1568,7 +1568,9 @@ def _run_ledger(inp: LedgerInput, horizon_extra: int) -> Ledger:
         total_credit = sum(net.values())
 
     # ---- where the credits went (PAY-TAILS: tied to the periods by the nominal line, money before forgiveness inside a period)
-    placed = _place_credits(segments, stored, net, recalcs, _worlds(inp, segments, recalcs, gen, horizon))
+    # Б11.5: the worlds are needed by the forgiveness ONLY (``_may_lie`` says yes to every other credit, ``_alive_forgiveness`` skips a moment without a forgiveness before it): an account without one is one world
+    worlds = _worlds(inp, segments, recalcs, gen, horizon) if any(c.kind == WRITEOFF for c in stored) else [_World(datetime.min, _slots_of(segments, recalcs))]
+    placed = _place_credits(segments, stored, net, recalcs, worlds)
     # package costs per segment (for coverage)
     cost_cursor = 0
     seg_costs: Dict[str, List[int]] = {}

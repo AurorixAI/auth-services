@@ -73,6 +73,36 @@ def test_a_list_of_300_rows_when_every_account_has_three_lessons_cancelled_by_th
     assert took < 60
 
 
+def test_a_list_of_300_rows_where_a_third_of_the_students_left_and_came_back(world, fixed_today):
+    # PAY-TAILS Б11.9 п. 5: every closed stay is an event of the account (one more world when there is a forgiveness): 300 accounts, a payment on every one, a third of them LEFT the group on 10.11 and were
+    # taken back on 17.11 (two stays); the list of the debtors read on 24.11.
+    from tests.test_payments_service_pg import pay
+
+    g = world_om(world, fixed_today, today=D(2026, 11, 3))
+    g.max_students = None
+    world.db.commit()
+    ids = [fresh_student(world, f"Ученик{i:03d}") for i in range(N)]
+    r = owner(world).post(f"{API}/org/groups/{g.id}/students/bulk", params={"mode": "add"}, json={"student_ids": [str(s.id) for s in ids]})
+    assert r.status_code == 200 and r.json()["added"] == N, r.text[:300]
+    for s in ids:
+        pay(world, s, g, amount=300_000, paid_on=D(2026, 11, 3))
+    fixed_today(D(2026, 11, 10))
+    for s in ids[::3]:
+        assert owner(world).post(f"{API}/org/groups/{g.id}/students/{s.id}/leave", json={}).status_code == 200
+    fixed_today(D(2026, 11, 17))
+    for s in ids[::3]:
+        add(world, s, group=g, mode="add")
+    fixed_today(D(2026, 11, 24))
+    took, page = timed(world, bucket="debtors")
+    assert page["total"] == N
+    line = f"PERF rows={N} where a third of the students left and came back: {took:.2f}s"
+    print(line)
+    import os
+    if os.environ.get("PAYTAILS_PERF_FILE"):
+        open(os.environ["PAYTAILS_PERF_FILE"], "a", encoding="utf-8").write(line + "\n")
+    assert took < 60
+
+
 def test_the_nightly_run_over_300_accounts_with_a_forgiveness_before_and_after_i6(world, fixed_today, monkeypatch):
     """PAY-TAILS Б10: the cost of the probes of I-6 in the night: the same run over one centre of 300 accounts, EVERY with a payment and a forgiveness, without the probes (as before) and with them.
     The numbers are printed (``-s``); the test keeps the cost within a loose bound, and no I-6 on honest accounts."""
