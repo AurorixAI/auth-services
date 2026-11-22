@@ -437,7 +437,7 @@ def _years_ago(day: date, years: int) -> date:
     return ps._years_ago(day, years)
 
 
-MAX_CHAIN_DEPTH = 8                                       # corrections of a correction of a correction ...: the chain is read this far back
+MAX_CHAIN_DEPTH = 8                                       # corrections of a correction of a correction ...: the chain is read this far back; a LONGER chain gives the moment of the oldest payment READ, not of the first one (Б11.12 п. 6: the limit of the reader, known)
 
 
 def earlier_versions(db: Session, org_id: Any, start_ids: Iterable[Any]) -> Dict[Any, StudentPayment]:

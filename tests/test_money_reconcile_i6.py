@@ -160,3 +160,23 @@ def test_the_probe_of_a_payment_today_that_does_not_go_first_to_the_debt_and_the
     monkeypatch.setattr(mp.bl, "run_ledger", lazy)
     rules = {(f.probe, f.rule) for f in mp.check_probes(inp, ledger)}
     assert ("pay_today_small", "pay_today_not_exact") in rules
+
+
+def test_one_mistake_of_a_payment_today_is_one_finding_the_exact_rule_first(monkeypatch):
+    """Б11.12 п. 6: a calculation that gives a trial payment of today TWICE its sum as an advance breaks three rules at once (the exact rule, «more than the sum», «not accounted»): one probe = ONE finding (one line of the
+    letter), the most exact one: ``pay_today_not_exact``."""
+    inp = account()
+    ledger = bl.run_ledger(inp)
+    real = bl.run_ledger
+
+    def greedy(i):
+        out = real(i)
+        probe = [c for c in i.credits if c.id == "preview" and c.kind == bl.PAYMENT and c.on == i.today]
+        return replace(out, advance=out.advance + 2 * probe[0].amount) if probe else out
+
+    monkeypatch.setattr(mp.bl, "run_ledger", greedy)
+    found = [f for f in mp.check_probes(inp, ledger) if f.probe.startswith("pay_today")]
+    per_probe = {}
+    for f in found:
+        per_probe.setdefault(f.probe, []).append(f.rule)
+    assert per_probe and all(rules == ["pay_today_not_exact"] for rules in per_probe.values()), per_probe

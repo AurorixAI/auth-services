@@ -271,8 +271,8 @@ class Segment:
     partial_credit: int = 0
     # PAY-DUE: the first LESSON of the group inside the billable days of a part-period of the common month (the term of payment counts from it); ``None`` = not a lessons part-period
     first_lesson: Optional[date] = field(default=None, repr=False)
-    # PAY-TAILS А6.1: what the period would cost WITHOUT the cut of a leaving, a transfer, an archive of the student or a pause (``None`` = the same as ``amount``).  Credits are tied
-    # to periods by their order on the NOMINAL line, so that "which period is this payment / forgiveness for" never depends on what happened to the stay afterwards.
+    # PAY-TAILS А6.1: what the period would cost WITHOUT the cut of a leaving, a transfer, an archive of the student or a pause (``None`` = the same as ``amount``).  It is NOT
+    # a line the credits are tied on (they are tied by the place of a period, ``_place_credits``): it only gives the length of the tape of the worlds (``_worlds``) and ``nominal_charged``.
     nominal_amount: Optional[int] = field(default=None, repr=False)
     # PAY-TAILS Б7.7: the PLACE of the period among the periods of the account, the same in every world (see ``_worlds``): a cell of the fixed billing day - ``("c", start of the cell)``;
     # a period of a personal chain - ``("p", first day of the piece of the stay, number in the chain)``; a package - ``("k", number of the chain of its regime window, number of the package)``; ``None`` (the opening debt) = no other world
@@ -1140,8 +1140,8 @@ def _recalc_lines(inp: LedgerInput, gen: "_Gen", segments: Sequence[Segment]) ->
 
     A lesson counts when the student was charged for its day (the day is one of the days of a period that has begun: not on a pause, not before he
     came or after he left, not in the lessons mode) and the setting was on that day.  It costs ``round_1000(what the period costs the student /
-    lessons of the period by the schedule)`` - the FULL charge of the period (PAY-TAILS А6.3: a forgiveness does not cheapen the lesson; a deduction that finds no charge to
-    reduce first takes the USED forgiveness of its own period, see ``_place_credits``, and only money can come out of it as an advance).  A partial first period of a fixed billing day costs the same price of a lesson
+    lessons of the period by the schedule)`` - the FULL charge of the period (PAY-TAILS А6.3: a forgiveness does not cheapen the lesson; the place of a period is its charge minus
+    the deductions, so a deduction never takes more than the period costs).  A partial first period of a fixed billing day costs the same price of a lesson
     (``price / lessons of the full month``, scaled by the same share), so the total is the price x the lessons that were held / the lessons of the month.
     The deductions of a period never exceed that sum."""
     if not inp.centre_cancels or not any(v.on for v in inp.recalc_versions):
@@ -1199,7 +1199,7 @@ class _Placed:
 
 @dataclass(frozen=True)
 class _World:
-    """Б7.7: the periods of the account as they were KNOWN at ``moment`` - the pauses entered at or before it, each in the form of that moment: ``slot -> (the first charged day, the room)``."""
+    """Б7.7, Б11.8: the periods of the account as they were KNOWN at ``moment`` - the events of truncation entered at or before it (a pause in the form of that moment, a leaving, a cancelled lesson): ``slot -> (the first charged day, the room)``."""
 
     moment: datetime
     periods: Dict[tuple, Tuple[date, int]]
@@ -1404,10 +1404,10 @@ def _alive_forgiveness(worlds: Sequence[_World], credits: Sequence[Credit], net:
         if not any(c.kind == WRITEOFF and alive[c.id] > 0 for c in before):
             continue
         old, new = before_world.periods, after_world.periods
-        places = [_Place(slot) for slot in old]
+        slots = [_Place(slot) for slot in old]
         amounts = {c.id: (alive[c.id] if c.kind == WRITEOFF else net[c.id]) for c in before}
-        tied, _ = _tie(places, before, amounts, lambda p: old[p.id][1], lambda c, p: c.kind != WRITEOFF or _was_going(worlds, p.id, c))
-        for p in places:
+        tied, _ = _tie(slots, before, amounts, lambda p: old[p.id][1], lambda c, p: c.kind != WRITEOFF or _was_going(worlds, p.id, c))
+        for p in slots:
             over = sum(a for _, a in tied[p.id]) - new.get(p.id, (None, 0))[1]
             for c, a in reversed(tied[p.id]):
                 if over <= 0:
@@ -1599,7 +1599,7 @@ def _run_ledger(inp: LedgerInput, horizon_extra: int) -> Ledger:
         net, refunded_from, transferred_from, _ = apply_outflows(credits, inp.outflows)
         total_credit = sum(net.values())
 
-    # ---- where the credits went (PAY-TAILS: tied to the periods by the nominal line, money before forgiveness inside a period)
+    # ---- where the credits went (PAY-TAILS: tied to the PLACES of the periods, money before forgiveness inside a period)
     # Б11.5: the worlds are needed by the forgiveness ONLY (``_may_lie`` says yes to every other credit, ``_alive_forgiveness`` skips a moment without a forgiveness before it): an account without one is one world
     worlds = _worlds(inp, segments, recalcs, gen, horizon) if any(c.kind == WRITEOFF for c in stored) else [_World(datetime.min, _slots_of(segments, recalcs))]
     placed = _place_credits(segments, stored, net, recalcs, worlds)

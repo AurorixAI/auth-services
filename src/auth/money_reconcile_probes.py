@@ -56,7 +56,8 @@ def _state(inp: bl.LedgerInput, ledger: bl.Ledger) -> List[ProbeFinding]:
 
 
 def _payment(label: str, day_text: str, amount: int, before: bl.Ledger, after: bl.Ledger) -> List[ProbeFinding]:
-    """2 / 3. A trial payment: the debt does not grow, the used forgiveness does not grow, the advance grows by no more than the sum, and the sum is fully accounted for."""
+    """2 / 3. A trial payment: the debt does not grow, the used forgiveness does not grow, a payment with today's date goes by the exact rule, the advance grows by no more than the sum, and the sum is fully accounted for.
+    Б11.12 п. 6: ONE finding per probe (one mistake of the calculation is one line of the letter): the first in this order - the most exact one first, the general ones («more than the sum», «not accounted») last."""
     out: List[ProbeFinding] = []
     head = f"Проба оплаты {_money(amount)} {day_text}"
     snap = {"before": {"debt": before.debt, "advance": before.advance, "used": before.written_off}, "after": {"debt": after.debt, "advance": after.advance, "used": after.written_off}, "amount": amount}
@@ -65,20 +66,20 @@ def _payment(label: str, day_text: str, amount: int, before: bl.Ledger, after: b
     if after.written_off > before.written_off:
         out.append(_found(label, "used_grew",
                           f"{head} увеличила использованное прощение: было {_money(before.written_off)}, стало {_money(after.written_off)}", before.written_off, after.written_off, **snap))
-    if after.advance - before.advance > amount:
-        out.append(_found(label, "advance_over_sum",
-                          f"{head} дала аванса больше суммы: аванс вырос с {_money(before.advance)} до {_money(after.advance)}", amount, after.advance - before.advance, **snap))
     if label.startswith("pay_today"):      # П1с (Б11.8 п. 8): a payment with today's date lowers the debt by min(x, debt), the advance grows by max(0, x - debt), the used forgiveness stays
         want_debt, want_advance = before.debt - min(amount, before.debt), before.advance + max(0, amount - before.debt)
         if (after.debt, after.advance, after.written_off) != (want_debt, want_advance, before.written_off):
             out.append(_found(label, "pay_today_not_exact",
                               f"{head} разошлась не по правилу «сначала долг, остаток — аванс»: долг {_money(after.debt)} вместо {_money(want_debt)}, аванс {_money(after.advance)} вместо {_money(want_advance)}",
                               want_advance, after.advance, **snap))
+    if after.advance - before.advance > amount:
+        out.append(_found(label, "advance_over_sum",
+                          f"{head} дала аванса больше суммы: аванс вырос с {_money(before.advance)} до {_money(after.advance)}", amount, after.advance - before.advance, **snap))
     spread = (before.debt - after.debt) + (after.advance - before.advance) + (before.written_off - after.written_off) + (after.charged - before.charged)
     if spread != amount:
         out.append(_found(label, "not_accounted",
                           f"{head} разошлась по счёту не полностью: долг, аванс, прощение и начисление изменились на {_money(spread)} вместо {_money(amount)}", amount, spread, **snap))
-    return out
+    return out[:1]
 
 
 def _forgiveness(amount: int, before: bl.Ledger, after: bl.Ledger) -> List[ProbeFinding]:
