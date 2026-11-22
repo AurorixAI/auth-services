@@ -2465,7 +2465,7 @@ class PaymentService:
         transfer out of this group carried is worked out again from them, the same as after the save.  Nothing is written (the stand-in is not an ORM row)."""
         loader = self._loader(org_id, today)
         loader.load_facts([membership.id])
-        stand_in = SimpleNamespace(id="preview", amount=amount, paid_on=paid_on, created_at=_utcnow().replace(tzinfo=None))
+        stand_in = SimpleNamespace(id="preview", amount=amount, paid_on=paid_on, created_at=bl.PROBE_MOMENT)       # the probe is entered at the end of time (as ``ls.with_probe``); the correction keeps the moment of its chain below
         loader.payments[membership.id] = [p for p in loader.payments.get(membership.id, []) if p.id != old.id] + [stand_in]
         loader.first_moment["preview"] = loader.first_moment.get(old.id) or old.created_at      # Б11.1: the correction keeps the moment of the first record of the chain
         loader._x_memo.clear()

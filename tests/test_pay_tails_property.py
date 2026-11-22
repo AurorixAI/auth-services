@@ -240,15 +240,11 @@ def test_b7_r4_the_common_month_with_cancelled_lessons_has_no_counterexample_of_
     assert counts["P4 nomatch"] == 0
 
 
-def test_b7_r4_the_personal_period_with_cancelled_lessons_keeps_p1_p2_p4_p5_p3k_at_zero():
-    # The deductions DO exist in a personal period (PAY-F: the setting is for the calendar modes; only the packages have none).  What a payment / a forgiveness / a cancel does is as in the common month.  The rest of P3 / P3e
-    # (a pause entered now) is NOT zero here and is not a matter of the order of entering: a lesson on a pause is not charged, so a pause over a cancelled lesson removes its deduction while a personal period is shifted,
-    # not cheapened (counted apart: «personal: pause over a cancelled lesson»); and a pause that shifts the chain moves the cancelled lesson to another period whose deduction is price / its lessons (35 000 -> 30 000).
-    # The names of these are in the report of step 5 (LEDGER-FREEZE / PAY-F): the rule of the unit of a deduction is not changed here.
-    keys = tuple(k for k in ALL_KEYS if not k.startswith(("P3 ", "P3e ")))
+def test_b7_r4_the_personal_period_with_cancelled_lessons_has_no_counterexample_of_any_property_b11_9():
+    # The deductions DO exist in a personal period (PAY-F: the setting is for the calendar modes; only the packages have none).  Б11.9 п. 2: the growth of the debt and of the used forgiveness after a pause (a pause shifts the
+    # borders of the personal periods, a deduction goes to another place) is bounded by the sum over PLACES of max(0, N after - N before); the exception of step 7.3 for «P3 » / «P3e » is gone - every key is zero.
     counts = _with_cancels("personal")
-    assert {k: counts[k] for k in keys} == {k: 0 for k in keys}, counts
-    assert counts["P3 advance"] == 0 and counts["P3e advance"] == 0 and counts["P3 advance<=money"] == 0
+    assert {k: counts[k] for k in ALL_KEYS} == {k: 0 for k in ALL_KEYS}, counts
 
 
 # ---------------------------------------------------------------------------------------------------------------------------- PAY-TAILS Б11.8 step 8: the leaving, its cancel, the correction of a payment

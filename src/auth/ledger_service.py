@@ -535,15 +535,13 @@ class LedgerLoader:
         since = self.settings.accounting_start.isoformat()
         found: Dict[UUID, List[Tuple[str, str]]] = {}
         made: Dict[Tuple[UUID, str, str], str] = {}
-        created: Dict[Tuple[UUID, str, str], datetime] = {}
-        for group_id, day, lesson_id, made_up_by, row_created in self.db.query(
-            GroupAttendance.group_id, GroupAttendance.lesson_date, GroupAttendance.lesson_id, GroupAttendance.made_up_by, GroupAttendance.created_at,
+        for group_id, day, lesson_id, made_up_by in self.db.query(
+            GroupAttendance.group_id, GroupAttendance.lesson_date, GroupAttendance.lesson_id, GroupAttendance.made_up_by,
         ).filter(
             GroupAttendance.org_id == self.org_id, GroupAttendance.group_id.in_(wanted), GroupAttendance.status == "cancelled",
             GroupAttendance.cancellation_kind == "centre", GroupAttendance.lesson_date >= since,
         ):
             found.setdefault(group_id, []).append((day, lesson_id or ""))
-            created[(group_id, day, lesson_id or "")] = row_created
             if made_up_by:
                 made[(group_id, day, lesson_id or "")] = made_up_by
         if made:
@@ -558,13 +556,14 @@ class LedgerLoader:
             last = max(date.fromisoformat(day) for day, _ in items)
             regular = {(o["occurrenceDate"], o["id"]) for o in self._occurrences(group, self.settings.accounting_start, last, pattern=True) if not o.get("isOneOff")}
             copies = copies_of.get(group_id, set())
-            self.cancels[group_id] = [bl.CentreCancel(date.fromisoformat(day), lesson_id, entered=moments.get((group_id, day, lesson_id)) or created[(group_id, day, lesson_id)] or datetime.min)
+            self.cancels[group_id] = [bl.CentreCancel(date.fromisoformat(day), lesson_id, entered=moments.get((group_id, day, lesson_id)) or datetime.min)
                                       for day, lesson_id in items if (day, lesson_id) in regular or lesson_id in copies]
 
     def _cancel_moments(self, group_ids: Set[UUID], since: str) -> Dict[Tuple[UUID, str, str], datetime]:
         """R4 (Б7.8 шаг 5): the MOMENT a lesson became cancelled by the centre - one query of the journal of attendance for all the groups: the LAST record whose lesson was not cancelled before it
         (the cancel itself) or that turned the kind of the cancellation INTO ``centre`` (a holiday given back, a kind changed by hand).  A lesson cancelled in advance, when its row did not exist, has the record of its
-        creation (``before_status`` is empty).  A lesson with no such record (a row older than the journal): the caller takes the moment the row was created."""
+        creation (``before_status`` is empty).  A lesson with no such record (a row older than the journal): the caller takes NO moment - «known always» by the general rule of a record without a stamp (Б11.6: the
+        creation of the row is not the moment of the cancel - the row may be older than the cancel; the cancel then counts as known earlier, which only touches rows older than the journal)."""
         out: Dict[Tuple[UUID, str, str], datetime] = {}
         for group_id, day, lesson_id, before_status, details, moment in self.db.query(
             GroupAttendanceAudit.group_id, GroupAttendanceAudit.lesson_date, GroupAttendanceAudit.lesson_id, GroupAttendanceAudit.before_status, GroupAttendanceAudit.details,

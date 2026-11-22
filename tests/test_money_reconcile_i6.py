@@ -122,3 +122,41 @@ def test_no_i6_on_2000_worlds_of_the_generator_with_a_forgiveness():
         if found:
             bad.append((n, [f.text for f in found][:2]))
     assert probed > 300 and bad == [], (probed, bad[:3])
+
+
+def test_the_backdated_probe_is_not_older_than_the_start_of_the_accounting_of_the_centre(monkeypatch):
+    """Б11.6: a student who joined 15.08, the accounting of the centre starts 01.09, today 03.09: the product takes no payment older than 01.09, so the probe «back» is 01.09 (not 27.08 = today - the
+    limit of the window would have been, nor 15.08 = the first day of the stay)."""
+    seen = []
+    real = bl.run_ledger
+
+    def spy(inp):
+        probe = [c for c in inp.credits if c.id == "preview"]
+        if probe:
+            seen.append((probe[0].kind, probe[0].on))
+        return real(inp)
+
+    inp = make(today=D(2026, 9, 3), stays=[bl.Stay(D(2026, 8, 15))], price_at=flat(600_000, D(2026, 1, 1)), start=D(2026, 9, 1), lesson_days=MWF,
+               credits=[bl.Credit("w1", bl.WRITEOFF, D(2026, 9, 2), at(D(2026, 9, 2), 10), 100_000)])
+    ledger = real(inp)
+    monkeypatch.setattr(mp.bl, "run_ledger", spy)
+    mp.check_probes(inp, ledger)
+    assert [on for kind, on in seen if kind == bl.PAYMENT] == [D(2026, 9, 3), D(2026, 9, 3), D(2026, 9, 1), D(2026, 9, 1)]
+
+
+def test_the_probe_of_a_payment_today_that_does_not_go_first_to_the_debt_and_then_to_the_advance_is_a_finding(monkeypatch):
+    """П1с in I-6: the account has a debt 500 000 (600 000 - 100 000 forgiven); a payment of 1 000 today must lower the debt to 499 000 and leave the advance 0.  A calculation that sends the trial money
+    nowhere (debt stays) gives ``pay_today_not_exact`` for the small payment; the honest one - nothing."""
+    inp = account()
+    ledger = bl.run_ledger(inp)
+    assert [f for f in mp.check_probes(inp, ledger) if f.rule == "pay_today_not_exact"] == []
+    real = bl.run_ledger
+
+    def lazy(i):
+        out = real(i)
+        probe = [c for c in i.credits if c.id == "preview" and c.kind == bl.PAYMENT and c.on == i.today]
+        return replace(out, debt=out.debt + probe[0].amount) if probe else out
+
+    monkeypatch.setattr(mp.bl, "run_ledger", lazy)
+    rules = {(f.probe, f.rule) for f in mp.check_probes(inp, ledger)}
+    assert ("pay_today_small", "pay_today_not_exact") in rules

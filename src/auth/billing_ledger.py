@@ -160,6 +160,8 @@ def entered_at(item) -> datetime:
     first form.  A record without a stamp (``datetime.min`` / no form) is known always."""
     if isinstance(item, Pause):
         return item.forms[0][0] if item.forms else datetime.min
+    if isinstance(item, CentreCancel):
+        return item.entered
     return item.created_at
 
 
@@ -1118,13 +1120,19 @@ def regime_switch_days(inp: LedgerInput, new: Regime, at: Optional[datetime] = N
     return [_window_starts(windows, first, priced, pause_days, _fresh_stay_check(inp.stays, first))[-1] for first, last in spans if last is None]
 
 
-def recalc_on(versions: Sequence[RecalcVersion], day: date) -> bool:
-    """Whether the centre's setting «вычитать уроки, отменённые центром» was on for a lesson of ``day`` (the last version that began by then; none = off)."""
-    on = False
+def _version_on(versions: Sequence[RecalcVersion], day: date) -> Optional[RecalcVersion]:
+    """THE version of the setting in force on ``day``: the last one that began by then (``None`` = no version yet)."""
+    found = None
     for version in sorted(versions, key=lambda v: v.effective_from):
         if version.effective_from <= day:
-            on = version.on
-    return on
+            found = version
+    return found
+
+
+def recalc_on(versions: Sequence[RecalcVersion], day: date) -> bool:
+    """Whether the centre's setting «вычитать уроки, отменённые центром» was on for a lesson of ``day`` (the last version that began by then; none = off)."""
+    version = _version_on(versions, day)
+    return version is not None and version.on
 
 
 def _recalc_lines(inp: LedgerInput, gen: "_Gen", segments: Sequence[Segment]) -> List[RecalcLine]:
@@ -1218,11 +1226,8 @@ def _pauses_known_at(pauses: Sequence[Pause], moment: datetime) -> Tuple[Pause, 
 def cancel_entered(versions: Sequence[RecalcVersion], cancel: CentreCancel) -> datetime:
     """R4 (Б7.8 шаг 5): the moment a cancel of a lesson is KNOWN to the account: the later of the moment it was entered and the moment the setting that asks for the deduction (the version in force on the day
     of the lesson) was made - a deduction does not exist before the setting does.  ``datetime.min`` = known always."""
-    moment = cancel.entered
-    version = None
-    for v in sorted(versions, key=lambda x: x.effective_from):
-        if v.effective_from <= cancel.day:
-            version = v
+    moment = entered_at(cancel)
+    version = _version_on(versions, cancel.day)
     return max(moment, version.entered) if version is not None and version.on else moment
 
 
@@ -1654,7 +1659,7 @@ def _run_ledger(inp: LedgerInput, horizon_extra: int) -> Ledger:
     charged = sum(s.amount for s in begun)
     paid = sum(c.amount for c in credits if c.kind == PAYMENT)
     transferred_in = sum(c.amount for c in credits if c.kind == TRANSFER_IN)
-    written_off = sum(s.forgiven for s in segments)                       # the USED forgiveness
+    written_off = sum(s.forgiven for s in segments if s.begun)            # the USED forgiveness (only on the periods that have begun: Б7.7 п. 1)
     written_off_granted = sum(c.amount for c in credits if c.kind == WRITEOFF)
     recalculated = sum(line.amount for line in recalcs)
     refunded = sum(o.amount for o in inp.outflows if o.kind == REFUND)

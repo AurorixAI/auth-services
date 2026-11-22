@@ -68,6 +68,12 @@ def _payment(label: str, day_text: str, amount: int, before: bl.Ledger, after: b
     if after.advance - before.advance > amount:
         out.append(_found(label, "advance_over_sum",
                           f"{head} дала аванса больше суммы: аванс вырос с {_money(before.advance)} до {_money(after.advance)}", amount, after.advance - before.advance, **snap))
+    if label.startswith("pay_today"):      # П1с (Б11.8 п. 8): a payment with today's date lowers the debt by min(x, debt), the advance grows by max(0, x - debt), the used forgiveness stays
+        want_debt, want_advance = before.debt - min(amount, before.debt), before.advance + max(0, amount - before.debt)
+        if (after.debt, after.advance, after.written_off) != (want_debt, want_advance, before.written_off):
+            out.append(_found(label, "pay_today_not_exact",
+                              f"{head} разошлась не по правилу «сначала долг, остаток — аванс»: долг {_money(after.debt)} вместо {_money(want_debt)}, аванс {_money(after.advance)} вместо {_money(want_advance)}",
+                              want_advance, after.advance, **snap))
     spread = (before.debt - after.debt) + (after.advance - before.advance) + (before.written_off - after.written_off) + (after.charged - before.charged)
     if spread != amount:
         out.append(_found(label, "not_accounted",
@@ -101,7 +107,7 @@ def check_probes(inp: bl.LedgerInput, ledger: bl.Ledger) -> List[ProbeFinding]:
         out.extend(_payment(label, "сегодня", amount, ledger, bl.run_ledger(ls.with_probe(inp, bl.PAYMENT, today, amount))))
     first = min((s.first for s in inp.stays), default=None)
     if first is not None:
-        back = min(today, max(first, today - timedelta(days=BACKDATE_LIMIT_DAYS)))
+        back = min(today, max(first, inp.accounting_start, today - timedelta(days=BACKDATE_LIMIT_DAYS)))      # the product takes no payment older than the start of the accounting
         for amount in sums:
             label = "pay_back_small" if amount == SMALL else "pay_back_debt"
             out.extend(_payment(label, f"задним числом ({tx.ddmm(back)})", amount, ledger, bl.run_ledger(ls.with_probe(inp, bl.PAYMENT, back, amount))))
