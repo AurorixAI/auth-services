@@ -4,11 +4,13 @@ from datetime import date
 
 from tests.pg_world import needs_pg, pg_session, world  # noqa: F401  (fixtures)
 from tests.test_pay2_api_pg import API, fixed_today, membership, owner  # noqa: F401  (fixture)
-from tests.test_pay_tails_b11_pg import november_with_forgiveness_and_money, om_at
+from tests.test_pay_tails_b11_pg import november_with_forgiveness_and_money, om_at, ordinary_return_world
 from tests.test_pay_tails_b77_pg import pause_on
 from tests.test_pay_tails_money_pg import check, forgive, leave, lp
 from tests.test_money2_fix_r3_pg import void_it
 from tests.test_payments_service_pg import pay
+from src.auth.leave_service import EMPTY_STAY_REASON
+from src.models.auth import StudentWriteoff
 from tests.money1b_helpers import add
 
 pytestmark = needs_pg
@@ -82,3 +84,14 @@ def test_u8_in_a_personal_period_forgiven_at_the_settlement_returned_and_paid_th
     fixed_today(D(2026, 11, 3))
     pay(world, s, g, amount=420_000, paid_on=D(2026, 11, 3))
     check(world, s, g, D(2026, 11, 3), charged=542_000, debt=0, advance=0, used=122_000, granted=122_000)
+
+
+def test_b11_15_world_b_forgiveness_dated_the_day_of_the_leaving_is_cancelled_by_f1_as_it_is_now(world, fixed_today):
+    # LEDGER-FREEZE (k), Б11.15 of the spec.  November 600 000, Tue / Thu / Fri; 05.11 paid 300 000; 20.11 a leaving (450 000, debt 150 000); 20.11 forgiven 150 000 DATED 20.11 (no ``effective_on`` back);
+    # 20.11 an ordinary return; 20.11 paid 150 000; 20.11 a second leaving (no lesson marked).  AS IT IS: the rule Money-2 F1 works by the DATE of the forgiveness (a stay closed with no day, the forgiveness dated
+    # not before this day, the debt without it is 0 -> the forgiveness is cancelled): charged 450 000, debt 0, advance 0, used 0, granted 0.  The same world with «Оплата с» later gives advance 150 000 and used
+    # 150 000 (``test_b11_14_...`` of the world A).  The decision «F1 by the moment of the record» is postponed to LEDGER-FREEZE (k).
+    g, s = ordinary_return_world(world, fixed_today, pay_from=None, second_leaving=D(2026, 11, 20))
+    check(world, s, g, D(2026, 11, 20), charged=450_000, debt=0, advance=0, used=0, granted=0)
+    rows = world.db.query(StudentWriteoff).filter(StudentWriteoff.membership_id == membership(world, s, g).id).all()
+    assert [(r.amount, r.void_reason) for r in rows] == [(150_000, EMPTY_STAY_REASON)] and all(r.voided_at for r in rows)
