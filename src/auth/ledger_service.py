@@ -138,14 +138,16 @@ def stay_of_period(period, marked: Callable[[date], bool] = lambda day: False, c
 
 def _carry_leaving(kept: bl.Stay, dropped, undone: Collection[datetime]) -> bl.Stay:
     """Б11.12 п. 1 / Б11.14 п. 1: a piece of no day (``stay_of_period`` is None) that was opened by the CANCEL of the leaving of the PREVIOUS kept piece - the leaving, its cancel (a new period), the leaving again - is dropped,
-    but its leaving is the LAST event of the stay: the moment of the leaving of the kept piece becomes the later of the two.  Else a record entered between the cancel and the second leaving would count as entered AFTER
+    but its leaving is the LAST event of the stay: the moment of the leaving of the kept piece becomes the later of the two (an OPEN piece, judged as closed «now» by ``close_on``, leaves ``bl.NO_MOMENT``: after every record).  Else a record entered between the cancel and the second leaving would count as entered AFTER
     the leaving.  The sign is the LINE of the journal (``undone``: the moments of the leavings a cancel took back, ``student_left_group`` / ``leave_undone``), not the dates (lesson 167): an ORDINARY return of the day
     of the leaving (the cancel is forbidden after a forgiveness) opens the same piece, and the first leaving stays the real one."""
-    if kept.last is None or kept.left_at is None or dropped.left_at is None or dropped.joined_at is None or ps.business_date(dropped.joined_at) != kept.last or dropped.left_at <= kept.left_at:
+    if kept.last is None or kept.left_at is None or dropped.joined_at is None or ps.business_date(dropped.joined_at) != kept.last:
+        return kept
+    if dropped.left_at is not None and dropped.left_at <= kept.left_at:
         return kept
     if membership_periods.naive_utc(kept.left_at) not in undone:
         return kept
-    return replace(kept, left_at=dropped.left_at)
+    return replace(kept, left_at=dropped.left_at if dropped.left_at is not None else bl.NO_MOMENT)       # Б11.19 п. 2: the piece is still OPEN (the window / the answer judge the closing «now»): its leaving is after every record
 
 
 def stays_of_membership(membership: StudentGroup, periods: Sequence, marked: Callable[[date], bool] = lambda day: False, close_on: Optional[date] = None,

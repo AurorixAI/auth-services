@@ -199,3 +199,107 @@ def test_b11_19_packages_a_pause_over_future_lessons_there_and_back_keeps_the_pa
     fixed_today(D(2026, 10, 22))
     edit_pause(world, s, g, pause_id, D(2026, 10, 22), "2026-10-27", "2026-11-10", debt=0, advance=0, charged=400_000, used=100_000, granted=100_000)
 
+
+
+# ---------------------------------------------------------------------------------------------------------------------------- Б11.18 п. 2 / Б11.19 п. 2: the closing «now» after a CANCELLED leaving
+def second_leaving_world(world, fixed_today):
+    # The world of step 8.12.1: 05.11 forgiven 300 000 (November: debt 300 000); 20.11 he leaves, is taken back the same day (the cancel of the leaving), the parent pays 300 000 (inside the debt).  The second leaving is NOT done.
+    # What it will give (by hand): November 01 - 20.11 = 9 lessons = 450 000; the payment 300 000 was entered while he was in the group - BEFORE the second leaving - and the forgiveness 300 000 is cut to 150 000:
+    # charged 450 000, debt 0, advance 0, to give back 0, used 150 000 of 300 000.
+    g, s = om_at(world, fixed_today, D(2026, 11, 1))
+    fixed_today(D(2026, 11, 5))
+    forgive(world, s, g, 300_000)
+    fixed_today(D(2026, 11, 20))
+    leave(world, g, s)
+    add(world, s, group=g, mode="add")
+    pay(world, s, g, amount=300_000, paid_on=D(2026, 11, 20))
+    return g, s
+
+
+def account_after_the_second_leaving(world, s, g):
+    after = check(world, s, g, D(2026, 11, 20), charged=450_000, debt=0, advance=0, used=150_000, granted=300_000)
+    assert after.refundable == 0
+    return after
+
+
+def said_nothing_about_the_money(effects):
+    """The window / the answer has no line «аванс» / «долг» and no move of money: after the closing the account owes nothing and keeps nothing («Расчётов нет»; a transfer: «Переносить нечего», the sum 0)."""
+    stays = [(x["code"], x.get("amount", 0)) for x in effects["stays"]]
+    return bool(stays) and all(code == "none" or (code == "money_stays" and amount == 0) for code, amount in stays) and not [m for m in effects.get("moves", []) if m["code"] == "money"]
+
+
+def test_b11_19_the_window_of_the_second_leaving_its_answer_and_the_account_after_are_the_same_numbers(world, fixed_today):
+    g, s = second_leaving_world(world, fixed_today)
+    url = f"{API}/org/groups/{g.id}/students/{s.id}"
+    window = owner(world).get(f"{url}/leave-preview")
+    assert window.status_code == 200, window.text
+    (m,) = window.json()["memberships"]
+    assert (m["money"]["charged_after_leave"], m["money"]["debt_amount"], m["money"]["advance"]) == (450_000, 0, 0), m["money"]
+    assert said_nothing_about_the_money(m["effects"]), m["effects"]
+    done = owner(world).post(f"{url}/leave", json={})
+    assert done.status_code == 200, done.text
+    assert said_nothing_about_the_money(done.json()["effects"]), done.json()["effects"]
+    account_after_the_second_leaving(world, s, g)
+
+
+def test_b11_19_an_administrator_without_the_right_to_money_leaves_him_there_is_no_advance_to_hide(world, fixed_today):
+    from tests.pg_world import make_client
+
+    g, s = second_leaving_world(world, fixed_today)
+    admin = make_client(world, user=world.admin)
+    r = admin.post(f"{API}/org/groups/{g.id}/students/{s.id}/leave", json={})
+    assert r.status_code == 200, r.text                      # (was 403: the window of the check counted the payment of the cancel as entered after the leaving: advance 150 000)
+    account_after_the_second_leaving(world, s, g)
+
+
+def test_b11_19_the_window_of_the_archive_of_the_student_says_the_same(world, fixed_today):
+    g, s = second_leaving_world(world, fixed_today)
+    window = owner(world).get(f"{API}/org/students/{s.id}/archive-preview")
+    assert window.status_code == 200, window.text
+    (m,) = window.json()["memberships"]
+    assert said_nothing_about_the_money(m["effects"]), m["effects"]
+    done = owner(world).post(f"{API}/org/students/{s.id}/archive", json={})
+    assert done.status_code == 200, done.text
+    account_after_the_second_leaving(world, s, g)
+
+
+def test_b11_19_the_window_of_a_transfer_says_the_same(world, fixed_today):
+    g, s = second_leaving_world(world, fixed_today)
+    b = make_group(world.db, world.org, world.teacher, "Бета")
+    give_group_price(world.db, b, 600_000)
+    set_schedule(world, TTF, b)
+    ensure_billing(world, b, price=None)
+    window = add(world, s, group=b, mode="transfer", from_group_id=str(g.id), dry_run=True)
+    assert said_nothing_about_the_money(window["effects"]), window["effects"]
+    done = add(world, s, group=b, mode="transfer", from_group_id=str(g.id))
+    assert done["status"] == "added"
+    account_after_the_second_leaving(world, s, g)
+
+
+def test_b11_19_guard_the_archive_of_the_group_does_not_reach_a_student_who_is_in_it(world, fixed_today):
+    # The closing of a group (``group_lifecycle``) reads the same account, but the route never closes a student: a group with an active student is refused (409 ``GROUP_ARCHIVE_BLOCKED``, the blocker ``ACTIVE_STUDENTS``) -
+    # there is no world where the archive of a group carries the piece of a cancelled leaving.  Nothing is written.
+    g, s = second_leaving_world(world, fixed_today)
+    r = owner(world).post(f"{API}/org/groups/{g.id}/archive", json={"missedLessonsAction": "cancel"})
+    assert r.status_code == 409 and [b["code"] for b in r.json()["detail"]["blockers"]] == ["ACTIVE_STUDENTS"], r.text
+    assert membership(world, s, g).is_active
+
+
+def test_b11_14_guard_an_ordinary_return_does_not_carry_the_moment_the_window_is_the_account(world, fixed_today):
+    # The world A of Б11.14 (an ORDINARY return, no cancel): 05.11 paid 300 000; 20.11 he leaves (450 000, debt 150 000); the same day 150 000 are forgiven (dated 19.11); an ordinary return (``add``); the parent pays 150 000; the second leaving
+    # the same day.  The first leaving is a real one: the forgiveness (entered after it) stays and the payment is the money of a stay that never began: charged 450 000, debt 0, used 150 000, advance 150 000.  The window
+    # of the second leaving = the answer = the account after.
+    g, s = om_at(world, fixed_today, D(2026, 11, 1))
+    fixed_today(D(2026, 11, 5))
+    pay(world, s, g, amount=300_000, paid_on=D(2026, 11, 5))
+    fixed_today(D(2026, 11, 20))
+    leave(world, g, s)
+    forgive(world, s, g, 150_000, effective_on=D(2026, 11, 19))
+    add(world, s, group=g, mode="add")
+    pay(world, s, g, amount=150_000, paid_on=D(2026, 11, 20))
+    url = f"{API}/org/groups/{g.id}/students/{s.id}"
+    (m,) = owner(world).get(f"{url}/leave-preview").json()["memberships"]
+    done = owner(world).post(f"{url}/leave", json={})
+    assert done.status_code == 200, done.text
+    after = check(world, s, g, D(2026, 11, 20), charged=450_000, debt=0, advance=150_000, used=150_000, granted=150_000)
+    assert (m["money"]["charged_after_leave"], m["money"]["debt_amount"], m["money"]["advance"]) == (450_000, 0, 150_000) and after.refundable == 150_000
