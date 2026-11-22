@@ -53,6 +53,7 @@ AUDIT_PAUSE_SET = "membership_pause_set"      # the line of the journal of decis
 
 logger = logging.getLogger(__name__)
 
+LEAVE_VOID_REASON = "ученик ушёл из группы"      # the reason ``close_at_leave`` writes on a pause it takes off (the one reader / writer of the words: ``logica_service``)
 MAX_TRANSFER_HOPS = 8
 SCHEDULE_HORIZON_DAYS = 800  # the preload of the schedule reaches this far past today (24 future periods + slack)
 FORECAST_DAYS = 400          # how far ahead the forecast of a package looks for the day of its last lesson (a package of 57 weekly lessons fits)
@@ -129,7 +130,7 @@ def stay_of_period(period, marked: Callable[[date], bool] = lambda day: False, c
         return None
     if last is not None and first == last and period.joined_at is not None and ps.business_date(period.joined_at) == last and not marked(last):
         return None             # Money-2 С1 / У3: opened and closed on ONE business day (written down and taken out, there and back, on through a third group) WITHOUT a counted mark of a lesson of that day: a stay of no day - charged nothing, holds no day; with the mark the student got the lesson and the stay charges it, in every mode (the teacher is paid for it: ONE rule for the account, the statement and the payroll).  A stay with «Оплата с» earlier than the day he joined is a real, back-dated one and stays
-    return bl.Stay(first, last, period.joined_at)
+    return bl.Stay(first, last, period.joined_at, period.left_at)
 
 
 def stays_of_membership(membership: StudentGroup, periods: Sequence, marked: Callable[[date], bool] = lambda day: False, close_on: Optional[date] = None) -> List[bl.Stay]:
@@ -138,7 +139,8 @@ def stays_of_membership(membership: StudentGroup, periods: Sequence, marked: Cal
     spans = [stay for stay in (stay_of_period(p, marked, close_on) for p in periods) if stay is not None]
     if not periods and membership.joined_at:
         return [bl.Stay(ps.business_date(membership.joined_at),
-                        None if membership.is_active or not membership.left_at else ps.business_date(membership.left_at), membership.joined_at)]
+                        None if membership.is_active or not membership.left_at else ps.business_date(membership.left_at), membership.joined_at,
+                        None if membership.is_active else membership.left_at)]
     return spans
 
 
@@ -298,6 +300,7 @@ class LedgerLoader:
         self.writeoffs: Dict[UUID, List[StudentWriteoff]] = {}
         self.refunds: Dict[UUID, List[StudentRefund]] = {}
         self.pauses: Dict[UUID, List[MembershipPause]] = {}
+        self.past_pauses: Dict[UUID, List[MembershipPause]] = {}       # Б11.8: the pauses a LEAVING took off (``close_at_leave``): history for the worlds known before the leaving
         self._chained: List[StudentPayment] = []                      # the payments read, waiting for the moments of their chains (``_load_chains``)
         self.first_moment: Dict[Any, datetime] = {}                   # payment id -> the moment of the FIRST record of its chain of corrections / restorations (Б11.1)
         self.pause_lines: Dict[str, List[Tuple[datetime, Dict[str, Any]]]] = {}       # pause id -> the lines of the journal that entered / edited it, in time (Б7.7 п. 5)
@@ -430,6 +433,7 @@ class LedgerLoader:
             self.writeoffs.setdefault(mid, [])
             self.refunds.setdefault(mid, [])
             self.pauses.setdefault(mid, [])
+            self.past_pauses.setdefault(mid, [])
             self.openings.setdefault(mid, None)
             self.t_in.setdefault(mid, [])
             self.t_out.setdefault(mid, [])
@@ -453,9 +457,10 @@ class LedgerLoader:
             self.refunds[refund.membership_id].append(refund)
         entered: Dict[str, List[Tuple[datetime, Dict[str, Any]]]] = {}
         for pause in self.db.query(MembershipPause).filter(
-            MembershipPause.org_id == self.org_id, MembershipPause.membership_id.in_(found), MembershipPause.voided_at.is_(None)
+            MembershipPause.org_id == self.org_id, MembershipPause.membership_id.in_(found),
+            or_(MembershipPause.voided_at.is_(None), MembershipPause.void_reason == LEAVE_VOID_REASON),        # the live ones, and the ones a leaving took off (Б11.8: one query)
         ):
-            self.pauses[pause.membership_id].append(pause)
+            (self.pauses if pause.voided_at is None else self.past_pauses)[pause.membership_id].append(pause)      # a cancelled leaving gave its pauses back: they are live
             entered[str(pause.id)] = []
         if entered:                                       # Б7.7 п. 5: the forms of the pauses in time are in the journal of decisions
             for at, snap in (self.db.query(GroupAudit.created_at, GroupAudit.snapshot)
@@ -845,7 +850,7 @@ class LedgerLoader:
             if s.first not in days:
                 moved.append(s)
             elif s.last is None or s.last > s.first:
-                moved.append(bl.Stay(s.first + timedelta(days=1), s.last))
+                moved.append(replace(s, first=s.first + timedelta(days=1)))             # Б11.8 п. 5: the moments of the stay (joined, left) are not lost
         return moved
 
     def _stays_for(self, mid: UUID) -> List[bl.Stay]:
@@ -913,9 +918,12 @@ class LedgerLoader:
 
     def _pause_of(self, p: MembershipPause) -> bl.Pause:
         """Б7.7 п. 5: the pause with its FORMS in time - the moment it was entered with the days it had then, and every later edit (the lines of the journal of decisions: the days they wrote).  The form of the
-        pause at a moment is the last one at or before it.  A pause whose journal does not end in the days it has now (an old row, a change nobody wrote) is taken whole from its creation."""
+        pause at a moment is the last one at or before it.  A pause whose journal does not end in the days it has now (an old row, a change nobody wrote) is taken whole from its creation.
+        Б11.8 п. 2: what a LEAVING wrote to the pause (the cut: a line ``via`` leave / transfer / archive) is a form while the leaving stands; the cancel of the leaving (``leave_undone``) erases it and its own line:
+        the pause is what the last HUMAN made of it.  A pause taken off by a leaving carries the moment it was taken off (``voided_at``)."""
+        voided = p.voided_at if p.void_reason == LEAVE_VOID_REASON else None
         if not p.created_at:
-            return bl.Pause(p.first_day, p.last_day)
+            return bl.Pause(p.first_day, p.last_day, voided_at=voided)
         lines = self.pause_lines.get(str(p.id), [])
 
         def days(snap: Dict[str, Any]) -> Tuple[date, date]:
@@ -927,10 +935,19 @@ class LedgerLoader:
             first_form, edits = tuple(date.fromisoformat(d) for d in lines[0][1]["was"]), lines
         else:
             first_form, edits = (p.first_day, p.last_day), []
-        forms = [(p.created_at, *first_form), *((at, *days(snap)) for at, snap in edits)]
+        forms: List[Tuple[datetime, date, date]] = [(p.created_at, *first_form)]
+        made_by_leave = 0                                         # the forms at the end of the list that a leaving wrote
+        for at, snap in edits:
+            via = snap.get("via")
+            if via == "leave_undone":
+                del forms[len(forms) - made_by_leave:]            # the leaving is cancelled: its cut and this line are not forms
+                made_by_leave = 0
+                continue
+            forms.append((at, *days(snap)))
+            made_by_leave = made_by_leave + 1 if via in ("leave", "transfer", "archive") else 0
         if forms[-1][1:] != (p.first_day, p.last_day):
             forms = [(p.created_at, p.first_day, p.last_day)]
-        return bl.Pause(p.first_day, p.last_day, tuple(forms))
+        return bl.Pause(p.first_day, p.last_day, tuple(forms), voided)
 
     def build_input(
         self,
@@ -997,6 +1014,7 @@ class LedgerLoader:
             expiring_days=self.settings.expiring_days,
             expiring_lessons=self.settings.expiring_lessons,
             pauses=tuple(self._pause_of(p) for p in self.pauses.get(mid, [])),
+            past_pauses=tuple(self._pause_of(p) for p in self.past_pauses.get(mid, [])),
             opening=self._opening_of(mid, as_of=as_of, before_transfer=before_transfer),
             centre_cancels=self._cancels_for(mid, group, membership.student_id),
             recalc_versions=self.recalc_versions,

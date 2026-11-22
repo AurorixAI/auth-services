@@ -74,6 +74,9 @@ class Stay:
     first: date
     last: Optional[date] = None
     joined_at: Optional[datetime] = None  # the moment he joined (naive UTC): told apart from a student who joined EARLIER the same day (see ``_window_starts``)
+    # PAY-TAILS Б11.8: the moment the stay was CLOSED (the leaving, the transfer, the archive of the student: naive UTC) - an EVENT of truncation of the account like a pause; ``None`` on a closed stay = the leaving has no known
+    # moment: it counts as entered after all the records (see ``NO_MOMENT``)
+    left_at: Optional[datetime] = None
 
 
 @dataclass(frozen=True)
@@ -143,8 +146,11 @@ class Pause:
     # PAY-TAILS Б7.7: the forms of the pause in time, ``(moment, first, last)`` ascending: the first is the moment it was entered; a later one is an edit.  ``first`` / ``last`` above are the LAST form.
     # Empty = no stamp: the pause is known always (see ``entered_at``).
     forms: Tuple[Tuple[datetime, date, date], ...] = ()
+    # PAY-TAILS Б11.8: a pause that a LEAVING took off (``close_at_leave``): the moment it was taken off; it lives in ``LedgerInput.past_pauses`` and is known to the worlds until that moment.  ``None`` = a live pause.
+    voided_at: Optional[datetime] = None
 
 
+NO_MOMENT = datetime(9998, 12, 31)        # a leaving without a known moment: entered after all the records, before the probe of a window (``PROBE_MOMENT``)
 OPENING_SLOT = ("o",)                     # PAY-TAILS Б11.3: the place of the debt of the opening balance - the first place of the account in EVERY world
 PROBE_MOMENT = datetime(9999, 1, 1)       # the stand-in credit of a window «what will happen» is entered at the end of time: after everything that is known now
 
@@ -225,6 +231,8 @@ class LedgerInput:
     opening: Optional[Opening] = None
     centre_cancels: Sequence[CentreCancel] = ()
     recalc_versions: Sequence[RecalcVersion] = ()
+    # PAY-TAILS Б11.8: the pauses a leaving took off - NOT facts of the account now (``pauses`` holds the live ones), only history for the worlds that were known before the leaving
+    past_pauses: Sequence[Pause] = ()
 
 
 # ================================================================================================================
@@ -276,8 +284,8 @@ class Segment:
 
     @property
     def capacity(self) -> int:
-        """The room of the period on the line of the tying: the nominal sum minus the pauses of this world (never below what is charged, never above the nominal sum)."""
-        return self.nominal if self.room is None else max(min(self.room, self.nominal), self.amount)
+        """Б11.8 п. 7: the room of the period on the line of the tying = what it is charged (a cut by a pause or by a LEAVING is a cut of the place: the leaving is an event of the replay, not a nominal room)."""
+        return self.amount
 
     @property
     def unpaid(self) -> int:
@@ -1205,6 +1213,8 @@ def _pauses_known_at(pauses: Sequence[Pause], moment: datetime) -> Tuple[Pause, 
     """The pauses as they were known at ``moment``: one entered later is not there; a pause without a stamp is known always."""
     out: List[Pause] = []
     for p in pauses:
+        if p.voided_at is not None and p.voided_at <= moment:
+            continue                                   # taken off by a leaving by then
         if not p.forms:
             out.append(p)
             continue
@@ -1248,30 +1258,56 @@ def _slots_of(segments: Sequence[Segment], recalcs: Sequence[RecalcLine] = ()) -
     return {s.slot: (s.days[0] if s.days else s.period_start, room(s)) for s in segments if s.slot is not None}
 
 
+def _leave_moment(stay: Stay) -> Optional[datetime]:
+    """The moment a leaving closed the stay: ``left_at``; a closed stay without a moment - ``NO_MOMENT`` (after all the records); an open stay - none."""
+    return None if stay.last is None else (stay.left_at or NO_MOMENT)
+
+
+def _stays_known_at(stays: Sequence[Stay], moment: datetime) -> Tuple[Stay, ...]:
+    """Б11.8 п. 1: the stays as they were known at ``moment``: a leaving entered LATER is not there - the piece goes on to the next piece (a return) or is open."""
+    ordered = sorted(stays, key=lambda x: (x.first, date.max if x.last is None else x.last))
+    out: List[Stay] = []
+    for k, s in enumerate(ordered):
+        left = _leave_moment(s)
+        if left is not None and left > moment:
+            gone = None if k + 1 >= len(ordered) else max(s.last, ordered[k + 1].first - timedelta(days=1))
+            out.append(replace(s, last=gone, left_at=None))
+        else:
+            out.append(s)
+    return tuple(out)
+
+
 def _worlds(inp: LedgerInput, segments: Sequence[Segment], recalcs: Sequence[RecalcLine], gen: "_Gen", total: int) -> List[_World]:
-    """Б7.7 / R4: the worlds of the account in the order of time: the one with the facts that have no stamp, then one after each moment a pause was entered or edited or a cancel of a lesson became known; the last is
-    the account as it is (``segments``, ``recalcs``).  A world is the periods with the pauses AND the deductions known at its moment.  Only the generation of the periods (and of the deductions) is repeated
-    (no credit is laid), the periods once per set of known pauses: an account without a stamped fact has one world."""
+    """Б7.7 / R4 / Б11.8: the worlds of the account in the order of time: the one with the facts that have no stamp, then one after each moment a pause was entered, edited or taken off by a leaving, a leaving closed
+    the stay, or a cancel of a lesson became known; the last is the account as it is (``segments``, ``recalcs``).  THE WORLD KNOWN AT ``T`` = the facts as they are now WITHOUT the events of truncation entered after ``T``
+    (a pause, an edit of a pause, a cancel of a lesson, a leaving).  Only the generation of the periods (and of the deductions) is repeated (no credit is laid), the periods once per set of known facts: an account
+    without a stamped fact has one world."""
     cancel_moments = {m for m in (cancel_entered(inp.recalc_versions, c) for c in inp.centre_cancels) if m != datetime.min}
-    moments = sorted({m for p in inp.pauses for m, _, _ in p.forms} | cancel_moments)
+    leave_moments = {m for m in (_leave_moment(s) for s in inp.stays) if m is not None}
+    history = (*inp.pauses, *inp.past_pauses)
+    moments = sorted({m for p in history for m, _, _ in p.forms} | {p.voided_at for p in inp.past_pauses if p.voided_at is not None} | cancel_moments | leave_moments)
     if not moments:
         return [_World(datetime.min, _slots_of(segments, recalcs))]
-    all_pauses = tuple(inp.pauses)
-    sets = {_pauses_known_at(inp.pauses, m) for m in [datetime.min, *moments]}
 
-    def tape(pauses: tuple, tape_total: int) -> Tuple[Sequence[Segment], "_Gen"]:
-        b = _build_segments(replace(inp, pauses=pauses), tape_total, set())
+    def facts_at(moment: datetime) -> Tuple[Tuple[Pause, ...], Tuple[Stay, ...]]:
+        return _pauses_known_at(history, moment), _stays_known_at(inp.stays, moment)
+
+    now = facts_at(PROBE_MOMENT)
+    sets = {facts_at(m) for m in [datetime.min, *moments]}
+
+    def tape(facts: tuple, tape_total: int) -> Tuple[Sequence[Segment], "_Gen"]:
+        b = _build_segments(replace(inp, pauses=facts[0], stays=facts[1]), tape_total, set())
         return b.segments, b.gen
 
     # Б7.10: the tape of a world is the LOOKUP of «what is the place of this period in that world», so it must not be as long as the credits happen to need (the replay would then depend on a payment entered LATER:
     # the second period of the world after a pause is missing on the tape of a forgiveness alone, and what lay on it would be cut).  Every world is generated again for the sum that reaches the end of the
     # LONGEST first tape counted at the NOMINAL price (a period never costs more than that): a period that exists in an older world is then on the tape of a later one; not there = it does not exist (the stay ended).
-    first = {p: (segments, gen) if p == all_pauses else tape(p, total) for p in sets}
+    first = {f: (segments, gen) if f == now else tape(f, total) for f in sets}
     reach = max(sum(s.nominal for s in segs) for segs, _ in first.values())
-    built = {p: tape(p, reach) for p in sets}
+    built = {f: tape(f, reach) for f in sets}
 
     def known_at(moment: datetime) -> Dict[tuple, Tuple[date, int]]:
-        world_segments, world_gen = built[_pauses_known_at(inp.pauses, moment)]
+        world_segments, world_gen = built[facts_at(moment)]
         cancels = tuple(c for c in inp.centre_cancels if cancel_entered(inp.recalc_versions, c) <= moment)
         return _slots_of(world_segments, _recalc_lines(replace(inp, centre_cancels=cancels), world_gen, world_segments))
 
@@ -1906,13 +1942,15 @@ def sliced_input(inp: LedgerInput, as_of: date) -> LedgerInput:
     for s in inp.stays:
         if s.first > as_of:
             continue
-        stays.append(Stay(s.first, as_of if s.last is None or s.last > as_of else s.last))
+        stays.append(replace(s, last=as_of, left_at=None) if s.last is None or s.last > as_of else s)         # a virtual cut has no moment (after all the records); a stay that really ended keeps its own
     return replace(
         inp, today=as_of, stays=tuple(stays),
         credits=tuple(c for c in inp.credits if c.on <= as_of), outflows=tuple(o for o in inp.outflows if o.on <= as_of),
         counted_lessons=tuple(c for c in inp.counted_lessons if c.day <= as_of),
         centre_cancels=tuple(c for c in inp.centre_cancels if c.day <= as_of),
         pauses=tuple(p for p in inp.pauses if p.first <= as_of),
+        # a pause that begins after ``as_of`` charges nothing in the slice (the stay is cut), but it was KNOWN to the credits entered while it was there: the replay of the cut needs it - it is «taken off» by the cut itself
+        past_pauses=(*inp.past_pauses, *(replace(p, voided_at=NO_MOMENT) for p in inp.pauses if p.first > as_of)),
     )
 
 

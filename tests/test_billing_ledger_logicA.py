@@ -1,6 +1,6 @@
 """LOGIC-A core: the opening balance, pauses, the deferred change of the billing regime and ``lesson_cover`` - the golden chains of the
 spec (``logicA_spec.md`` §2-§3, hand-calculated in ``scripts/logicA_gen_fixtures.py``) as independent examples."""
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
 import pytest
 
@@ -110,7 +110,7 @@ def test_chain1_transfer_to_b_and_leave():
     x = bl.refundable_at(inp, D(2026, 10, 26))
     assert x == 180_000                                    # the slice cuts the stay on the transfer day and keeps the pause
     price_b = flat(465_000, changes={D(2026, 11, 1): 540_000})
-    tin = bl.Credit("tr:1", bl.TRANSFER_IN, D(2026, 10, 26), D(2026, 10, 26), 180_000)
+    tin = bl.Credit("tr:1", bl.TRANSFER_IN, D(2026, 10, 26), datetime(2026, 10, 26), 180_000)       # a MOMENT (a date here was compared with the moment of the leaving of the stay that ends below)
     base = dict(accounting_start=AS, regimes=(FIXED1,), price_at=price_b, credits=(tin,), first_billable_floor=D(2026, 10, 27))
     b = bl.run_ledger(bl.LedgerInput(today=D(2026, 10, 28), stays=(bl.Stay(D(2026, 10, 26)),), **base))
     assert (b.charged, b.advance, b.covered_through) == (75_000, 105_000, D(2026, 11, 5))

@@ -32,7 +32,7 @@ from src.models.auth import (
 )
 
 from . import billing_ledger as bl
-from .ledger_service import AUDIT_PAUSE_SET
+from .ledger_service import AUDIT_PAUSE_SET, LEAVE_VOID_REASON
 from .closed_period import ClosedPeriods, group_teacher_ids
 from .ops_rules import OpsError
 from . import membership_periods
@@ -737,7 +737,7 @@ class PauseService(_Base):
         for p in self._live(membership_id):
             was = [p.first_day.isoformat(), p.last_day.isoformat()]
             if p.first_day > left_day:
-                p.voided_at, p.voided_by, p.void_reason = _utcnow(), UUID(str(actor_id)) if actor_id else None, "ученик ушёл из группы"
+                p.voided_at, p.voided_by, p.void_reason = _utcnow(), UUID(str(actor_id)) if actor_id else None, LEAVE_VOID_REASON
                 if p.voided_by is None:  # the all-or-none check wants a person: the creator stands for the system
                     p.voided_by = p.created_by
                 action = AUDIT_PAUSE_VOID
@@ -805,7 +805,7 @@ class PauseService(_Base):
             first, last = (date.fromisoformat(d) for d in snap["was"])
             cut = (pause.first_day, pause.last_day)           # the form it has until now (the line of the journal says it: ``was``)
             if line.action == AUDIT_PAUSE_VOID:
-                if pause.voided_at is None or pause.void_reason != "ученик ушёл из группы":
+                if pause.voided_at is None or pause.void_reason != LEAVE_VOID_REASON:
                     continue
                 pause.voided_at = pause.voided_by = pause.void_reason = None
             else:

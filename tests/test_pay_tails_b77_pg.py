@@ -68,7 +68,7 @@ def test_chain_2_the_pause_is_extended_after_the_rest_was_forgiven_and_the_next_
 def test_every_path_that_changes_the_days_of_a_pause_writes_the_days_and_the_form_before(world, fixed_today):
     # The forms of a pause in time are read from the journal: the entering (the days), an edit (the days and ``was``), the cut of a leaving (the days and ``was``), the cancel of the leaving (the days and ``was`` =
     # the form it had until then).  A pause 22.11 - 24.11 and another 25.11 - 28.11; the leaving on 22.11 cuts the first to 22.11 - 22.11 and cancels the second; the return the same day gives both back;
-    # then the first is edited to 20.11 - 24.11.  Forms of the first at the end: entered (22-24), cut (22-22), restored (22-24), edited (20-24); the loader gives the same days as the row.
+    # then the first is edited to 20.11 - 24.11.  Forms of the first in the JOURNAL: entered (22-24), cut (22-22), restored (22-24), edited (20-24); the loader keeps the forms a human made - entered, edited (Б11.8 п. 2) - and the last form is the days of the row.
     from src.auth import ledger_service as ls
     from src.models.auth import GroupAudit, MembershipPause
     from tests.test_money2_transfer_a_pg import add, groups3, joined, pause as make_pause, rich_stay  # noqa: F401
@@ -90,7 +90,8 @@ def test_every_path_that_changes_the_days_of_a_pause_writes_the_days_and_the_for
     loader = ls.LedgerLoader(world.db, str(world.org.id), D(2026, 11, 22))
     loader.load_facts([mid])
     (mine,) = [p for p in loader.build_input(mid).pauses if p.first == D(2026, 11, 20)]
-    assert [(f, l) for _, f, l in mine.forms] == [(D(2026, 11, 22), D(2026, 11, 24)), (D(2026, 11, 22), D(2026, 11, 22)), (D(2026, 11, 22), D(2026, 11, 24)), (D(2026, 11, 20), D(2026, 11, 24))]
+    # Б11.8 п. 2: the cut of the leaving and its cancel are not forms of the pause (the journal keeps all four lines above): the loader reads what the last HUMAN made of it - entered (22-24), edited (20-24)
+    assert [(f, l) for _, f, l in mine.forms] == [(D(2026, 11, 22), D(2026, 11, 24)), (D(2026, 11, 20), D(2026, 11, 24))]
     assert all(x[0] <= y[0] for x, y in zip(mine.forms, mine.forms[1:])) and mine.forms[-1][1:] == (mine.first, mine.last)
 
 
