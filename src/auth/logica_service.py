@@ -678,7 +678,7 @@ class PauseService(_Base):
             if after.charged > before.charged and bl.F_OUTFLOW_EXCEEDS in after.flags:
                 raise PauseBreaksRefund("Сначала отмените возврат: без паузы вернуть нечего")
             change_reason = None
-            if after.charged != before.charged:      # M3: a change that moves money says why; Б11.18 п. 5: the probe asks it as the save does (lesson 164: the probe is the record)
+            if after.charged != before.charged and not dry_run:      # M3: a change that moves money says why (the dry run only shows the impact)
                 change_reason = self.pay._check_reason(body.reason)
             line.snapshot = {**line.snapshot, "reason": change_reason or row.reason, "charged_before": before.charged, "charged_after": after.charged, **self._other_facts(others[0])}
             out = self._saved(org_id, membership, row, before, after, money=money, owner=owner, dry_run=dry_run, today=today,
