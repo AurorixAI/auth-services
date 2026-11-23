@@ -654,7 +654,7 @@ def new_cut_edit(rng, inp, case, undo):
             return None
         first, last = low + timedelta(days=rng.randint(0, (p.first - timedelta(days=1) - low).days)), day
     elif case == "late":                                                  # the human moves the END later than the day of the leaving (the days he adds are a contraction entered NOW), the start stays
-        first, last = p.first, p.last + timedelta(days=rng.randint(0, 10))                # not before the old end: the end between the day of the leaving and the old end is a question of the table (the tail the cut hid or the end the human wrote), not of this rule
+        first, last = p.first, day + timedelta(days=rng.randint(1, 16))                  # Б11.26 п. 2: ANY day after the day of the leaving (before, at or after the old end of the pause): the end moved is the end the human wants, the hidden tail is given up
     else:                                                                 # the human moves the START later (Б11.25: the days he took off are known to every older world, under a standing cut too)
         first, last = p.first + timedelta(days=rng.randint(1, max(1, (day - p.first).days))), day
         if first > day:
@@ -685,8 +685,7 @@ def cut_edit_subject(inp, x):
     if x.undo:                                                             # ``restore_after_leave``: the last day goes back only if the human did not change it; the first day stays the human's (Б11.24 п. 2: the line says the pause's own first day)
         if x.last == day:
             row = (x.first, p.last)
-        if x.last == day:                                                  # the product writes the line of the cancel ONLY for a pause whose end is still the end of the cut
-            lines.append((at(day, 940), {"first_day": x.first.isoformat(), "last_day": row[1].isoformat(), "was": [x.first.isoformat(), x.last.isoformat()], "via": "leave_undone"}))
+        lines.append((at(day, 940), {"first_day": x.first.isoformat(), "last_day": row[1].isoformat(), "was": [x.first.isoformat(), x.last.isoformat()], "via": "leave_undone"}))   # Б11.26 п. 1: the line is written for EVERY pause the leaving cut, also when there is nothing to give back (its days = the days the pause has now)
     loaded = ls.LedgerLoader._pause_of(SimpleNamespace(pause_lines={"p": lines}), SimpleNamespace(id="p", first_day=row[0], last_day=row[1], created_at=p.forms[0][0], voided_at=None))
     pauses = list(inp.pauses)
     if x.undo:
@@ -704,7 +703,7 @@ def cut_edit_final(inp, x):
     p, day = inp.pauses[x.index], inp.today
     wanted = _span(p.first, p.last)
     seen = _span(x.first, x.last)
-    if x.last >= day:
+    if x.last == day:                                                      # Б11.26 п. 2: the tail the cut hid stays only when the human did not touch the end
         seen = seen | {d for d in wanted if d > day}
     return min(seen), max(seen)
 
