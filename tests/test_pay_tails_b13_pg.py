@@ -501,3 +501,29 @@ def test_b11_25_the_start_moved_later_after_the_leaving_gives_the_forgiveness_ba
     # debt 0, advance 0.  The days 10 - 16 the human took off are known to every older world (an extension of the account is never a contraction): the forgiveness is not burnt by the cut that stands over them.
     g, s, pause_id = start_later_after_the_leaving(world, fixed_today, paid=150_000)
     edit_pause(world, s, g, pause_id, D(2026, 11, 23), "2026-11-17", "2026-11-22", debt=0, advance=0, charged=300_000, used=150_000, granted=300_000)
+
+
+# ---------------------------------------------------------------------------------------------------------------------------- Б11.26, step 8.13.9: a cancelled leaving leaves the history of the pause WHOLE, also when a human moved the end of the pause
+def test_b11_26_the_leaving_the_end_of_the_pause_moved_later_and_the_cancel_of_the_leaving_leave_no_cut_in_the_history(world, fixed_today):
+    # 05.11 forgiven the whole November 600 000; 06.11 paid 300 000 (all of it an advance); 09.11 the pause 17 - 24.11 (lessons 17 19 20 24 = 4 lost of 12: November 400 000 = used forgiveness 400 000, advance 300 000);
+    # 20.11 the leaving: the stay 01 - 20.11, the cut 17 - 20.11 (lessons 3 5 6 10 12 13 = 300 000: used 300 000, advance 300 000); the same day the human moves the END of the pause to 27.11 (17 - 27.11: the lessons 24, 26, 27
+    # are out of the stay anyway: 300 000, used 300 000, advance 300 000); the cancel of the leaving: the student is in the group, the pause is 17 - 27.11 (the end the human wrote, not the old 24.11), November 12 lessons - 17 19 20 24 26 27
+    # lost = 6 x 50 000 = 300 000: charged 300 000, debt 0, used 300 000, advance 300 000 (the same as the pause 17 - 27.11 entered at once).  The cut of the leaving is not a stage of the pause any more (a world «in the group, the
+    # pause cut by the leaving» did not exist): the journal of the pause has the line ``leave_undone`` with the days the pause has now (17 - 27.11), though there was nothing to give back.
+    g, s = om_at(world, fixed_today, D(2026, 11, 1))
+    fixed_today(D(2026, 11, 5))
+    forgive(world, s, g, 600_000)
+    fixed_today(D(2026, 11, 6))
+    pay(world, s, g, amount=300_000, paid_on=D(2026, 11, 6))
+    fixed_today(D(2026, 11, 9))
+    pause_id = pause_on(world, s, g, "2026-11-17", "2026-11-24")
+    check(world, s, g, D(2026, 11, 9), charged=400_000, debt=0, advance=300_000, used=400_000, granted=600_000)
+    fixed_today(D(2026, 11, 20))
+    leave(world, g, s)
+    check(world, s, g, D(2026, 11, 20), charged=300_000, debt=0, advance=300_000, used=300_000, granted=600_000)
+    edit_pause(world, s, g, pause_id, D(2026, 11, 20), "2026-11-17", "2026-11-27", debt=0, advance=300_000, charged=300_000, used=300_000, granted=600_000)
+    add(world, s, group=g, mode="add")
+    check(world, s, g, D(2026, 11, 20), charged=300_000, debt=0, advance=300_000, used=300_000, granted=600_000)
+    from src.models.auth import MembershipPause
+    row = world.db.get(MembershipPause, UUID(pause_id))
+    assert (row.first_day, row.last_day) == (D(2026, 11, 17), D(2026, 11, 27)) and undo_line(world, pause_id) == [("2026-11-17", "2026-11-27")]
