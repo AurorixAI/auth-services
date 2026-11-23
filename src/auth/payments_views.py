@@ -193,7 +193,7 @@ def cover_phrase(l: bl.Ledger, due, closed: bool = False) -> Optional[str]:
     if until is None or l.covered_by not in ("money", "opening", None):
         return None
     words = f"{tx.cover_words(l.covered_by).lower()} {tx.ddmm(until)}"
-    return f"{words} · {tx.paid_forward_text(l.cover_ahead[1])}" if l.cover_ahead is not None and l.cover_ahead[1] > 0 else words
+    return f"{words} · {tx.paid_forward_text(l.cover_ahead[1])}" if l.cover_ahead is not None and l.cover_ahead[1] > 0 and l.cover_ahead[1] != l.advance else words      # Б11.21 п. 3: the same sum is already said as the advance of the state
 
 
 def starts_info(e) -> Tuple[Optional[pay_upcoming.Upcoming], Optional[dict]]:
@@ -528,7 +528,7 @@ def preview_result(before: bl.Ledger, after: bl.Ledger, credit_id: str, price_to
     to_debt, to_due = paid_by_name(due_before, [a for a in raw if a.segment_id != bl.ADVANCE_SEGMENT])
     text = tx.summary_text(
         debt_paid=to_debt, debt_before=due_before.debt_amount, due_paid=to_due, due_before=due_before.due_amount,
-        advance=sum(a.amount for a in raw if a.bucket == bl.ADVANCE), debt_after=after.debt, paid_until_after=None if closed else after.status.paid_until,
+        advance=after.advance if lessons else sum(a.amount for a in raw if a.bucket == bl.ADVANCE), debt_after=after.debt, paid_until_after=None if closed else after.status.paid_until,
         advance_periods=advance_periods,
         lessons=(after.lessons.covered, after.lessons.left) if lessons else None,
         kind=after.covered_by, partial=partial_words(after, due_after, closed),

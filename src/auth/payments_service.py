@@ -2203,7 +2203,7 @@ class PaymentService:
             self._check_seen("refundable", expected_refundable, before.refundable, refundable=before.refundable, advance=before.advance)
             limit = bl.refund_limit(inp, effective_on)
             if amount > limit.amount:
-                raise RefundExceedsAdvance(self._refund_refusal(limit, membership.id), refundable=limit.amount)
+                raise RefundExceedsAdvance(self._refund_refusal(limit, membership.id, before.transferred_out), refundable=limit.amount)
             moment = _utcnow()
             row = self._add_refund(
                 org_id, lambda number: StudentRefund(
@@ -2232,11 +2232,11 @@ class PaymentService:
         return (self.db.query(Group.name).join(StudentGroup, StudentGroup.group_id == Group.id).join(MembershipTransfer, MembershipTransfer.to_membership_id == StudentGroup.id)
                 .filter(MembershipTransfer.from_membership_id == membership_id, MembershipTransfer.voided_at.is_(None)).order_by(MembershipTransfer.at.desc()).limit(1).scalar())
 
-    def _refund_refusal(self, limit: "bl.RefundLimit", membership_id: UUID) -> str:
+    def _refund_refusal(self, limit: "bl.RefundLimit", membership_id: UUID, carried: int = 0) -> str:
         """Money-1 G-13: a refund that does not fit says WHY: because of the money of its own day / today, or because a later outflow was made when the account held more.
         Money-2 T8: nothing left to return because the advance went to another group on a transfer - the refusal names that group."""
         later = limit.blocked_by
-        if not limit.amount:
+        if not limit.amount and carried:                                     # PAY-TAILS Б11.21 п. 2: a transfer that carried NOTHING moved no advance: the plain «nothing to return»
             moved_to = self._group_of_transfer_out(membership_id)
             if moved_to:
                 return f"Аванс ученика перешёл в группу «{moved_to}» — возврат оформите там"

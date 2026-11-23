@@ -131,5 +131,24 @@ def test_a_future_lesson_cancelled_by_the_centre_vanishes_after_the_leaving_and_
     _, m = preview(world, g, s)
     # R4: the deduction takes its place INSIDE November (money 550 000 + deduction 50 000) and the 50 000 of the payment it pushed out lie on December as money: the closing sees December paid ahead and that it will not
     # begin - one more line (before R4 the 50 000 were a "deduction" credit on December, not money: no line).  The total below is the same: 550 000 - 200 000 + 50 000 = 400 000 advance.
-    assert [x["text"] for x in m["recalc"]["lines"]] == [f"Ноябрь: {N(600_000)} → {M(200_000)}", f"Декабрь не начнётся: {M(50_000)} останутся авансом"]
+    assert [x["text"] for x in m["recalc"]["lines"]] == [f"Ноябрь: {N(550_000)} → {M(200_000)}", f"Декабрь не начнётся: {M(50_000)} останутся авансом"]      # Б11.21 п. 4: the NET cost before the closing: 600 000 - the deduction 50 000 (was «600 000 → …»)
     assert stays(m)["advance"]["text"] == "Останется аванс " + M(400_000) and m["money"]["advance"] == 400_000       # the total comes from the account after the closing, not from the lines
+
+
+def test_b11_21_p4_the_line_of_the_month_is_the_net_cost_and_a_quiet_note_names_the_recalculation(world, fixed_today):
+    # Б11.21 п. 4.  paid 1 100 000 (03.11); the centre cancelled Tuesday 24.11 (a deduction of 50 000); leaving on 26.11 (lessons 3 5 6 10 12 13 17 19 20 24 26 = 11 x 50 000 = 550 000).  The NET cost of November: before the
+    # closing 600 000 - 50 000 = 550 000, after it 550 000 - 50 000 = 500 000 (what the debt and the advance are made of: advance = 1 100 000 - 500 000 = 600 000); the line says «550 000 → 500 000 сум» and under it, quietly,
+    # «с учётом перерасчёта за отменённые уроки: −50 000 сум» (it said «600 000 → 550 000»: the deduction was not seen and the lines did not meet the total).
+    g, s = om(world, fixed_today)
+    assert owner(world).put(f"{API}/org/settings/payments", json={"centre_cancel_recalc": True}).status_code == 200
+    pay(world, s, g, amount=1_100_000, paid_on=D(2026, 11, 3))
+    r = owner(world).post(f"{API}/org/groups/{g.id}/attendance", json={"lessonDate": "2026-11-24", "lessonId": "s2", "status": "cancelled", "records": {}, "cancellationReason": "Преподаватель заболел", "cancellationKind": "centre"})
+    assert r.status_code == 200, r.text
+    fixed_today(D(2026, 11, 26))
+    _, m = preview(world, g, s)
+    first = m["recalc"]["lines"][0]
+    assert (first["text"], first["before"], first["after"]) == (f"Ноябрь: {N(550_000)} → {M(500_000)}", 550_000, 500_000), first
+    assert first["basis_text"].endswith(f"с учётом перерасчёта за отменённые уроки: −{M(50_000)}"), first["basis_text"]
+    assert m["money"]["advance"] == 1_100_000 - 500_000
+    done = leave(world, g, s)["recalc"]["lines"][0]
+    assert (done["before"], done["after"]) == (550_000, 500_000) and done["basis_text"] == first["basis_text"]

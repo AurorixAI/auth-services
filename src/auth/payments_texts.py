@@ -72,6 +72,11 @@ def individual_price_ends_text(amount: int, group_name: str, new_amount: Optiona
     return f"У ученика индивидуальная цена {money(amount)} в группе «{group_name}»: в новой группе она не действует — {after}"
 
 
+def recalc_note(amount: int) -> str:
+    """Б11.21 п. 4: the quiet note under the net cost of a period in the window of a closing."""
+    return f"с учётом перерасчёта за отменённые уроки: −{money(amount)}"
+
+
 NOTHING_TO_REFUND = "Возвращать нечего: оплаченных денег сверх начисленного нет"      # PAY-TAILS Р6: an advance is money only; the refusal says what is true
 NOT_FISCAL = "Не является фискальным чеком"            # Money-1 V5/V6: the receipt of the centre is an internal paper, not a cheque of the tax service (owner 04.11)
 REFUND_SIGNATURE = "Получил(а): ____________________  Подпись"

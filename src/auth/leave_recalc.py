@@ -39,13 +39,13 @@ def _label(start: date, end: date) -> str:
 
 
 def _basis(seg: bl.Segment) -> str:
-    """The grey line under a charge: what the NEW sum is counted from (read from the segment, never recomputed)."""
+    """The grey line under a charge: what the NEW sum is counted from (read from the segment, never recomputed); Б11.21 п. 4: and, quietly, the deduction for the lessons the centre cancelled that the NET sum above already has."""
     head = "пересчёт по день ухода"
     if seg.basis == "lessons" and seg.lessons_in_part is not None and seg.lessons_in_period is not None:
-        return f"{head} · {seg.lessons_in_part} {tx.lessons_word(seg.lessons_in_part)} из {seg.lessons_in_period}"
-    if seg.basis == "days" and seg.nominal_days:
-        return f"{head} · {len(seg.days)} {tx.days_word(len(seg.days))} из {seg.nominal_days}"
-    return head
+        head = f"{head} · {seg.lessons_in_part} {tx.lessons_word(seg.lessons_in_part)} из {seg.lessons_in_period}"
+    elif seg.basis == "days" and seg.nominal_days:
+        head = f"{head} · {len(seg.days)} {tx.days_word(len(seg.days))} из {seg.nominal_days}"
+    return f"{head} · {tx.recalc_note(seg.recalculated)}" if seg.recalculated > 0 else head
 
 
 def items(before: Optional[bl.Ledger], after: Optional[bl.Ledger]) -> List[RecalcItem]:
@@ -58,9 +58,9 @@ def items(before: Optional[bl.Ledger], after: Optional[bl.Ledger]) -> List[Recal
         if seg.kind == "opening" or not seg.begun:
             continue
         new = begun_after.get(seg.period_start)
-        now = new.amount if new is not None else 0
-        if now != seg.amount:
-            out.append(RecalcItem("charge", _label(seg.period_start, seg.period_end), seg.amount, now, _basis(new) if new is not None else None))
+        was, now = seg.amount - seg.recalculated, (new.amount - new.recalculated if new is not None else 0)       # Б11.21 п. 4: the NET cost - the very numbers the debt and the advance of the window are made of
+        if now != was:
+            out.append(RecalcItem("charge", _label(seg.period_start, seg.period_end), was, now, _basis(new) if new is not None else None))
     if out and before.written_off != after.written_off and before.written_off > 0:       # the forgiveness that covered the period falls with it: the money did not vanish
         out.append(RecalcItem("forgiven", "Прощено", before.written_off, after.written_off))
     for seg in before.segments:                                                           # paid ahead, never begins: what stays is the MONEY laid on it
