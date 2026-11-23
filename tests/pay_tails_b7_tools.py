@@ -82,7 +82,8 @@ def mk_pause(first, last, entered, minute=0):
 def human_edit(p, first, last, moment):
     """The pause edited BY A HUMAN to ``first .. last`` at ``moment`` (a form of its own; the last human form is that one)."""
     p = _gen(p)
-    return replace(p, first=first, last=last, forms=(*p.forms, (moment, first, last)), human=(first, last))
+    tail = max(last, p.human[1]) if p.cuts and p.human else last              # Б11.23 п. 1: under a standing cut the pause a human leaves = his days plus the days of the last human form that the cut took away
+    return replace(p, first=first, last=last, forms=(*p.forms, (moment, first, last)), human=(first, tail))
 
 
 def mk_stay(first, last=None, joined=None, left_at=None):

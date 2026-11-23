@@ -991,21 +991,30 @@ class LedgerLoader:
             first_form, edits = (p.first_day, p.last_day), []
         forms: List[Tuple[datetime, date, date]] = [(p.created_at, *first_form)]
         by_leave = [False]                                        # per form: written by a leaving / a transfer / an archive (the journal says so: ``via``)
+        human_forms: List[Optional[Tuple[date, date]]] = [first_form]     # per form: what a HUMAN made of it (``None`` for a form a leaving wrote); Б11.23 п. 1: an edit under a standing cut keeps the tail the cut took
         made_by_leave = 0                                         # the forms at the end of the list that a leaving wrote
         for at, snap in edits:
             via = snap.get("via")
             if via == "leave_undone":
                 del forms[len(forms) - made_by_leave:]            # the leaving is cancelled: its cut and this line are not forms
                 del by_leave[len(by_leave) - made_by_leave:]
+                del human_forms[len(human_forms) - made_by_leave:]
                 made_by_leave = 0
                 continue
-            forms.append((at, *days(snap)))
-            by_leave.append(via in ("leave", "transfer", "archive"))
+            cut = via in ("leave", "transfer", "archive")
+            first_day, last_day = days(snap)
+            if cut or True not in by_leave:
+                human_forms.append(None if cut else (first_day, last_day))
+            else:                                                 # Б11.23 п. 1: a human edits under a standing cut: his days plus the tail of the last human form before the cut
+                before_cut = [h for h in human_forms[:by_leave.index(True)] if h][-1]
+                human_forms.append((first_day, max(last_day, before_cut[1])))
+            forms.append((at, first_day, last_day))
+            by_leave.append(cut)
             made_by_leave = made_by_leave + 1 if via in ("leave", "transfer", "archive") else 0
         if forms[-1][1:] != (p.first_day, p.last_day):
-            forms, by_leave = [(p.created_at, p.first_day, p.last_day)], [False]
-        human = next(form for form, cut in zip(reversed(forms), reversed(by_leave)) if not cut)         # Б11.19 п. 1: the last form a HUMAN wrote (the first form is his always)
-        return bl.Pause(p.first_day, p.last_day, tuple(forms), voided, (human[1], human[2]), tuple(form[0] for form, cut in zip(forms, by_leave) if cut))
+            forms, by_leave, human_forms = [(p.created_at, p.first_day, p.last_day)], [False], [(p.first_day, p.last_day)]
+        human = next(h for h in reversed(human_forms) if h)       # Б11.19 п. 1: the last form a HUMAN wrote (the first form is his always)
+        return bl.Pause(p.first_day, p.last_day, tuple(forms), voided, human, tuple(form[0] for form, cut in zip(forms, by_leave) if cut))
 
     def build_input(
         self,

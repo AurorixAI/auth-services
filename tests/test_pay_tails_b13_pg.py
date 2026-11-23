@@ -379,3 +379,28 @@ def test_b11_19_f1_v_the_return_without_pay_from_is_the_cancel_and_the_payment_a
     assert (money["charged_after_leave"], money["debt_amount"], money["advance"]) == (450_000, 0, 0) and after.refundable == 0
     assert kept_forgiveness(world, s, g) == [(150_000, False)]
 
+
+
+# ---------------------------------------------------------------------------------------------------------------------------- Б11.23 п. 1, step 8.13.6: a human edits the pause of a student who has LEFT
+def test_b11_23_a_human_edit_of_the_pause_of_a_student_who_left_keeps_the_tail_the_leaving_cut(world, fixed_today):
+    # World (600 000 a month, Tue / Thu / Fri, November 2026): 05.11 paid 150 000; 09.11 the pause 17 - 30.11 (November 300 000, debt 150 000); 10.11 forgiven 100 000 (debt 50 000); 11.11 paid 300 000 (the debt 50 000 is
+    # paid, 250 000 is an advance); 22.11 the leaving INSIDE the pause (cut to 17 - 22.11, November 300 000); 23.11 a human edits the pause of the leaver: the start is 13.11 (the lesson of 13.11 is lost: 250 000).
+    # By hand: the forgiveness 100 000 was entered while the debt was real, under the pause 17 - 30.11 which a human wrote; the edit of the START does not take the tail 23 - 30.11 away from that form.  The charge 250 000
+    # (lessons 3 5 6 10 12) = the forgiveness 50 000 + the money 200 000 of 450 000; used 50 000, debt 0, advance 250 000 = to give back 250 000.  (Was: used 0, advance 200 000 - 50 000 of the family lost.)
+    g, s = om_at(world, fixed_today, D(2026, 11, 1))
+    fixed_today(D(2026, 11, 5))
+    pay(world, s, g, amount=150_000, paid_on=D(2026, 11, 5))
+    fixed_today(D(2026, 11, 9))
+    pause_id = pause_on(world, s, g, "2026-11-17", "2026-11-30")
+    check(world, s, g, D(2026, 11, 9), charged=300_000, debt=150_000, advance=0, used=0, granted=0)
+    fixed_today(D(2026, 11, 10))
+    forgive(world, s, g, 100_000)
+    fixed_today(D(2026, 11, 11))
+    pay(world, s, g, amount=300_000, paid_on=D(2026, 11, 11))
+    check(world, s, g, D(2026, 11, 11), charged=300_000, debt=0, advance=250_000, used=100_000, granted=100_000)
+    fixed_today(D(2026, 11, 22))
+    leave(world, g, s)
+    check(world, s, g, D(2026, 11, 22), charged=300_000, debt=0, advance=250_000, used=100_000, granted=100_000)
+    fixed_today(D(2026, 11, 23))
+    edit_pause(world, s, g, pause_id, D(2026, 11, 23), "2026-11-13", "2026-11-22", debt=0, advance=250_000, charged=250_000, used=50_000, granted=100_000)
+
