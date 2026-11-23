@@ -154,9 +154,8 @@ def known_pauses(inp, moment):
         if line is None:
             continue
         days = _span(line[1], line[2])
-        human = getattr(p, "human", None)
-        if line[0] not in getattr(p, "cuts", ()) and human is not None:
-            days &= _intent(p) if isinstance(p, GenPause) else _span(*human)
+        if getattr(p, "human", None) is not None:                      # Б11.25: THE rule, no exception: (the days visible by the last line of the moment, whose ever it is) AND (what the human wants of the pause in the end)
+            days &= _intent(p) if isinstance(p, GenPause) else _span(*p.human)
         if days:
             out.append(replace(p, first=min(days), last=max(days)))
     return tuple(out)
@@ -654,10 +653,9 @@ def new_cut_edit(rng, inp, case, undo):
         if p.first - timedelta(days=1) < low:
             return None
         first, last = low + timedelta(days=rng.randint(0, (p.first - timedelta(days=1) - low).days)), day
-    else:                                                                 # the human moves the START later.  WITHOUT the cancel the cut of the leaving stands and is read AS IT IS (Б11.19 п. 1): its world keeps the days the human took off LATER, so the account is not the
-        if not undo:                                                      # world «the start was later at once» - by the table, not a defect of the loader; the case is measured apart (``B7_START_LATER=1``), not a part of the property
-            if not os.environ.get("B7_START_LATER"):
-                return None
+    elif case == "late":                                                  # the human moves the END later than the day of the leaving (the days he adds are a contraction entered NOW), the start stays
+        first, last = p.first, p.last + timedelta(days=rng.randint(0, 10))                # not before the old end: the end between the day of the leaving and the old end is a question of the table (the tail the cut hid or the end the human wrote), not of this rule
+    else:                                                                 # the human moves the START later (Б11.25: the days he took off are known to every older world, under a standing cut too)
         first, last = p.first + timedelta(days=rng.randint(1, max(1, (day - p.first).days))), day
         if first > day:
             return None
@@ -722,8 +720,8 @@ def cut_edit_oracle(inp, x):
     return replace(base, stays=stays_after_undo(base)) if x.undo else apply_leave(base)
 
 
-def _days_known(inp, moments):
-    return tuple(tuple(sorted(d for q in bl._pauses_known_at((*inp.pauses, *getattr(inp, "past_pauses", ())), m) for d in _span(q.first, q.last))) for m in moments)
+def _days_known(inp, moments, until=None):
+    return tuple(tuple(sorted(d for q in bl._pauses_known_at((*inp.pauses, *getattr(inp, "past_pauses", ())), m) for d in _span(q.first, q.last) if until is None or d <= until)) for m in moments)
 
 
 def new_leave(rng, inp, kind="leave"):
@@ -835,12 +833,19 @@ def event_violations(inp, x):
         oracle = cut_edit_oracle(inp, x)
         if bl.run_ledger(new).flags:
             bad.append("flags")
-        name = "P11 cut edit undo" if x.undo else "P11 cut edit"
+        case = EVENT[0].split("_")[1]
+        name = f"P11 {case}{' undo' if x.undo else ''}"
+        compression = case in ("ext", "late")           # Б11.25: the human ADDS days to the pause (the start earlier, the end later)
+        if compression and (CANCELS == "with" or (CANCELS == "" and inp.centre_cancels)):
+            name = "P11s"                                                 # a counter for reference (LEDGER-FREEZE (ж): the order of two contractions over a cancelled lesson), not a property
+            gap = abs(bl.run_ledger(new).debt - bl.run_ledger(oracle).debt)
+            if gap > P11S_MAX[0]:
+                P11S_MAX[:] = [gap, repr(x)]
         if p8_key(new) != p8_key(oracle) or state_of(new) != state_of(oracle):
             bad.append(name)
         moments = [bl.entered_at(c) for c in inp.credits if bl.entered_at(c) < at(inp.today, 899)] + [at(inp.today, m) for m in (925, 945)]      # the worlds the two paths share: the records, and the moments after the edit (between the leaving and the edit the cut is of the pause as it was)
-        if _days_known(new, moments) != _days_known(oracle, moments):
-            bad.append(name + " days")
+        if _days_known(new, moments, None if x.undo else inp.today) != _days_known(oracle, moments, None if x.undo else inp.today):        # the days after the day of the leaving are out of the stay while the cut stands (the oracle hides what the human re-added)
+            bad.append(name + " days") if name != "P11s" else bad.append(name) if name not in bad else None
     elif isinstance(x, UndoLeave):                                  # P7: the leaving cancelled the same day = the account before the leaving
         if state_of(apply_undo(inp)) != state_of(inp):
             bad.append("P7 undo")
@@ -949,6 +954,8 @@ def deductions_by_place(L):
 NO_CANCEL_WORLDS = {}         # kind -> [(world, growth)] of the events with a nonzero allowance in a world WITHOUT a cancelled lesson
 TOLERANCE_KINDS = {}          # Б11.13 п. 4: kind of the event -> [events checked, events with a nonzero allowance, of them in a world with a cancelled lesson]
 EVENT = [None, None]          # [kind, world] of the event being checked (set by ``run_counts``)
+P11S_MAX = [0, ""]          # Б11.25: the largest gap of the debt (in sums) of the reference counter «P11s» and the event
+CANCELS = ""                # B7_CANCELS of the run (the counter above is for the sets WITH a lesson cancelled by the centre)
 TOLERANCE = [0, 0]            # Б11.12 п. 4: [events checked with ``place_growth``, events where it was NOT zero] - the tool prints it (in a common month a pause entered now must give zero)
 
 
@@ -1210,13 +1217,16 @@ def run_counts(seed, n, cfg=Cfg()):
     counts["P4 nomatch"] = 0
     found = {}
     worlds = pays = forgs = 0
+    global CANCELS
+    CANCELS = cfg.cancels
+    P11S_MAX[:] = [0, ""]
     TOLERANCE[:] = [0, 0]
     TOLERANCE_KINDS.clear()
     NO_CANCEL_WORLDS.clear()
     for _ in range(n):
         inp = allowed_world(rng, cfg)
         worlds += 1
-        for kind in (bl.PAYMENT, bl.WRITEOFF, "pause", "edit", "cancel", "leave", "transfer", "undo", "relapse_pay", "relapse_forgive", "ordinary_pay", "ordinary_forgive", "return", "same", "amount", "restore", "leave_pause", "transfer_pause", "roundtrip", "roundtrip_pay", "roundtrip_leave", "roundtrip_transfer", "roundtrip_archive", "cutedit_short", "cutedit_start", "cutedit_ext", "cutedit_short_undo", "cutedit_start_undo", "cutedit_ext_undo"):
+        for kind in (bl.PAYMENT, bl.WRITEOFF, "pause", "edit", "cancel", "leave", "transfer", "undo", "relapse_pay", "relapse_forgive", "ordinary_pay", "ordinary_forgive", "return", "same", "amount", "restore", "leave_pause", "transfer_pause", "roundtrip", "roundtrip_pay", "roundtrip_leave", "roundtrip_transfer", "roundtrip_archive", "cutedit_short", "cutedit_start", "cutedit_ext", "cutedit_short_undo", "cutedit_start_undo", "cutedit_ext_undo", "cutedit_late", "cutedit_late_undo"):
             EVENT[0], EVENT[1] = kind, inp
             x = (new_payment(rng, inp) if kind == bl.PAYMENT else new_forgiveness(rng, inp) if kind == bl.WRITEOFF
                  else new_pause(rng, inp) if kind == "pause" else new_pause_edit(rng, inp) if kind == "edit" else new_cancel(rng, inp) if kind == "cancel" and inp.centre_cancels
@@ -1279,6 +1289,7 @@ def main(argv):
             total["_worlds/payments/forgivenesses"] = tuple(a + b for a, b in zip(total.get("_worlds/payments/forgivenesses", (0, 0, 0)), size))
         print(" | ".join(f"{k}: {v}" for k, v in total.items()))
         print("tolerance by kind (kind: checked / nonzero / nonzero with a cancelled lesson): " + " | ".join(f"{k}: {v[0]} / {v[1]} / {v[2]}" for k, v in TOLERANCE_KINDS.items() if v[1]))
+        print(f"P11s largest gap of the debt: {P11S_MAX[0]} ({P11S_MAX[1]})")
         for k, worlds_ in NO_CANCEL_WORLDS.items():
             print(f"nonzero WITHOUT a cancelled lesson, kind {k}: {len(worlds_)} events; smallest world: " + repr(min(worlds_, key=lambda w: (len(w[0].credits), len(w[0].pauses)))[0])[:900])
     elif cmd == "smallest":
