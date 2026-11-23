@@ -583,7 +583,7 @@ def test_b11_28_w3_the_second_leaving_took_a_future_pause_off_its_cancel_does_no
 
 def world_b11_28_two_edits(world, fixed_today):
     # The world of Б11.23 п. 1 (05.11 paid 150 000; 09.11 the pause 17 - 30.11; 10.11 forgiven 100 000; 11.11 paid 300 000) and, on 22.11, the leaving (the cut 17 - 22.11) and TWO edits of the human under the one cut:
-    # 13 - 25.11 (the end moved: not the day of the leaving) and then 13 - 22.11 (the end is the day of the leaving again).  In the stay 01 - 22.11 both forms are the same pause 13 - 22.11: lessons 3 5 6 10 12 = 250 000.
+    # 13 - 25.11 (the end moved: not the day of the leaving; the human wants 13 - 25: used 0, advance 200 000) and then 13 - 22.11 (the end is the day of the leaving again: the tail 23 - 30.11 is his again: used 50 000, advance 250 000).
     g, s = om_at(world, fixed_today, D(2026, 11, 1))
     fixed_today(D(2026, 11, 5))
     pay(world, s, g, amount=150_000, paid_on=D(2026, 11, 5))
@@ -595,7 +595,7 @@ def world_b11_28_two_edits(world, fixed_today):
     pay(world, s, g, amount=300_000, paid_on=D(2026, 11, 11))
     fixed_today(D(2026, 11, 22))
     leave(world, g, s)
-    edit_pause(world, s, g, pause_id, D(2026, 11, 22), "2026-11-13", "2026-11-25", debt=0, advance=250_000, charged=250_000, used=50_000, granted=100_000)
+    edit_pause(world, s, g, pause_id, D(2026, 11, 22), "2026-11-13", "2026-11-25", debt=0, advance=200_000, charged=250_000, used=0, granted=100_000)   # H = 13 - 25.11: the days 26 - 30.11 are not what he wants in EVERY world (the forgiveness of 10.11 sees the pause 17 - 25: November 400 000, it is not needed)
     edit_pause(world, s, g, pause_id, D(2026, 11, 22), "2026-11-13", "2026-11-22", debt=0, advance=250_000, charged=250_000, used=50_000, granted=100_000)
     return g, s, pause_id
 
