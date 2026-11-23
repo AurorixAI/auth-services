@@ -69,6 +69,7 @@ class GenPause(bl.Pause):
     human: object = None
     cuts: tuple = ()
     intent: frozenset = frozenset()          # Б11.24: what the human wants of the pause, AS A SET OF DAYS (the days of ``human`` are its hull); empty = the days of ``human``
+    hidden: frozenset = frozenset()          # Б11.28: the days of the tail the standing cut hides (the days of the intent after K when the cut was made); they come back into the intent only by an edit whose end IS K
     kept_to: object = None                   # Б11.24: K = the last day of the visible form under a STANDING cut of a leaving (``None`` = no cut stands); the hidden tail = the days of ``intent`` after it
 
 
@@ -86,12 +87,13 @@ def mk_pause(first, last, entered, minute=0):
 
 
 def human_edit(p, first, last, moment):
-    """The pause edited BY A HUMAN to ``first .. last`` at ``moment`` (a form of its own; the last human form is that one)."""
+    """The pause edited BY A HUMAN to ``first .. last`` at ``moment`` (a form of its own; the last human form is that one).  Б11.28 (the table, on SETS of days): under a STANDING cut the cut stays whatever the edit is (K is not reset);
+    the hidden tail is in what the human wants only when the CURRENT form ends on the day of the cut (``last == K``), whatever the edits before were."""
     p = _gen(p)
-    seen, kept = _span(first, last), None
-    if p.kept_to is not None and last >= p.kept_to:                           # Б11.24: under a standing cut and the visible end NOT shortened: the hidden tail stays in what the human wants
-        seen, kept = seen | {d for d in _intent(p) if d > p.kept_to}, last
-    return replace(p, first=first, last=last, forms=(*p.forms, (moment, first, last)), human=(min(seen), max(seen)), intent=frozenset(seen), kept_to=kept)    # shortened before the cut day: the tail is dropped, no cut stands
+    seen = _span(first, last)
+    if p.kept_to is not None and last == p.kept_to:
+        seen = seen | p.hidden
+    return replace(p, first=first, last=last, forms=(*p.forms, (moment, first, last)), human=(min(seen), max(seen)), intent=frozenset(seen))
 
 
 def mk_stay(first, last=None, joined=None, left_at=None):
@@ -110,7 +112,7 @@ def leave_pauses(pauses, past, day, moment):
             gone.append(replace(p, voided_at=moment) if NEW_LEAVE else p)
         elif p.last > day:
             p = _gen(p)
-            keep.append(replace(p, last=day, forms=(*p.forms, (moment, p.first, day)), cuts=(*p.cuts, moment), intent=frozenset(_intent(p)), kept_to=day) if p.forms else replace(p, last=day))
+            keep.append(replace(p, last=day, forms=(*p.forms, (moment, p.first, day)), cuts=(*p.cuts, moment), intent=frozenset(_intent(p)), kept_to=day, hidden=frozenset(d for d in _intent(p) if d > day)) if p.forms else replace(p, last=day))
         else:
             keep.append(p)
     return tuple(keep), (tuple(past) + tuple(gone) if NEW_LEAVE else ())
@@ -632,6 +634,8 @@ class CutEdit:
     first: date
     last: date
     undo: bool = False
+    second: object = None            # Б11.28 (W4): a SECOND edit of the human under the same cut, ``(first, last)``; the last one is the current form of the human
+    again: bool = False              # Б11.28 (W3): an ordinary return, the edit moves the pause into the future, a second leaving takes it off, the second leaving is cancelled (the same day)
 
 
 def new_cut_edit(rng, inp, case, undo):
@@ -655,6 +659,16 @@ def new_cut_edit(rng, inp, case, undo):
         first, last = low + timedelta(days=rng.randint(0, (p.first - timedelta(days=1) - low).days)), day
     elif case == "late":                                                  # the human moves the END later than the day of the leaving (the days he adds are a contraction entered NOW), the start stays
         first, last = p.first, day + timedelta(days=rng.randint(1, 16))                  # Б11.26 п. 2: ANY day after the day of the leaving (before, at or after the old end of the pause): the end moved is the end the human wants, the hidden tail is given up
+    elif case == "two":                                                   # Б11.28 (W4): two edits under one cut; the first moves the end (any day but the day of the leaving), the second brings the end back to the day of the leaving
+        first = low + timedelta(days=rng.randint(0, max(0, (p.first - low).days)))
+        end = day + timedelta(days=rng.choice([-1, 1, 2, 5, 9, 16]))
+        if end < first:
+            return None
+        second_first = low + timedelta(days=rng.randint(0, (day - low).days))
+        return CutEdit(index, first, end, undo, (second_first, day))
+    elif case == "again":                                                 # Б11.28 (W3): the edit moves the pause into the FUTURE (after the day of the leaving) - the second leaving takes it off as a pause of the future
+        first = day + timedelta(days=rng.randint(1, 10))
+        return CutEdit(index, first, first + timedelta(days=rng.randint(0, 12)), False, None, True)
     else:                                                                 # the human moves the START later (Б11.25: the days he took off are known to every older world, under a standing cut too)
         first, last = p.first + timedelta(days=rng.randint(1, max(1, (day - p.first).days))), day
         if first > day:
@@ -682,16 +696,21 @@ def cut_edit_subject(inp, x):
     lines.append((at(day, 900), {"first_day": p.first.isoformat(), "last_day": day.isoformat(), "was": [p.first.isoformat(), p.last.isoformat()], "via": "leave"}))
     lines.append((at(day, 920), {"first_day": x.first.isoformat(), "last_day": x.last.isoformat(), "was": [p.first.isoformat(), day.isoformat()]}))
     row = (x.first, x.last)
+    if x.second:
+        lines.append((at(day, 922), {"first_day": x.second[0].isoformat(), "last_day": x.second[1].isoformat(), "was": [x.first.isoformat(), x.last.isoformat()]}))
+        row = x.second
+    if x.again:                                                            # the second leaving took the pause (a pause of the future) off, its cancel gave it back: the line ``leave_undone`` has NO ``was`` (the pause was not cut, it was taken off: ``restore_after_leave``)
+        lines.append((at(day, 940), {"first_day": x.first.isoformat(), "last_day": x.last.isoformat(), "was": None, "via": "leave_undone"}))
     if x.undo:                                                             # ``restore_after_leave``: the last day goes back only if the human did not change it; the first day stays the human's (Б11.24 п. 2: the line says the pause's own first day)
-        if x.last == day:
-            row = (x.first, p.last)
-        lines.append((at(day, 940), {"first_day": x.first.isoformat(), "last_day": row[1].isoformat(), "was": [x.first.isoformat(), x.last.isoformat()], "via": "leave_undone"}))   # Б11.26 п. 1: the line is written for EVERY pause the leaving cut, also when there is nothing to give back (its days = the days the pause has now)
+        if row[1] == day:
+            row = (row[0], p.last)
+        lines.append((at(day, 940), {"first_day": row[0].isoformat(), "last_day": row[1].isoformat(), "was": [x.second[0].isoformat() if x.second else x.first.isoformat(), x.second[1].isoformat() if x.second else x.last.isoformat()], "via": "leave_undone"}))   # Б11.26 п. 1: the line is written for EVERY pause the leaving cut, also when there is nothing to give back (its days = the days the pause has now)
     loaded = ls.LedgerLoader._pause_of(SimpleNamespace(pause_lines={"p": lines}), SimpleNamespace(id="p", first_day=row[0], last_day=row[1], created_at=p.forms[0][0], voided_at=None))
     pauses = list(inp.pauses)
     if x.undo:
         pauses[x.index] = loaded
         return replace(inp, stays=stays_after_undo(inp), pauses=tuple(pauses)), row
-    new = apply_leave(inp)
+    new = apply_return(apply_leave(inp)) if x.again else apply_leave(inp)
     pauses = list(new.pauses)
     pauses[x.index] = loaded
     return with_pauses(new, pauses, getattr(new, "past_pauses", ())), row
@@ -702,8 +721,9 @@ def cut_edit_final(inp, x):
     visible end is not shortened, drops it otherwise."""
     p, day = inp.pauses[x.index], inp.today
     wanted = _span(p.first, p.last)
-    seen = _span(x.first, x.last)
-    if x.last == day:                                                      # Б11.26 п. 2: the tail the cut hid stays only when the human did not touch the end
+    first, last = x.second or (x.first, x.last)                            # Б11.28: the CURRENT form of the human decides, whatever the edits before it were
+    seen = _span(first, last)
+    if last == day:                                                        # Б11.28: the tail the cut hid stays only when the current form of the human ends on the day of the cut
         seen = seen | {d for d in wanted if d > day}
     return min(seen), max(seen)
 
@@ -719,6 +739,11 @@ def cut_edit_oracle(inp, x):
     """The account of the world where the human made the pause his FINAL form BEFORE the leaving (an edit with no cut standing: the plain row of the table, entered at 899, after every record of the world) and then the student left /
     the leaving was cancelled.  A shortening is known to every older world, so it is also the world where the pause was entered at once in that form."""
     p = inp.pauses[x.index]
+    if x.again:                                                            # Б11.28 (W3): the world WITHOUT the second leaving and its cancel: the first leaving, an ordinary return, the edit under the standing cut (the copy of the rule: ``human_edit``)
+        base = apply_return(apply_leave(inp))
+        pauses = list(base.pauses)
+        pauses[x.index] = human_edit(pauses[x.index], x.first, x.last, at(inp.today, 920))
+        return replace(base, pauses=tuple(pauses))
     first, last = cut_edit_final(inp, x)
     pauses = list(inp.pauses)
     pauses[x.index] = human_edit(p, first, last, at(inp.today, 899))
@@ -850,7 +875,7 @@ def event_violations(inp, x):
         if p8_key(new) != p8_key(oracle) or state_of(new) != state_of(oracle):
             bad.append(name)
         moments = [bl.entered_at(c) for c in inp.credits if bl.entered_at(c) < at(inp.today, 899)] + [at(inp.today, m) for m in (925, 945)]      # the worlds the two paths share: the records, and the moments after the edit (between the leaving and the edit the cut is of the pause as it was)
-        if _days_known(new, moments, None if x.undo else inp.today) != _days_known(oracle, moments, None if x.undo else inp.today):        # the days after the day of the leaving are out of the stay while the cut stands (the oracle hides what the human re-added)
+        if _days_known(new, moments, None if x.undo or x.again else inp.today) != _days_known(oracle, moments, None if x.undo or x.again else inp.today):        # the days after the day of the leaving are out of the stay while the cut stands (the oracle hides what the human re-added)
             bad.append(name + " days") if name != "P11s" else bad.append(name) if name not in bad else None
     elif isinstance(x, UndoLeave):                                  # P7: the leaving cancelled the same day = the account before the leaving
         if state_of(apply_undo(inp)) != state_of(inp):
@@ -1235,7 +1260,7 @@ def run_counts(seed, n, cfg=Cfg()):
     for _ in range(n):
         inp = allowed_world(rng, cfg)
         worlds += 1
-        for kind in (bl.PAYMENT, bl.WRITEOFF, "pause", "edit", "cancel", "leave", "transfer", "undo", "relapse_pay", "relapse_forgive", "ordinary_pay", "ordinary_forgive", "return", "same", "amount", "restore", "leave_pause", "transfer_pause", "roundtrip", "roundtrip_pay", "roundtrip_leave", "roundtrip_transfer", "roundtrip_archive", "cutedit_short", "cutedit_start", "cutedit_ext", "cutedit_short_undo", "cutedit_start_undo", "cutedit_ext_undo", "cutedit_late", "cutedit_late_undo"):
+        for kind in (bl.PAYMENT, bl.WRITEOFF, "pause", "edit", "cancel", "leave", "transfer", "undo", "relapse_pay", "relapse_forgive", "ordinary_pay", "ordinary_forgive", "return", "same", "amount", "restore", "leave_pause", "transfer_pause", "roundtrip", "roundtrip_pay", "roundtrip_leave", "roundtrip_transfer", "roundtrip_archive", "cutedit_short", "cutedit_start", "cutedit_ext", "cutedit_short_undo", "cutedit_start_undo", "cutedit_ext_undo", "cutedit_late", "cutedit_late_undo", "cutedit_two", "cutedit_two_undo", "cutedit_again"):
             EVENT[0], EVENT[1] = kind, inp
             x = (new_payment(rng, inp) if kind == bl.PAYMENT else new_forgiveness(rng, inp) if kind == bl.WRITEOFF
                  else new_pause(rng, inp) if kind == "pause" else new_pause_edit(rng, inp) if kind == "edit" else new_cancel(rng, inp) if kind == "cancel" and inp.centre_cancels
