@@ -810,7 +810,9 @@ class PauseService(_Base):
                 if pause.voided_at is None or pause.void_reason != LEAVE_VOID_REASON:
                     continue
                 pause.voided_at = pause.voided_by = pause.void_reason = None
-            elif pause.voided_at is not None or pause.last_day.isoformat() != snap["last_day"]:
+            elif pause.voided_at is not None:
+                continue                                      # Б11.28 п. 3: a human took the pause off after the cut - it does not exist, the cancel writes nothing about it
+            elif pause.last_day.isoformat() != snap["last_day"]:
                 restorable = False                            # Б11.26 п. 1: nothing to give back (a human changed the end), but the cancelled leaving leaves the history of the pause: the line below says its days as they are
             else:
                 pause.last_day = last
