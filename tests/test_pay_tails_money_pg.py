@@ -84,7 +84,7 @@ def centre(w):
 def check(w, s, g, today, *, charged, debt, advance, used, granted):
     """The ledger, the statement summary and the card of the centre say the same: the advance is money only (Р4)."""
     L = led(w, s, g, today)
-    assert (L.charged, L.debt, L.advance, L.refundable, L.written_off, L.written_off_granted) == (charged, debt, advance, advance, used, granted), L
+    assert (L.charged, L.debt, L.advance, L.refundable, L.written_off, L.written_off_granted) == (charged, debt, advance, advance, used, granted), ('GOT charged/debt/advance/refundable/used/granted', L.charged, L.debt, L.advance, L.refundable, L.written_off, L.written_off_granted)
     assert L.reconciles and not L.flags
     sm = statement(w, s, g)["summary"]
     assert (sm["charged"], sm["advance"], sm["debt_amount"] + sm["due_amount"], sm["reconciles"]) == (charged, advance, debt, True)      # unpaid = debt + «к оплате»

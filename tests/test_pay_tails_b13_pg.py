@@ -25,7 +25,7 @@ def edit_pause(world, s, g, pause_id, today, first, last, *, debt, advance, char
     assert saved.status_code == 200, saved.text
     row, after = saved.json()["row"], led(world, s, g, today)
     said = lambda i: (i["debt_after"], i["advance_after"])
-    assert said(probe.json()["impact"]) == said(saved.json()["impact"]) == (row["unpaid"], row["advance"]) == (after.debt, after.advance) == (debt, advance), (probe.json()["impact"], saved.json()["impact"], row, after)
+    assert said(probe.json()["impact"]) == said(saved.json()["impact"]) == (row["unpaid"], row["advance"]) == (after.debt, after.advance) == (debt, advance), ('GOT charged/used', after.charged, after.written_off, 'probe/impact/row/after (debt, advance)', said(probe.json()["impact"]), said(saved.json()["impact"]), (row["unpaid"], row["advance"]), (after.debt, after.advance))
     check(world, s, g, today, charged=charged, debt=debt, advance=advance, used=used, granted=granted)
 
 
@@ -404,3 +404,67 @@ def test_b11_23_a_human_edit_of_the_pause_of_a_student_who_left_keeps_the_tail_t
     fixed_today(D(2026, 11, 23))
     edit_pause(world, s, g, pause_id, D(2026, 11, 23), "2026-11-13", "2026-11-22", debt=0, advance=250_000, charged=250_000, used=50_000, granted=100_000)
 
+
+
+# ---------------------------------------------------------------------------------------------------------------------------- Б11.24, step 8.13.7: the form of a human under the cut of a leaving, by the TABLE
+def undo_line(world, pause_id):
+    """The line of the journal that the cancel of the leaving wrote for the pause: ``(first_day, last_day)``."""
+    from src.auth import ledger_service as ls
+    from src.models.auth import GroupAudit
+    lines = [(a.snapshot["first_day"], a.snapshot["last_day"]) for a in world.db.query(GroupAudit).filter(GroupAudit.org_id == world.org.id, GroupAudit.action == ls.AUDIT_PAUSE_SET)
+             .order_by(GroupAudit.created_at, GroupAudit.id) if a.snapshot.get("pause_id") == pause_id and a.snapshot.get("via") == "leave_undone"]
+    assert len(lines) == 1, lines
+    return lines[0]
+
+
+def world_s2(world, fixed_today):
+    # S2: 05.11 forgiven 300 000 and paid 300 000 (600 000 = the month); 09.11 the pause 17 - 30.11 (the lessons 17 19 20 24 26 27 are lost: November 300 000 = the money alone, the forgiveness 300 000 is not used).
+    g, s = world_b11_18(world, fixed_today, forgive_first=True)
+    fixed_today(D(2026, 11, 9))
+    pause_id = pause_on(world, s, g, "2026-11-17", "2026-11-30")
+    check(world, s, g, D(2026, 11, 9), charged=300_000, debt=0, advance=0, used=0, granted=300_000)
+    return g, s, pause_id
+
+
+def test_b11_24_s2_a_human_shortens_the_pause_of_a_student_who_left_before_the_day_of_the_leaving_the_tail_is_not_given_back(world, fixed_today):
+    # S2: 27.11 the leaving cuts the pause to 17 - 27.11 (the stay 01 - 27.11; lessons 3 5 6 10 12 13 = 300 000 = the money, the forgiveness is not used).  28.11 the human ends the pause on 20.11 (17 - 20.11): the lessons 24, 26, 27 are
+    # charged again: 3 5 6 10 12 13 24 26 27 = 9 x 50 000 = 450 000 = the money 300 000 + the forgiveness 150 000: used 150 000, debt 0, advance 0.  The days he took off are NOT his intent any more: the form is 17 - 20 in
+    # EVERY world (a world with the tail 21 - 30 would keep the forgiveness burnt: used 0, debt 150 000 - was).
+    g, s, pause_id = world_s2(world, fixed_today)
+    fixed_today(D(2026, 11, 27))
+    leave_numbers(world, s, g, D(2026, 11, 27), (300_000, 0, 0, 0, 0))
+    fixed_today(D(2026, 11, 28))
+    edit_pause(world, s, g, pause_id, D(2026, 11, 28), "2026-11-17", "2026-11-20", debt=0, advance=0, charged=450_000, used=150_000, granted=300_000)
+
+
+def test_b11_24_s2u_the_leaving_the_edit_to_17_20_and_the_cancel_of_the_leaving_in_one_day_the_tail_does_not_come_back(world, fixed_today):
+    # S2u: 27.11 the leaving, the human ends the pause on 20.11 (the same day: 450 000, used 150 000, debt 0, advance 0), the leaving is cancelled the same day: the student is in the group, the pause is 17 - 20.11 (the end was
+    # changed by the human: the cancel does not give the old end back), the line of the cancel says 17 - 20.11; November 450 000, used 150 000, debt 0, advance 0 (the same as before the cancel - the stay has all the month).
+    g, s, pause_id = world_s2(world, fixed_today)
+    fixed_today(D(2026, 11, 27))
+    leave_numbers(world, s, g, D(2026, 11, 27), (300_000, 0, 0, 0, 0))
+    edit_pause(world, s, g, pause_id, D(2026, 11, 27), "2026-11-17", "2026-11-20", debt=0, advance=0, charged=450_000, used=150_000, granted=300_000)
+    add(world, s, group=g, mode="add")
+    check(world, s, g, D(2026, 11, 27), charged=450_000, debt=0, advance=0, used=150_000, granted=300_000)
+    assert undo_line(world, pause_id) == ("2026-11-17", "2026-11-20")
+
+
+def test_b11_24_s4_the_leaving_the_edit_of_the_start_and_the_cancel_of_the_leaving_in_one_day_give_the_tail_back(world, fixed_today):
+    # S4: the world of Б11.23 п. 1 (05.11 paid 150 000; 09.11 the pause 17 - 30.11; 10.11 forgiven 100 000; 11.11 paid 300 000) - but on 22.11 the leaving, the edit of the START to 13.11 and the cancel of the leaving are ONE day.
+    # The end was not shortened: the pause is 13 - 30.11 (the tail the cut hid is back), November 250 000 (lessons 3 5 6 10 12), the forgiveness used 50 000, debt 0, advance 250 000 (was: used 100 000, advance 300 000 - the
+    # pause was read from its creation 17 - 30.11).  The line of the journal says 13 - 30.11 (was 17 - 30.11).
+    g, s = om_at(world, fixed_today, D(2026, 11, 1))
+    fixed_today(D(2026, 11, 5))
+    pay(world, s, g, amount=150_000, paid_on=D(2026, 11, 5))
+    fixed_today(D(2026, 11, 9))
+    pause_id = pause_on(world, s, g, "2026-11-17", "2026-11-30")
+    fixed_today(D(2026, 11, 10))
+    forgive(world, s, g, 100_000)
+    fixed_today(D(2026, 11, 11))
+    pay(world, s, g, amount=300_000, paid_on=D(2026, 11, 11))
+    fixed_today(D(2026, 11, 22))
+    leave(world, g, s)
+    edit_pause(world, s, g, pause_id, D(2026, 11, 22), "2026-11-13", "2026-11-22", debt=0, advance=250_000, charged=250_000, used=50_000, granted=100_000)
+    add(world, s, group=g, mode="add")
+    check(world, s, g, D(2026, 11, 22), charged=250_000, debt=0, advance=250_000, used=50_000, granted=100_000)
+    assert undo_line(world, pause_id) == ("2026-11-13", "2026-11-30")
