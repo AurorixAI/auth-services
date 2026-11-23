@@ -148,10 +148,8 @@ class Pause:
     forms: Tuple[Tuple[datetime, date, date], ...] = ()
     # PAY-TAILS Б11.8: a pause that a LEAVING took off (``close_at_leave``): the moment it was taken off; it lives in ``LedgerInput.past_pauses`` and is known to the worlds until that moment.  ``None`` = a live pause.
     voided_at: Optional[datetime] = None
-    # PAY-TAILS Б11.19 п. 1: the LAST form a HUMAN wrote ``(first, last)`` and the moments of the forms a LEAVING / a transfer / an archive wrote (``cuts``).  ``human = None`` = nobody says: the forms stand as written.
-    # The loader fills both from the journal (``via``), the core never guesses them from the days (lesson 167).
+    # PAY-TAILS Б11.25: what a HUMAN wants of the pause in the end, ``(first, last)`` (H of the table of Б11.24).  ``None`` = nobody says: the forms stand as written.  The loader fills it from the journal (``via``), the core never guesses it from the days (lesson 167).
     human: Optional[Tuple[date, date]] = None
-    cuts: Tuple[datetime, ...] = ()
 
 
 NO_MOMENT = datetime(9998, 12, 31)        # a leaving without a known moment: entered after all the records, before the probe of a window (``PROBE_MOMENT``)
@@ -1210,9 +1208,9 @@ class _World:
 
 
 def _pauses_known_at(pauses: Sequence[Pause], moment: datetime) -> Tuple[Pause, ...]:
-    """The pauses as they were known at ``moment``: one entered later is not there; a pause without a stamp is known always.  Б11.19 п. 1: the world of a moment = the facts as they are now minus the contractions entered after it:
-    when the last line of the moment is a HUMAN's, the pause of that world is its form of then crossed with the last form a human wrote (a pause lengthened and then shortened back does not keep the long form in the old worlds
-    - it would burn a forgiveness for ever); the line of a leaving / a transfer / an archive stands as it is from its moment; the crossing is empty = no pause in that world."""
+    """The pauses as they were known at ``moment``: one entered later is not there; a pause without a stamp is known always.  Б11.25, ONE rule: the pause of the world of a moment = the form visible by the last line of
+    the moment - whoever wrote it, a human or a leaving / a transfer / an archive - crossed with what the human wants in the end (``human``): a day he took off later was never a pause in that world (the account only
+    grows dearer), a day he added later is not there yet; the crossing is empty = no pause in that world."""
     out: List[Pause] = []
     for p in pauses:
         if p.voided_at is not None and p.voided_at <= moment:
@@ -1220,18 +1218,11 @@ def _pauses_known_at(pauses: Sequence[Pause], moment: datetime) -> Tuple[Pause, 
         if not p.forms:
             out.append(p)
             continue
-        form = None
-        for m, first, last in p.forms:
-            if m <= moment:
-                form = (m, first, last)
-        if form is None:
-            continue
-        m, first, last = form
-        if p.human is not None and m not in p.cuts:
-            first, last = max(first, p.human[0]), min(last, p.human[1])
-            if first > last:
-                continue
-        out.append(replace(p, first=first, last=last))
+        form = [(first, last) for m, first, last in p.forms if m <= moment][-1:]
+        if form and p.human is not None:
+            form = [(max(form[0][0], p.human[0]), min(form[0][1], p.human[1]))]
+        if form and form[0][0] <= form[0][1]:
+            out.append(replace(p, first=form[0][0], last=form[0][1]))
     return tuple(out)
 
 

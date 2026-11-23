@@ -990,7 +990,6 @@ class LedgerLoader:
         else:
             first_form, edits = (p.first_day, p.last_day), []
         forms: List[Tuple[datetime, date, date]] = [(p.created_at, *first_form)]
-        by_leave = [False]                                        # per form: written by a leaving / a transfer / an archive (the journal says so: ``via``)
         wanted: List[Optional[Tuple[date, date]]] = [first_form]  # per form: what the HUMAN wanted of the pause when it was written (``None`` for a form a leaving wrote)
         cuts: List[Tuple[int, Optional[date]]] = []               # the cuts that stand: (the index of the form, the visible end before it) - the LAST one is what a cancel of a leaving erases
         human, kept = first_form, None                            # Б11.24: H = what the human wants (one stretch; the days a cut hid stay in it); K = the visible end under a standing cut (``None`` = no cut stands)
@@ -999,14 +998,12 @@ class LedgerLoader:
             if via == "leave_undone":                             # the leaving is cancelled: its cut is erased EVEN after the edits of a human; his forms written under it read as what he wanted then (with the tail the cut hid)
                 if cuts:
                     index, kept = cuts.pop()
-                    del forms[index], by_leave[index], wanted[index]
+                    del forms[index], wanted[index]
                     forms[index:] = [(moment, *days_) for (moment, _, _), days_ in zip(forms[index:], wanted[index:])]
                 continue
             first_day, last_day = days(snap)
             forms.append((at, first_day, last_day))
-            cut = via in LEAVE_VIA
-            by_leave.append(cut)
-            if cut:                                               # the cut: the visible form ends on the day of the leaving, H does not change (the tail after it is hidden, not given up)
+            if via in LEAVE_VIA:                                               # the cut: the visible form ends on the day of the leaving, H does not change (the tail after it is hidden, not given up)
                 wanted.append(None)
                 cuts.append((len(forms) - 1, kept))
                 kept = last_day
@@ -1014,13 +1011,11 @@ class LedgerLoader:
             if kept is not None and last_day >= kept:             # a human edits under a cut and does not end the pause before the day of the leaving: his days plus the hidden tail
                 human, kept = (first_day, max(last_day, human[1])), last_day
             else:                                                 # no cut stands, or he ended the pause BEFORE the day of the leaving: the tail is given up
-                if kept is not None:                              # ... and the cut of the leaving no more stands: its line is read as any form of a human (crossed with what he wants), not as it is
-                    by_leave[cuts[-1][0]] = False
                 human, kept = (first_day, last_day), None
             wanted.append(human)
         if forms[-1][1:] != (p.first_day, p.last_day):
-            forms, by_leave, human = [(p.created_at, p.first_day, p.last_day)], [False], (p.first_day, p.last_day)
-        return bl.Pause(p.first_day, p.last_day, tuple(forms), voided, human, tuple(form[0] for form, cut in zip(forms, by_leave) if cut))
+            forms, human = [(p.created_at, p.first_day, p.last_day)], (p.first_day, p.last_day)
+        return bl.Pause(p.first_day, p.last_day, tuple(forms), voided, human)
 
     def build_input(
         self,
