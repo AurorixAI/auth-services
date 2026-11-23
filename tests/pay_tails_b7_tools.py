@@ -1301,7 +1301,10 @@ def main(argv):
             print("no counterexample of", prop)
             return
         best = None
+        if prop.startswith("P11 "):                                # the name of a P11 counter comes from the kind of the event being run (``EVENT``): set it to the kind of the counterexample, not to the last one of the run
+            EVENT[0] = "cutedit_" + prop.split()[1]
         for inp, x in found[prop][:60]:
+            EVENT[1] = inp
             small, sx = shrink(inp, x, prop)
             size = (len(small.credits), len(small.pauses), len(small.centre_cancels))
             if best is None or size < best[0]:
