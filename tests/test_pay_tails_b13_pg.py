@@ -409,7 +409,7 @@ def test_b11_23_a_human_edit_of_the_pause_of_a_student_who_left_keeps_the_tail_t
 
 # ---------------------------------------------------------------------------------------------------------------------------- Б11.24, step 8.13.7: the form of a human under the cut of a leaving, by the TABLE
 def undo_line(world, pause_id):
-    """The lines of the journal that the cancel of the leaving wrote for the pause: ``[(first_day, last_day)]`` (none when the human changed the end of the cut: the cancel gives nothing back)."""
+    """The lines of the journal that the cancel of the leaving wrote for the pause: ``[(first_day, last_day)]`` (Б11.26 п. 1: also when the human changed the end of the cut and the cancel gave nothing back - the line says the days the pause has now)."""
     from src.auth import ledger_service as ls
     from src.models.auth import GroupAudit
     lines = [(a.snapshot["first_day"], a.snapshot["last_day"]) for a in world.db.query(GroupAudit).filter(GroupAudit.org_id == world.org.id, GroupAudit.action == ls.AUDIT_PAUSE_SET)
@@ -439,7 +439,7 @@ def test_b11_24_s2_a_human_shortens_the_pause_of_a_student_who_left_before_the_d
 
 def test_b11_24_s2u_the_leaving_the_edit_to_17_20_and_the_cancel_of_the_leaving_in_one_day_the_tail_does_not_come_back(world, fixed_today):
     # S2u: 27.11 the leaving, the human ends the pause on 20.11 (the same day: 450 000, used 150 000, debt 0, advance 0), the leaving is cancelled the same day: the student is in the group, the pause is 17 - 20.11 (the end was
-    # changed by the human: the cancel does not give the old end back and writes no line), the pause row is 17 - 20.11; November 450 000, used 150 000, debt 0, advance 0 (the same as before the cancel - the stay has all the month).
+    # changed by the human: the cancel does not give the old end back; Б11.26 п. 1: its line says 17 - 20.11), the pause row is 17 - 20.11; November 450 000, used 150 000, debt 0, advance 0 (the same as before the cancel - the stay has all the month).
     g, s, pause_id = world_s2(world, fixed_today)
     fixed_today(D(2026, 11, 27))
     leave_numbers(world, s, g, D(2026, 11, 27), (300_000, 0, 0, 0, 0))
@@ -448,7 +448,7 @@ def test_b11_24_s2u_the_leaving_the_edit_to_17_20_and_the_cancel_of_the_leaving_
     check(world, s, g, D(2026, 11, 27), charged=450_000, debt=0, advance=0, used=150_000, granted=300_000)
     from src.models.auth import MembershipPause
     row = world.db.get(MembershipPause, UUID(pause_id))
-    assert (row.first_day, row.last_day) == (D(2026, 11, 17), D(2026, 11, 20)) and undo_line(world, pause_id) == []
+    assert (row.first_day, row.last_day) == (D(2026, 11, 17), D(2026, 11, 20)) and undo_line(world, pause_id) == [("2026-11-17", "2026-11-20")]       # Б11.26 п. 1: nothing to give back, yet the line says the days the pause has now
 
 
 def test_b11_24_s4_the_leaving_the_edit_of_the_start_and_the_cancel_of_the_leaving_in_one_day_give_the_tail_back(world, fixed_today):
@@ -522,7 +522,8 @@ def test_b11_26_the_leaving_the_end_of_the_pause_moved_later_and_the_cancel_of_t
     leave(world, g, s)
     check(world, s, g, D(2026, 11, 20), charged=300_000, debt=0, advance=300_000, used=300_000, granted=600_000)
     edit_pause(world, s, g, pause_id, D(2026, 11, 20), "2026-11-17", "2026-11-27", debt=0, advance=300_000, charged=300_000, used=300_000, granted=600_000)
-    add(world, s, group=g, mode="add")
+    back = add(world, s, group=g, mode="add")["leave_undo"]
+    assert back["undone"] is True and not [i for i in back["restored"] if i["code"] == "pause"] and "Пауза" not in back["text"], back      # the window of the cancel does not say «Пауза … восстановлена» of a pause nobody restored
     check(world, s, g, D(2026, 11, 20), charged=300_000, debt=0, advance=300_000, used=300_000, granted=600_000)
     from src.models.auth import MembershipPause
     row = world.db.get(MembershipPause, UUID(pause_id))

@@ -805,21 +805,26 @@ class PauseService(_Base):
                 continue
             first, last = (date.fromisoformat(d) for d in snap["was"])
             cut = (pause.first_day, pause.last_day)           # the form it has until now (the line of the journal says it: ``was``)
+            restorable = True
             if line.action == AUDIT_PAUSE_VOID:
                 if pause.voided_at is None or pause.void_reason != LEAVE_VOID_REASON:
                     continue
                 pause.voided_at = pause.voided_by = pause.void_reason = None
+            elif pause.voided_at is not None or pause.last_day.isoformat() != snap["last_day"]:
+                restorable = False                            # Б11.26 п. 1: nothing to give back (a human changed the end), but the cancelled leaving leaves the history of the pause: the line below says its days as they are
             else:
-                if pause.voided_at is not None or pause.last_day.isoformat() != snap["last_day"]:
-                    continue
                 pause.last_day = last
             seen.add(str(pause.id))
             self.db.flush()
-            self._close_excuses(membership, first, last, actor_id)
+            if restorable:
+                self._close_excuses(membership, first, last, actor_id)
+            else:
+                last = pause.last_day
             self._audit(str(pause.org_id), membership, actor_id, self.pay.role_of(str(pause.org_id), actor_id), AUDIT_PAUSE_SET, {
                 "actor_id": str(actor_id), "membership_id": str(membership.id), "student_id": str(pause.student_id), "pause_id": str(pause.id), "first_day": pause.first_day.isoformat(),
                 "last_day": last.isoformat(), "was": [cut[0].isoformat(), cut[1].isoformat()] if line.action == AUDIT_PAUSE_SET else None, "reason": "ученика вернули в день ухода", "via": "leave_undone"})
-            done.append((pause, pause.first_day, last))
+            if restorable:
+                done.append((pause, pause.first_day, last))
         return done
 
 
