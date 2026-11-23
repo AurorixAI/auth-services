@@ -654,7 +654,10 @@ def new_cut_edit(rng, inp, case, undo):
         if p.first - timedelta(days=1) < low:
             return None
         first, last = low + timedelta(days=rng.randint(0, (p.first - timedelta(days=1) - low).days)), day
-    else:                                                                 # the human moves the START later
+    else:                                                                 # the human moves the START later.  WITHOUT the cancel the cut of the leaving stands and is read AS IT IS (Б11.19 п. 1): its world keeps the days the human took off LATER, so the account is not the
+        if not undo:                                                      # world «the start was later at once» - by the table, not a defect of the loader; the case is measured apart (``B7_START_LATER=1``), not a part of the property
+            if not os.environ.get("B7_START_LATER"):
+                return None
         first, last = p.first + timedelta(days=rng.randint(1, max(1, (day - p.first).days))), day
         if first > day:
             return None
@@ -684,7 +687,8 @@ def cut_edit_subject(inp, x):
     if x.undo:                                                             # ``restore_after_leave``: the last day goes back only if the human did not change it; the first day stays the human's (Б11.24 п. 2: the line says the pause's own first day)
         if x.last == day:
             row = (x.first, p.last)
-        lines.append((at(day, 940), {"first_day": x.first.isoformat(), "last_day": row[1].isoformat(), "was": [x.first.isoformat(), x.last.isoformat()], "via": "leave_undone"}))
+        if x.last == day:                                                  # the product writes the line of the cancel ONLY for a pause whose end is still the end of the cut
+            lines.append((at(day, 940), {"first_day": x.first.isoformat(), "last_day": row[1].isoformat(), "was": [x.first.isoformat(), x.last.isoformat()], "via": "leave_undone"}))
     loaded = ls.LedgerLoader._pause_of(SimpleNamespace(pause_lines={"p": lines}), SimpleNamespace(id="p", first_day=row[0], last_day=row[1], created_at=p.forms[0][0], voided_at=None))
     pauses = list(inp.pauses)
     if x.undo:

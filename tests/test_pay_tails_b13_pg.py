@@ -3,6 +3,7 @@ of the product (LESSONS 135); every number is worked out by hand in the comment.
 
 World (ОМ): 600 000 a month, Tue / Thu / Fri, billing day 1; November 2026 has 12 lessons (3 5 6 10 12 13 17 19 20 24 26 27), 50 000 each; the student since 01.11."""
 from datetime import date
+from uuid import UUID
 
 from tests.money1b_helpers import add, fresh_student, set_schedule
 from tests.pg_world import ensure_billing, give_group_price, make_group, needs_pg, pg_session, world  # noqa: F401  (fixtures)
@@ -408,13 +409,12 @@ def test_b11_23_a_human_edit_of_the_pause_of_a_student_who_left_keeps_the_tail_t
 
 # ---------------------------------------------------------------------------------------------------------------------------- Б11.24, step 8.13.7: the form of a human under the cut of a leaving, by the TABLE
 def undo_line(world, pause_id):
-    """The line of the journal that the cancel of the leaving wrote for the pause: ``(first_day, last_day)``."""
+    """The lines of the journal that the cancel of the leaving wrote for the pause: ``[(first_day, last_day)]`` (none when the human changed the end of the cut: the cancel gives nothing back)."""
     from src.auth import ledger_service as ls
     from src.models.auth import GroupAudit
     lines = [(a.snapshot["first_day"], a.snapshot["last_day"]) for a in world.db.query(GroupAudit).filter(GroupAudit.org_id == world.org.id, GroupAudit.action == ls.AUDIT_PAUSE_SET)
              .order_by(GroupAudit.created_at, GroupAudit.id) if a.snapshot.get("pause_id") == pause_id and a.snapshot.get("via") == "leave_undone"]
-    assert len(lines) == 1, lines
-    return lines[0]
+    return lines
 
 
 def world_s2(world, fixed_today):
@@ -439,14 +439,16 @@ def test_b11_24_s2_a_human_shortens_the_pause_of_a_student_who_left_before_the_d
 
 def test_b11_24_s2u_the_leaving_the_edit_to_17_20_and_the_cancel_of_the_leaving_in_one_day_the_tail_does_not_come_back(world, fixed_today):
     # S2u: 27.11 the leaving, the human ends the pause on 20.11 (the same day: 450 000, used 150 000, debt 0, advance 0), the leaving is cancelled the same day: the student is in the group, the pause is 17 - 20.11 (the end was
-    # changed by the human: the cancel does not give the old end back), the line of the cancel says 17 - 20.11; November 450 000, used 150 000, debt 0, advance 0 (the same as before the cancel - the stay has all the month).
+    # changed by the human: the cancel does not give the old end back and writes no line), the pause row is 17 - 20.11; November 450 000, used 150 000, debt 0, advance 0 (the same as before the cancel - the stay has all the month).
     g, s, pause_id = world_s2(world, fixed_today)
     fixed_today(D(2026, 11, 27))
     leave_numbers(world, s, g, D(2026, 11, 27), (300_000, 0, 0, 0, 0))
     edit_pause(world, s, g, pause_id, D(2026, 11, 27), "2026-11-17", "2026-11-20", debt=0, advance=0, charged=450_000, used=150_000, granted=300_000)
     add(world, s, group=g, mode="add")
     check(world, s, g, D(2026, 11, 27), charged=450_000, debt=0, advance=0, used=150_000, granted=300_000)
-    assert undo_line(world, pause_id) == ("2026-11-17", "2026-11-20")
+    from src.models.auth import MembershipPause
+    row = world.db.get(MembershipPause, UUID(pause_id))
+    assert (row.first_day, row.last_day) == (D(2026, 11, 17), D(2026, 11, 20)) and undo_line(world, pause_id) == []
 
 
 def test_b11_24_s4_the_leaving_the_edit_of_the_start_and_the_cancel_of_the_leaving_in_one_day_give_the_tail_back(world, fixed_today):
@@ -467,4 +469,4 @@ def test_b11_24_s4_the_leaving_the_edit_of_the_start_and_the_cancel_of_the_leavi
     edit_pause(world, s, g, pause_id, D(2026, 11, 22), "2026-11-13", "2026-11-22", debt=0, advance=250_000, charged=250_000, used=50_000, granted=100_000)
     add(world, s, group=g, mode="add")
     check(world, s, g, D(2026, 11, 22), charged=250_000, debt=0, advance=250_000, used=50_000, granted=100_000)
-    assert undo_line(world, pause_id) == ("2026-11-13", "2026-11-30")
+    assert undo_line(world, pause_id) == [("2026-11-13", "2026-11-30")]
