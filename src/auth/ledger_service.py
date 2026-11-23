@@ -974,7 +974,7 @@ class LedgerLoader:
         """Б7.7 п. 5: the pause with its FORMS in time - the moment it was entered with the days it had then, and every later edit (the lines of the journal of decisions: the days they wrote).  The form of the
         pause at a moment is the last one at or before it.  A pause whose journal does not end in the days it has now (an old row, a change nobody wrote) is taken whole from its creation.
         Б11.8 п. 2: what a LEAVING wrote to the pause (the cut: a line ``via`` leave / transfer / archive) is a form while the leaving stands; the cancel of the leaving (``leave_undone``) erases it and its own line:
-        the pause is what the last HUMAN made of it.  A pause taken off by a leaving carries the moment it was taken off (``voided_at``)."""
+        the pause is what the last HUMAN made of it.  Б11.24: what a human WANTS of the pause (H, one stretch) and the visible end under a standing cut (K) go by the table of the case: an edit under a cut that does not end the pause before the day of the leaving keeps the hidden tail, one that ends it earlier gives the tail up.  A pause taken off by a leaving carries the moment it was taken off (``voided_at``)."""
         voided = p.voided_at
         if not p.created_at:
             return bl.Pause(p.first_day, p.last_day, voided_at=voided)
@@ -991,29 +991,35 @@ class LedgerLoader:
             first_form, edits = (p.first_day, p.last_day), []
         forms: List[Tuple[datetime, date, date]] = [(p.created_at, *first_form)]
         by_leave = [False]                                        # per form: written by a leaving / a transfer / an archive (the journal says so: ``via``)
-        human_forms: List[Optional[Tuple[date, date]]] = [first_form]     # per form: what a HUMAN made of it (``None`` for a form a leaving wrote); Б11.23 п. 1: an edit under a standing cut keeps the tail the cut took
-        made_by_leave = 0                                         # the forms at the end of the list that a leaving wrote
+        wanted: List[Optional[Tuple[date, date]]] = [first_form]  # per form: what the HUMAN wanted of the pause when it was written (``None`` for a form a leaving wrote)
+        cuts: List[Tuple[int, Optional[date]]] = []               # the cuts that stand: (the index of the form, the visible end before it) - the LAST one is what a cancel of a leaving erases
+        human, kept = first_form, None                            # Б11.24: H = what the human wants (one stretch; the days a cut hid stay in it); K = the visible end under a standing cut (``None`` = no cut stands)
         for at, snap in edits:
             via = snap.get("via")
-            if via == "leave_undone":
-                del forms[len(forms) - made_by_leave:]            # the leaving is cancelled: its cut and this line are not forms
-                del by_leave[len(by_leave) - made_by_leave:]
-                del human_forms[len(human_forms) - made_by_leave:]
-                made_by_leave = 0
+            if via == "leave_undone":                             # the leaving is cancelled: its cut is erased EVEN after the edits of a human; his forms written under it read as what he wanted then (with the tail the cut hid)
+                if cuts:
+                    index, kept = cuts.pop()
+                    del forms[index], by_leave[index], wanted[index]
+                    forms[index:] = [(moment, *days_) for (moment, _, _), days_ in zip(forms[index:], wanted[index:])]
                 continue
-            cut = via in ("leave", "transfer", "archive")
             first_day, last_day = days(snap)
-            if cut or True not in by_leave:
-                human_forms.append(None if cut else (first_day, last_day))
-            else:                                                 # Б11.23 п. 1: a human edits under a standing cut: his days plus the tail of the last human form before the cut
-                before_cut = [h for h in human_forms[:by_leave.index(True)] if h][-1]
-                human_forms.append((first_day, max(last_day, before_cut[1])))
             forms.append((at, first_day, last_day))
+            cut = via in LEAVE_VIA
             by_leave.append(cut)
-            made_by_leave = made_by_leave + 1 if via in ("leave", "transfer", "archive") else 0
+            if cut:                                               # the cut: the visible form ends on the day of the leaving, H does not change (the tail after it is hidden, not given up)
+                wanted.append(None)
+                cuts.append((len(forms) - 1, kept))
+                kept = last_day
+                continue
+            if kept is not None and last_day >= kept:             # a human edits under a cut and does not end the pause before the day of the leaving: his days plus the hidden tail
+                human, kept = (first_day, max(last_day, human[1])), last_day
+            else:                                                 # no cut stands, or he ended the pause BEFORE the day of the leaving: the tail is given up
+                if kept is not None:                              # ... and the cut of the leaving no more stands: its line is read as any form of a human (crossed with what he wants), not as it is
+                    by_leave[cuts[-1][0]] = False
+                human, kept = (first_day, last_day), None
+            wanted.append(human)
         if forms[-1][1:] != (p.first_day, p.last_day):
-            forms, by_leave, human_forms = [(p.created_at, p.first_day, p.last_day)], [False], [(p.first_day, p.last_day)]
-        human = next(h for h in reversed(human_forms) if h)       # Б11.19 п. 1: the last form a HUMAN wrote (the first form is his always)
+            forms, by_leave, human = [(p.created_at, p.first_day, p.last_day)], [False], (p.first_day, p.last_day)
         return bl.Pause(p.first_day, p.last_day, tuple(forms), voided, human, tuple(form[0] for form, cut in zip(forms, by_leave) if cut))
 
     def build_input(
