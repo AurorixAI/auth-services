@@ -2536,7 +2536,7 @@ class PaymentService:
         cover = pv.cover_phrase(account, entry.due, pv.is_closed(entry))          # PAY-TAILS Б1.5: a day only on the border of a period, sums inside it, nothing for a closed membership
         closed = pv.is_closed(entry)
         extra_state = ReceiptState(as_of=today, debt=account.debt, advance=account.advance, paid_until=account.status.paid_until)
-        state_text = tx.receipt_state_text(account.debt, account.advance, cover, partial=pv.partial_words(account, entry.due, closed) is not None, closed=closed)
+        state_text = tx.receipt_state_text(account.debt, account.advance, cover, partial=pv.partial_words(account, entry.due, closed) is not None, closed=closed, forward=pv.forward_phrase(account, entry.due, closed))
         snap = self.db.query(PaymentReceiptSnapshot.snapshot).filter(PaymentReceiptSnapshot.payment_id == payment.id).scalar()
         extra: Dict[str, Any] = {"valid_from": payment.valid_from, "valid_to": payment.valid_to}   # legacy receipts
         if isinstance(snap, dict):

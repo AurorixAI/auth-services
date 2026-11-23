@@ -192,8 +192,16 @@ def cover_phrase(l: bl.Ledger, due, closed: bool = False) -> Optional[str]:
     until = cover_until(l)
     if until is None or l.covered_by not in ("money", "opening", None):
         return None
-    words = f"{tx.cover_words(l.covered_by).lower()} {tx.ddmm(until)}"
-    return f"{words} · {tx.paid_forward_text(l.cover_ahead[1])}" if l.cover_ahead is not None and l.cover_ahead[1] > 0 and l.cover_ahead[1] != l.advance else words      # Б11.21 п. 3: the same sum is already said as the advance of the state
+    return f"{tx.cover_words(l.covered_by).lower()} {tx.ddmm(until)}"
+
+
+def forward_phrase(l: bl.Ledger, due, closed: bool = False) -> Optional[str]:
+    """The quiet line of the money paid ahead of a period that has not begun (``вперёд оплачено 98 000 сум``), said next to the coverage of the RECEIPT; ``None`` when the coverage says no day (a part, a closed membership) or nothing
+    is ahead.  Б11.24 п. 4: whether the state says the same sum as its advance is for ``receipt_state_text`` to decide - by the meaning, not by two sums that happen to be equal."""
+    phrase = cover_phrase(l, due, closed)
+    if phrase is None or partial_words(l, due) or l.cover_ahead is None or l.cover_ahead[1] <= 0:
+        return None
+    return tx.paid_forward_text(l.cover_ahead[1])
 
 
 def starts_info(e) -> Tuple[Optional[pay_upcoming.Upcoming], Optional[dict]]:

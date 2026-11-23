@@ -52,15 +52,18 @@ def opening_over_payments_text(total: int, covered_until: date) -> str:
     return f"У ученика уже есть оплаты на {money(total)} — покрытие станет до {ddmm(covered_until)}"
 
 
-def receipt_state_text(debt: int, advance: int, cover: Optional[str] = None, partial: bool = False, closed: bool = False) -> str:
+def receipt_state_text(debt: int, advance: int, cover: Optional[str] = None, partial: bool = False, closed: bool = False, forward: Optional[str] = None) -> str:
     """The ONE state of the receipt on the day it is issued, a whole phrase without a date (the day is ``state_on_issue.as_of``): ``не оплачено 100 000 сум, оплачено до 14.11`` / ``аванс 50 000 сум`` / ``всё оплачено, оплачено до 30.11``.
     PAY-TAILS Б1.5: ``cover`` is the phrase of the coverage as far as the words allow (``cover_phrase``); a period paid in part (``partial``) says its own remainder and the head is not repeated:
-    ``оплачено 100 000 из 420 000 сум · к оплате 320 000 сум до 05.11``; a closed membership is ``расчёт закрыт``."""
+    ``оплачено 100 000 из 420 000 сум · к оплате 320 000 сум до 05.11``; a closed membership is ``расчёт закрыт``.  Б11.24 п. 4: ``forward`` (``вперёд оплачено N``) says the money ahead of a period that has not begun; when the head
+    already says the advance (no debt, an advance) it is the same money and is not said twice, whatever the two sums are; with a debt the advance is not in the head and ``forward`` stays."""
     if closed:
         return SETTLED_TEXT[0].lower() + SETTLED_TEXT[1:]
     if partial and cover:
         return cover
     parts = [f"не оплачено {money(debt)}" if debt else (f"аванс {money(advance)}" if advance else "всё оплачено")]
+    if forward and (debt or not advance):
+        cover = f"{cover} · {forward}" if cover else forward
     if cover:
         parts.append(cover)
     return ", ".join(parts)
