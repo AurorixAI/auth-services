@@ -708,6 +708,13 @@ def cut_edit_final(inp, x):
     return min(seen), max(seen)
 
 
+def cut_edit_class(inp, x):
+    """Б11.27: «pure» = the days the human wants after the edit are all among the days he wanted before it (no new day); «squeeze» = the edit has a new day (a contraction entered now)."""
+    p = inp.pauses[x.index]
+    first, last = cut_edit_final(inp, x)
+    return "pure" if _span(first, last) <= (_intent(_gen(p)) if getattr(p, "forms", None) else _span(p.first, p.last)) else "squeeze"
+
+
 def cut_edit_oracle(inp, x):
     """The account of the world where the human made the pause his FINAL form BEFORE the leaving (an edit with no cut standing: the plain row of the table, entered at 899, after every record of the world) and then the student left /
     the leaving was cancelled.  A shortening is known to every older world, so it is also the world where the pause was entered at once in that form."""
@@ -834,7 +841,7 @@ def event_violations(inp, x):
             bad.append("flags")
         case = EVENT[0].split("_")[1]
         name = f"P11 {case}{' undo' if x.undo else ''}"
-        compression = case in ("ext", "late")           # Б11.25: the human ADDS days to the pause (the start earlier, the end later)
+        compression = cut_edit_class(inp, x) == "squeeze"           # Б11.27: by SETS of days, not by the name of the event: the edit has new days = a contraction entered now
         if compression and (CANCELS == "with" or (CANCELS == "" and inp.centre_cancels)):
             name = "P11s"                                                 # a counter for reference (LEDGER-FREEZE (ж): the order of two contractions over a cancelled lesson), not a property
             gap = abs(bl.run_ledger(new).debt - bl.run_ledger(oracle).debt)
@@ -1238,6 +1245,7 @@ def run_counts(seed, n, cfg=Cfg()):
                 continue
             if kind.startswith("cutedit"):
                 counts[f"_events {kind}"] = counts.get(f"_events {kind}", 0) + 1
+                counts[f"_events {cut_edit_class(inp, x)}"] = counts.get(f"_events {cut_edit_class(inp, x)}", 0) + 1       # Б11.27: how many pure extensions / edits with a contraction were checked (the strict part is not empty)
             pays += kind == bl.PAYMENT
             forgs += kind == bl.WRITEOFF
             names = violations(inp, x)
