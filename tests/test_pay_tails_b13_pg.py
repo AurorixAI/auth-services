@@ -470,3 +470,34 @@ def test_b11_24_s4_the_leaving_the_edit_of_the_start_and_the_cancel_of_the_leavi
     add(world, s, group=g, mode="add")
     check(world, s, g, D(2026, 11, 22), charged=250_000, debt=0, advance=250_000, used=50_000, granted=100_000)
     assert undo_line(world, pause_id) == [("2026-11-13", "2026-11-30")]
+
+
+# ---------------------------------------------------------------------------------------------------------------------------- Б11.25, step 8.13.8: ONE rule - the form of the pause in the world of a moment = (what is visible by the last line of the moment) AND (what the human wants in the end)
+def start_later_after_the_leaving(world, fixed_today, *, paid):
+    # 05.11 forgiven 300 000 and paid ``paid`` (the month 600 000); 09.11 the pause 10 - 30.11 (lessons 3 5 6 = November 150 000); 22.11 the leaving INSIDE the pause (the cut 10 - 22.11: still 150 000);
+    # 23.11 a human moves the START to 17.11: the lessons 10, 12, 13 are charged again (the pause 17 - 22.11 = November 3 5 6 10 12 13 = 300 000).
+    g, s = om_at(world, fixed_today, D(2026, 11, 1))
+    fixed_today(D(2026, 11, 5))
+    forgive(world, s, g, 300_000)
+    pay(world, s, g, amount=paid, paid_on=D(2026, 11, 5))
+    fixed_today(D(2026, 11, 9))
+    pause_id = pause_on(world, s, g, "2026-11-10", "2026-11-30")
+    fixed_today(D(2026, 11, 22))
+    leave(world, g, s)
+    fixed_today(D(2026, 11, 23))
+    return g, s, pause_id
+
+
+def test_b11_25_guard_the_start_moved_later_after_the_leaving_the_money_covers_the_month_the_forgiveness_is_not_needed(world, fixed_today):
+    # Money 300 000: after the pause 10 - 30.11 November is 150 000 (used 0, advance 150 000); the leaving 22.11 changes nothing (the cut 10 - 22 holds the same lessons).  The start moved to 17.11: November 300 000 = the
+    # money 300 000: the forgiveness (300 000, not used) stays unused: charged 300 000, debt 0, used 0, advance 0.
+    g, s, pause_id = start_later_after_the_leaving(world, fixed_today, paid=300_000)
+    edit_pause(world, s, g, pause_id, D(2026, 11, 23), "2026-11-17", "2026-11-22", debt=0, advance=0, charged=300_000, used=0, granted=300_000)
+
+
+def test_b11_25_the_start_moved_later_after_the_leaving_gives_the_forgiveness_back_to_the_account_it_was_entered_into(world, fixed_today):
+    # Money 150 000, the debt 150 000 on 05.11 was forgiven 300 000 of 450 000... by hand: November 600 000 = the forgiveness 300 000 (entered first) + the money 150 000 + the debt 150 000.  09.11 the pause 10 - 30.11:
+    # November 150 000 = the money (debt 0, used 0: the forgiveness lies unused).  22.11 the leaving (the cut 10 - 22.11).  23.11 the START to 17.11: November 300 000 = the money 150 000 + the forgiveness 150 000: used 150 000,
+    # debt 0, advance 0.  The days 10 - 16 the human took off are known to every older world (an extension of the account is never a contraction): the forgiveness is not burnt by the cut that stands over them.
+    g, s, pause_id = start_later_after_the_leaving(world, fixed_today, paid=150_000)
+    edit_pause(world, s, g, pause_id, D(2026, 11, 23), "2026-11-17", "2026-11-22", debt=0, advance=0, charged=300_000, used=150_000, granted=300_000)
