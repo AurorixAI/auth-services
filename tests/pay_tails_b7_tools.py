@@ -1121,7 +1121,10 @@ def shrink(inp, x, prop):
     """Make the world smaller while ``prop`` is still broken by the addition of ``x`` and the world stays allowed: drop a credit / a pause / the cancels / the leaving, lower an amount, move the dates
     towards the entry day, lower ``today``.  Returns (inp, x)."""
     def ok(i, xx):
-        return allowed(i) and prop in violations(i, xx)
+        try:
+            return allowed(i) and prop in violations(i, xx)
+        except IndexError:                                      # a step dropped the pause the event points at: not a smaller world of the same event
+            return False
 
     changed = True
     while changed:
