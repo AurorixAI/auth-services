@@ -528,3 +528,23 @@ def test_b11_26_the_leaving_the_end_of_the_pause_moved_later_and_the_cancel_of_t
     from src.models.auth import MembershipPause
     row = world.db.get(MembershipPause, UUID(pause_id))
     assert (row.first_day, row.last_day) == (D(2026, 11, 17), D(2026, 11, 27)) and undo_line(world, pause_id) == [("2026-11-17", "2026-11-27")]
+
+
+# ---------------------------------------------------------------------------------------------------------------------------- Б11.27, step 8.13.10: the human took the pause off after the leaving cut it - the cancel of the leaving does not bring it back
+def test_b11_27_the_leaving_cut_the_pause_the_human_took_it_off_and_the_leaving_is_cancelled_the_pause_stays_off(world, fixed_today):
+    # 05.11 forgiven 300 000 and paid 300 000 (November 600 000); 09.11 the pause 17 - 30.11 (November 300 000: used 0, advance 0); 20.11 the leaving: the pause is cut to 17 - 20.11, the stay 01 - 20.11 = 300 000;
+    # the same day the human takes the pause OFF with a reason of his own: «there was no pause» - 01 - 20.11 = lessons 3 5 6 10 12 13 17 19 20 = 9 x 50 000 = 450 000 = the money 300 000 + the forgiveness 150 000, debt 0;
+    # the cancel of the leaving: the student is in the group, there is no pause, November 600 000 = the money 300 000 + the forgiveness 300 000, debt 0, advance 0.  The cancel does NOT write ``leave_undone`` for a pause
+    # nobody restores and does not put it back.
+    g, s, pause_id = world_s2(world, fixed_today)
+    fixed_today(D(2026, 11, 20))
+    leave(world, g, s)
+    check(world, s, g, D(2026, 11, 20), charged=300_000, debt=0, advance=0, used=0, granted=300_000)
+    done = owner(world).post(f"{API}/org/pauses/{pause_id}/void", json={"reason": "Передумали"})
+    assert done.status_code == 200, done.text
+    check(world, s, g, D(2026, 11, 20), charged=450_000, debt=0, advance=0, used=150_000, granted=300_000)
+    add(world, s, group=g, mode="add")
+    check(world, s, g, D(2026, 11, 20), charged=600_000, debt=0, advance=0, used=300_000, granted=300_000)
+    from src.models.auth import MembershipPause
+    row = world.db.get(MembershipPause, UUID(pause_id))
+    assert row.voided_at is not None and undo_line(world, pause_id) == []
