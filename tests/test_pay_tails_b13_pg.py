@@ -548,3 +548,73 @@ def test_b11_27_the_leaving_cut_the_pause_the_human_took_it_off_and_the_leaving_
     from src.models.auth import MembershipPause
     row = world.db.get(MembershipPause, UUID(pause_id))
     assert row.voided_at is not None and undo_line(world, pause_id) == []
+
+
+# ---------------------------------------------------------------------------------------------------------------------------- Б11.28, step 8.13.11: the cut that stands, the tail that depends only on the CURRENT form of the human
+def test_b11_28_w3_the_second_leaving_took_a_future_pause_off_its_cancel_does_not_erase_the_cut_of_the_first_leaving(world, fixed_today):
+    # W3 (600 000 a month, Tue / Thu / Fri, November 2026; lessons 3 5 6 10 12 13 17 19 20 24 26 27): 05.11 paid 150 000; 09.11 the pause 17 - 30.11; 19.11 the leaving (the cut 17 - 19.11); 21.11 an ORDINARY return to the
+    # same group (the stay is 01 - 19.11 and from 21.11: the lesson of 20.11 is not his); 21.11 forgiven 250 000 (of the debt 300 000) and paid 200 000; 22.11 the human moves the pause to 24 - 30.11 (the lessons 17, 19 are
+    # his again: 3 5 6 10 12 13 17 19 = 8 x 50 000 = 400 000: the money 350 000 pays 300 000 and the forgiveness is cut by 150 000: used 100 000, advance 50 000); 23.11 the SECOND leaving takes the pause (it is in the future)
+    # off, and the cancel of it the same day gives it back: no stage of the pause changed - 400 000 / debt 0 / used 100 000 / advance 50 000 (was: the cancel erased the cut of the FIRST leaving: used 250 000, advance 200 000).
+    g, s = om_at(world, fixed_today, D(2026, 11, 1))
+    fixed_today(D(2026, 11, 5))
+    pay(world, s, g, amount=150_000, paid_on=D(2026, 11, 5))
+    fixed_today(D(2026, 11, 9))
+    pause_id = pause_on(world, s, g, "2026-11-17", "2026-11-30")
+    fixed_today(D(2026, 11, 19))
+    leave(world, g, s)
+    fixed_today(D(2026, 11, 21))
+    add(world, s, group=g, mode="add")
+    forgive(world, s, g, 250_000)
+    pay(world, s, g, amount=200_000, paid_on=D(2026, 11, 21))
+    check(world, s, g, D(2026, 11, 21), charged=450_000, debt=0, advance=150_000, used=250_000, granted=250_000)
+    fixed_today(D(2026, 11, 22))
+    edit_pause(world, s, g, pause_id, D(2026, 11, 22), "2026-11-24", "2026-11-30", debt=0, advance=50_000, charged=400_000, used=100_000, granted=250_000)
+    fixed_today(D(2026, 11, 23))
+    leave(world, g, s)
+    check(world, s, g, D(2026, 11, 23), charged=400_000, debt=0, advance=200_000, used=250_000, granted=250_000)     # the closing with the pause taken off (no pause in the account any more): the forgiveness is not cut by the stay (as the rule of the closing gives it; not changed by this step)
+    back = add(world, s, group=g, mode="add")["leave_undo"]
+    assert back["undone"] is True, back
+    check(world, s, g, D(2026, 11, 23), charged=400_000, debt=0, advance=50_000, used=100_000, granted=250_000)
+    from src.models.auth import MembershipPause
+    row = world.db.get(MembershipPause, UUID(pause_id))
+    assert row.voided_at is None and (row.first_day, row.last_day) == (D(2026, 11, 24), D(2026, 11, 30))
+
+
+def world_b11_28_two_edits(world, fixed_today):
+    # The world of Б11.23 п. 1 (05.11 paid 150 000; 09.11 the pause 17 - 30.11; 10.11 forgiven 100 000; 11.11 paid 300 000) and, on 22.11, the leaving (the cut 17 - 22.11) and TWO edits of the human under the one cut:
+    # 13 - 25.11 (the end moved: not the day of the leaving) and then 13 - 22.11 (the end is the day of the leaving again).  In the stay 01 - 22.11 both forms are the same pause 13 - 22.11: lessons 3 5 6 10 12 = 250 000.
+    g, s = om_at(world, fixed_today, D(2026, 11, 1))
+    fixed_today(D(2026, 11, 5))
+    pay(world, s, g, amount=150_000, paid_on=D(2026, 11, 5))
+    fixed_today(D(2026, 11, 9))
+    pause_id = pause_on(world, s, g, "2026-11-17", "2026-11-30")
+    fixed_today(D(2026, 11, 10))
+    forgive(world, s, g, 100_000)
+    fixed_today(D(2026, 11, 11))
+    pay(world, s, g, amount=300_000, paid_on=D(2026, 11, 11))
+    fixed_today(D(2026, 11, 22))
+    leave(world, g, s)
+    edit_pause(world, s, g, pause_id, D(2026, 11, 22), "2026-11-13", "2026-11-25", debt=0, advance=250_000, charged=250_000, used=50_000, granted=100_000)
+    edit_pause(world, s, g, pause_id, D(2026, 11, 22), "2026-11-13", "2026-11-22", debt=0, advance=250_000, charged=250_000, used=50_000, granted=100_000)
+    return g, s, pause_id
+
+
+def test_b11_28_w4_two_edits_under_one_cut_the_second_brings_the_end_back_to_the_day_of_the_leaving_the_tail_stays_as_after_one_edit(world, fixed_today):
+    # W4: by hand as the world of Б11.23 п. 1 after ONE edit 13 - 22.11: the charge 250 000 (lessons 3 5 6 10 12), the forgiveness 100 000 was entered under the pause 17 - 30.11 which the human wrote and the tail 23 - 30.11 is still
+    # what he wants: used 50 000, debt 0, advance 250 000 (was: the first edit of the end gave the tail up, the second did not bring it back: used 0, advance 200 000).  The account 23.11 (the day after) is the same.
+    g, s, pause_id = world_b11_28_two_edits(world, fixed_today)
+    fixed_today(D(2026, 11, 23))
+    check(world, s, g, D(2026, 11, 23), charged=250_000, debt=0, advance=250_000, used=50_000, granted=100_000)
+
+
+def test_b11_28_q3a_the_same_and_the_cancel_of_the_leaving_gives_the_end_of_the_pause_back(world, fixed_today):
+    # Q3a: W4 and the cancel of the leaving the same day: the end of the pause is the day of the cut (22.11), so the cancel gives the end 30.11 back (what the product does by itself): the pause is 13 - 30.11, November 250 000
+    # (lessons 3 5 6 10 12 - 13 17 19 20 24 26 27 are lost), used 50 000, debt 0, advance 250 000; the line of the cancel says 13 - 30.11 (was: the loader read 13 - 22.11: used 0, advance 200 000).
+    g, s, pause_id = world_b11_28_two_edits(world, fixed_today)
+    add(world, s, group=g, mode="add")
+    check(world, s, g, D(2026, 11, 22), charged=250_000, debt=0, advance=250_000, used=50_000, granted=100_000)
+    assert undo_line(world, pause_id) == [("2026-11-13", "2026-11-30")]
+    from src.models.auth import MembershipPause
+    row = world.db.get(MembershipPause, UUID(pause_id))
+    assert (row.first_day, row.last_day) == (D(2026, 11, 13), D(2026, 11, 30))
