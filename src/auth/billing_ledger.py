@@ -280,8 +280,13 @@ class Segment:
     # a period of a personal chain - ``("p", first day of the piece of the stay, number in the chain)``; a package - ``("k", number of the chain of its regime window, number of the package)``; ``None`` (the opening debt) = no other world
     slot: Optional[tuple] = field(default=None, repr=False)
     # PAY-TAILS Б11.40 С2': the dates of the lessons (one entry per lesson) the period itself counted inside its billable days - the SAME set the sum comes from (a whole month too); ``None`` = the period
-    # is not counted by the lessons of a calendar month.  It decides no money: the answers of a pause read the lessons a pause took out of the price from it.
-    lesson_dates: Optional[Tuple[date, ...]] = field(default=None, repr=False, compare=False)
+    # is not counted by the lessons of a calendar month.  It decides no money: the answers of a pause read the lessons a pause took out of the price from it.  Read LAZILY (``dates_fn``): a whole month asks the
+    # lessons of the group only when a pause asks (the lists and the journals that never read it pay no query for it).
+    dates_fn: Optional[Callable[[], Tuple[date, ...]]] = field(default=None, repr=False, compare=False)
+
+    @property
+    def lesson_dates(self) -> Optional[Tuple[date, ...]]:
+        return None if self.dates_fn is None else self.dates_fn()
 
     @property
     def nominal(self) -> int:
@@ -680,28 +685,30 @@ class _Gen:
             return Segment(amount=0, basis="zero", lessons_in_part=None, lessons_in_period=None, **common)
 
         def charge(day_list: List[date]):
-            """``(amount, basis, lessons_in_part, lessons_in_period, first_lesson, lesson_dates)`` of the period for these billable days."""
+            """``(amount, basis, lessons_in_part, lessons_in_period, first_lesson, lesson_dates)`` of the period for these billable days (``lesson_dates``: a function, see ``Segment.dates_fn``)."""
             n = len(day_list)
-            dates = None
+            if n >= nominal:
+                if not by_lessons:
+                    return amount, "full", None, None, None, None
+                def whole_month() -> Tuple[date, ...]:
+                    held = self.lesson_days(*cell, regular=self.regular(cell[0]))
+                    inside = set(day_list)
+                    return tuple(d for d in held if d in inside)
+                return amount, "full", None, None, None, whole_month
             if by_lessons:
                 regular = self.regular(cell[0])             # PAY-F: from the cut-over day only the regular schedule is counted, in both
                 held = self.lesson_days(*cell, regular=regular)             # REAL lessons: the numerator
-                inside = set(day_list)
-                dates = tuple(d for d in held if d in inside)
-            if n >= nominal:
-                return amount, "full", None, None, None, dates
-            if by_lessons:
                 whole = self.pattern_days(*cell, regular=regular)            # lessons of a full month by the schedule: the denominator
                 if whole:
-                    in_part = len(dates)
-                    return (ps.prorated(amount, in_part, len(whole)), "lessons", in_part, len(whole),
-                            min(dates, default=None), dates)
+                    inside = set(day_list)
+                    dates = tuple(d for d in held if d in inside)
+                    return (ps.prorated(amount, len(dates), len(whole)), "lessons", len(dates), len(whole), min(dates, default=None), lambda: dates)
             return ps.prorated(amount, n, nominal), "days", None, None, None, None
 
-        value, basis, in_part, whole_n, first_lesson, lesson_dates = charge(days)
+        value, basis, in_part, whole_n, first_lesson, dates_fn = charge(days)
         nominal_amount = value if nominal_days is None else charge(nominal_days)[0]
         return Segment(amount=value, basis=basis, lessons_in_part=in_part, lessons_in_period=whole_n, first_lesson=first_lesson,
-                       nominal_amount=nominal_amount, slot=slot, lesson_dates=lesson_dates, **common)
+                       nominal_amount=nominal_amount, slot=slot, dates_fn=dates_fn, **common)
 
     # ---------------------------------------------------------------- calendar: payment date
 
