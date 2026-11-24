@@ -672,7 +672,8 @@ def pause_charge_rows(before: bl.Ledger, after: bl.Ledger, today: date, changed:
         first, last = min(days), max(days)
         rows.append(PauseChargeRow(
             label=tx.range_text(first, last, year), first_day=first, last_day=last, days=len(days), lessons=sum(gone.values()) + sum(back.values()),
-            lessons_passed=sum(n for d, n in back.items() if d < today) if amount > 0 else None, amount=amount))
+            lessons_passed=sum(n for d, n in back.items() if d < today) if amount > 0 else None, amount=amount,
+            period_begins=min(a.days) if a is not None and a.days and bool(b is not None and b.begun) != bool(a.begun) else None))     # Б11.43: the period is carried across the working date
     total = sum(r.amount for r in rows)
     if rows and total != after.charged - before.charged:
         logger.error("pause_charge_rows: the lines of the pause sum to %s, the change of the charge is %s (membership %s): no lines", total, after.charged - before.charged, membership_id)
