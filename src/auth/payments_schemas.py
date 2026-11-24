@@ -1537,6 +1537,8 @@ class PauseOut(PayModel):
     created_at: Optional[str] = None
     voided_at: Optional[str] = None
     void_reason: Optional[str] = None
+    days_locked: bool = Field(False, description="На паузе стоит действующая обрезка уходом / переводом / архивом: дни изменить нельзя (Б11.33 п. 1)")
+    days_locked_text: Optional[str] = Field(None, description="Готовая фраза причины (та же, что в отказе 409 PAUSE_CLOSED_BY_LEAVE); null, когда days_locked ложь")
 
 
 class PauseLessonMark(PayModel):

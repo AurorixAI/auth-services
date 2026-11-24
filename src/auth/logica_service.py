@@ -32,7 +32,7 @@ from src.models.auth import (
 )
 
 from . import billing_ledger as bl
-from .ledger_service import AUDIT_PAUSE_SET, AUDIT_PAUSE_VOID, LEAVE_VIA, LEAVE_VOID_REASON, pause_journal
+from .ledger_service import AUDIT_PAUSE_SET, AUDIT_PAUSE_VOID, LEAVE_VIA, LEAVE_VOID_REASON, pause_journal, pause_journals
 from .closed_period import ClosedPeriods, group_teacher_ids
 from .ops_rules import OpsError
 from . import membership_periods
@@ -428,19 +428,25 @@ def _days(first: date, last: date) -> Set[date]:
 
 
 class PauseService(_Base):
-    def _out(self, row: MembershipPause) -> PauseOut:
+    def _out(self, row: MembershipPause, membership: Optional[StudentGroup] = None, journals: Optional[Dict[str, Any]] = None) -> PauseOut:
+        """``days_locked`` (Б11.33 п. 1): a live pause a leaving / a transfer / an archive cut - the days are not to be moved; its phrase is the one of the 409 (``_closed_text``).  ``membership`` None (a taking off): nothing to lock."""
         users = self.pay._users([row.created_by])
+        cut = None
+        if membership is not None and row.voided_at is None:
+            cut = (journals[str(row.id)] if journals is not None else pause_journal(self.db, str(row.org_id), row)).cut
         return PauseOut(
             id=str(row.id), membership_id=str(row.membership_id), first_day=row.first_day, last_day=row.last_day,
             days=(row.last_day - row.first_day).days + 1, reason=row.reason, created_by_name=_person(users.get(row.created_by)),
             created_at=_iso(row.created_at), voided_at=_iso(row.voided_at), void_reason=row.void_reason,
+            days_locked=cut is not None, days_locked_text=self._closed_text(membership, cut, ps.business_today()) if cut is not None else None,
         )
 
     def list(self, org_id: str, membership_id: UUID) -> List[PauseOut]:
-        self.pay._membership(org_id, membership_id)
+        membership = self.pay._membership(org_id, membership_id)
         rows = (self.db.query(MembershipPause).filter(MembershipPause.membership_id == membership_id, MembershipPause.org_id == org_id)
                 .order_by(MembershipPause.first_day.desc(), MembershipPause.created_at.desc()).all())
-        return [self._out(r) for r in rows]
+        journals = pause_journals(self.db, org_id, [r for r in rows if r.voided_at is None])
+        return [self._out(r, membership, journals) for r in rows]
 
     def _live(self, membership_id: UUID, *, lock: bool = False) -> List[MembershipPause]:
         """The live pauses of a membership; ``lock``: the rows are locked and read as they are NOW (an edit of a pause in flight is waited for, not read half-way: a leaving cuts the form that edit wrote)."""
@@ -539,7 +545,7 @@ class PauseService(_Base):
         moved, text = others if others and money else (None, None)
         return PauseSaved(
             new_debts=moved.new_debts if moved else [], advance_drops=moved.advance_drops if moved else [], other_gains=moved.gains if moved else [], other_groups_text=text or None,
-            pause=self._out(row), impact=impact_of(before, after) if money else None,
+            pause=self._out(row, membership), impact=impact_of(before, after) if money else None,
             lessons=PauseLessons(excluded=[PauseLessonMark(date=d, marks=m) for d, m in excluded],
                                  attended=[PauseLessonMark(date=d, marks=m) for d, m in attended]),
             payroll=self._payroll(org_id, membership, first, last) if owner else None, dry_run=dry_run,
@@ -649,11 +655,15 @@ class PauseService(_Base):
         cut = pause_journal(self.db, org_id, row).cut
         if cut is None:
             return
+        raise PauseClosedByLeave(self._closed_text(membership, cut, today))
+
+    def _closed_text(self, membership: StudentGroup, cut: Any, today: date) -> str:
+        """THE phrase of a pause a leaving cut (the 409 and ``PauseOut.days_locked_text`` say the same): by the state - the leaving is of today and its cancel is possible - «bring the student back»; else only «take it off»."""
         from . import leave_undo  # lazy: pulls in the pricing modules
 
         left = leave_undo.naive_utc(membership.left_at)                  # the leaving whose cancel would give the pause back is the LAST one, and the cut is of it
         back = not membership.is_active and left is not None and cut.at >= left and leave_undo.left_today(left, today) and leave_undo._blocker(self.db, membership, left, (), False) is None
-        raise PauseClosedByLeave(PAUSE_CLOSED_NOW if back else PAUSE_CLOSED_LATER)
+        return PAUSE_CLOSED_NOW if back else PAUSE_CLOSED_LATER
 
     @deadlock_guard
     def patch(

@@ -8,6 +8,7 @@ Credits K3 (no payment on 05.11): 09.11 the pause 17 - 30.11; 10.11 forgiven 300
 from datetime import date
 from uuid import UUID
 
+from tests.answers_dump import dump
 from tests.money1b_helpers import add, set_schedule
 from tests.pg_world import ensure_billing, give_group_price, make_group, needs_pg, pg_session, world  # noqa: F401  (fixtures)
 from tests.test_pay2_api_pg import API, fixed_today, membership, owner  # noqa: F401  (fixture)
@@ -307,6 +308,66 @@ def test_b11_30_the_reason_alone_of_a_closed_pause_is_edited_and_a_pause_the_lea
     after = led(world, s, g, D(2026, 11, 19))
     said = lambda i: (i["debt_after"], i["advance_after"])
     assert said(probe.json()["impact"]) == said(saved.json()["impact"]) == (saved.json()["row"]["unpaid"], saved.json()["row"]["advance"]) == (after.debt, after.advance)
+
+
+# ---------------------------------------------------------------------------------------------------------------------------- Б11.33 п. 1: the pause says itself that its days are closed
+def pauses_of(world, s, g):
+    r = owner(world).get(f"{API}/org/memberships/{membership(world, s, g).id}/pauses")
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def test_b11_33_the_pause_without_a_cut_is_not_locked_in_the_list_and_in_the_answers_of_the_routes(world, fixed_today):
+    g, s, pause_id = world_k(world, fixed_today)
+    assert [(p["id"], p["days_locked"], p["days_locked_text"]) for p in pauses_of(world, s, g)] == [(pause_id, False, None)]
+    dump("pause_without_cut", pauses_of(world, s, g)[0])
+    body = {"first_day": "2026-11-13", "last_day": "2026-11-30", "reason": "Поправили"}
+    for params in ({"dry_run": "true"}, {}):
+        r = owner(world).patch(f"{API}/org/pauses/{pause_id}", params=params, json=body)
+        assert r.status_code == 200 and (r.json()["pause"]["days_locked"], r.json()["pause"]["days_locked_text"]) == (False, None), r.text
+    other = owner(world).post(f"{API}/org/memberships/{membership(world, s, g).id}/pauses", json={"first_day": "2026-12-03", "last_day": "2026-12-05", "reason": "Поездка"})
+    assert other.status_code in (200, 201) and (other.json()["pause"]["days_locked"], other.json()["pause"]["days_locked_text"]) == (False, None), other.text
+    voided = owner(world).post(f"{API}/org/pauses/{other.json()['pause']['id']}/void", json={"reason": "Передумали"})
+    assert voided.status_code == 200 and (voided.json()["pause"]["days_locked"], voided.json()["pause"]["days_locked_text"]) == (False, None), voided.text
+
+
+def test_b11_33_the_pause_under_a_cut_says_the_phrase_of_the_refusal_by_the_state_and_the_cancel_of_the_leaving_gives_it_back(world, fixed_today):
+    g, s, pause_id = world_cut(world, fixed_today)                                     # the leaving of 19.11 cut the pause 17 - 30.11 to 17 - 19.11
+    seen = lambda: [(p["days_locked"], p["days_locked_text"]) for p in pauses_of(world, s, g) if p["id"] == pause_id]
+    mine = lambda: [p for p in pauses_of(world, s, g) if p["id"] == pause_id][0]
+    assert seen() == [(True, CLOSED_NOW)]                                              # the leaving is of today and can be cancelled
+    dump("pause_closed_by_leave_today", mine())
+    body = {"reason": "Другая причина"}                                               # the reason alone: 200, the days stay locked, the answer says so
+    for params in ({"dry_run": "true"}, {}):
+        r = owner(world).patch(f"{API}/org/pauses/{pause_id}", params=params, json=body)
+        assert r.status_code == 200 and (r.json()["pause"]["days_locked"], r.json()["pause"]["days_locked_text"]) == (True, CLOSED_NOW), r.text
+    refused(world, s, g, D(2026, 11, 19), pause_id, CLOSED_NOW)                        # the same phrase is the one of the 409
+    fixed_today(D(2026, 11, 20))
+    assert seen() == [(True, CLOSED_LATER)]
+    dump("pause_closed_by_leave_later", mine())
+    refused(world, s, g, D(2026, 11, 20), pause_id, CLOSED_LATER)
+    fixed_today(D(2026, 11, 19))                                                       # a leaving of today again, then its cancel: the pause has its days back, nothing is locked
+    assert seen() == [(True, CLOSED_NOW)]
+    assert add(world, s, group=g, mode="add")["leave_undo"]["undone"] is True
+    assert row_of(world, pause_id) == (D(2026, 11, 17), D(2026, 11, 30), False)
+    assert seen() == [(False, None)]
+    dump("pause_after_the_leaving_is_cancelled", mine())
+
+
+def test_b11_33_the_pause_a_transfer_carried_is_not_locked_the_one_it_cut_is(world, fixed_today):
+    # 09.11 the pause 17 - 30.11; 19.11 a transfer to Бета: the old pause is cut to 17 - 19 (locked, the phrase of a later day), the carried 20 - 30 is the pause of the new group: not locked, no phrase.
+    g, s = om_at(world, fixed_today, D(2026, 11, 1))
+    b = make_group(world.db, world.org, world.teacher, "Бета")
+    give_group_price(world.db, b, 600_000)
+    set_schedule(world, TTF, b)
+    ensure_billing(world, b, price=None)
+    fixed_today(D(2026, 11, 9))
+    old_id = pause_on(world, s, g, "2026-11-17", "2026-11-30")
+    fixed_today(D(2026, 11, 19))
+    add(world, s, group=b, mode="transfer", from_group_id=str(g.id))
+    assert [(p["id"], p["days_locked"], p["days_locked_text"]) for p in pauses_of(world, s, g)] == [(old_id, True, CLOSED_LATER)]
+    carried = pauses_of(world, s, b)
+    assert [(p["first_day"], p["last_day"], p["days_locked"], p["days_locked_text"]) for p in carried] == [("2026-11-20", "2026-11-30", False, None)]
 
 
 # ---------------------------------------------------------------------------------------------------------------------------- the leaving and the edit of the days of a pause at the same time

@@ -365,12 +365,21 @@ def _days(first: date, last: date) -> List[date]:
     return [first + timedelta(days=i) for i in range((last - first).days + 1)]
 
 
+def pause_journals(db: Session, org_id: str, pauses: Sequence[MembershipPause]) -> Dict[str, PauseJournal]:
+    """The journals of SEVERAL pauses read by ``read_pause_journal`` (ONE query for all of them): ``{pause id: journal}``."""
+    if not pauses:
+        return {}
+    lines: Dict[str, List[Tuple[datetime, str, Dict[str, Any]]]] = {str(p.id): [] for p in pauses}
+    for action, at, snap in db.query(GroupAudit.action, GroupAudit.created_at, GroupAudit.snapshot).filter(
+            GroupAudit.org_id == org_id, GroupAudit.group_id.in_({p.group_id for p in pauses}), GroupAudit.action.in_((AUDIT_PAUSE_SET, AUDIT_PAUSE_VOID)),
+            GroupAudit.snapshot["pause_id"].astext.in_(list(lines))).order_by(GroupAudit.created_at, GroupAudit.id):
+        lines[(snap or {}).get("pause_id")].append((at, action, snap or {}))
+    return {str(p.id): read_pause_journal(lines[str(p.id)], created_at=p.created_at, first_day=p.first_day, last_day=p.last_day, voided=p.voided_at is not None) for p in pauses}
+
+
 def pause_journal(db: Session, org_id: str, pause: MembershipPause) -> PauseJournal:
-    """The journal of ONE pause read by ``read_pause_journal`` (one query): the edit of a pause and the cancel of a leaving ask it, the loader reads the same lines for all the pauses at once."""
-    lines = [(at, action, snap or {}) for action, at, snap in db.query(GroupAudit.action, GroupAudit.created_at, GroupAudit.snapshot).filter(
-        GroupAudit.org_id == org_id, GroupAudit.group_id == pause.group_id, GroupAudit.action.in_((AUDIT_PAUSE_SET, AUDIT_PAUSE_VOID)),
-        GroupAudit.snapshot["pause_id"].astext == str(pause.id)).order_by(GroupAudit.created_at, GroupAudit.id)]
-    return read_pause_journal(lines, created_at=pause.created_at, first_day=pause.first_day, last_day=pause.last_day, voided=pause.voided_at is not None)
+    """The journal of ONE pause (the edit of a pause and the cancel of a leaving ask it, the loader reads the same lines for all the pauses at once)."""
+    return pause_journals(db, org_id, [pause])[str(pause.id)]
 
 
 class LedgerLoader:
