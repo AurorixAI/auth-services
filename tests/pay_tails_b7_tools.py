@@ -42,7 +42,7 @@ EARLIEST = D(2026, 9, 15)                # the earliest date the generator gives
 PROPERTIES = ("P1c debt", "P1c advance", "P1c used", "P3u advance>=", "P3u advance<=freed", "P3u advance<=money", "P3u debt", "P3u used", "P3u transfer", "P6 same", "P6 amount", "P6b restore", "P7 undo", "P7 relapse", "P7 ordinary return",
               "P1 debt", "P1 used", "P1 advance", "P1 advance<=money", "P1 identity", "P2 debt", "P2 advance<=money", "P2 advance today", "P2 advance back",
               "P3 used", "P3 debt", "P3 advance", "P3 advance<=money", "P3k used", "P3k debt", "P3k advance", "P3k advance<=money", "P3e used", "P3e debt", "P3e advance", "P3e advance<=money", "P3c advance", "P3ec advance", "P4 early", "P4 today", "P5 probe",
-              "C1 chain", "C1 chain days", "C2 shorten-back", "C2 shorten-back days", "C3 reenter", "C3 reenter days", "C3 split", "C3 split days", "C4 leave free", "C4 leave free days", "C5 void", "C5 void days", "C5 tail void", "C5 tail void days", "C5 tail shorten", "C5 tail shorten days", "C7 void cancel", "C7 void cancel days", "C6 empty stay", "W now", "M3 piece")
+              "C1 chain", "C1 chain days", "C2 shorten-back", "C2 shorten-back days", "C3 reenter", "C3 reenter days", "C3 split", "C3 split days", "C4 leave free", "C4 leave free days", "C5 void", "C5 void days", "C5 tail void", "C5 tail void days", "C5 tail shorten", "C5 tail shorten days", "C7 void cancel", "C7 void cancel days", "C6 empty stay", "W now", "M3 piece", "Lines sum")
 
 
 @dataclass(frozen=True)
@@ -191,6 +191,51 @@ def now_world_bad(inp):
     live = set().union(*[_span(p.first, p.last) for p in inp.pauses]) if inp.pauses else set()
     shown = set().union(*[_span(q.first, q.last) for q in core_known(inp, bl.PROBE_MOMENT)]) if core_known(inp, bl.PROBE_MOMENT) else set()
     return shown != live
+
+
+LINES = {"events": 0, "with lines": 0, "later": 0, "insurance": 0, "lost": 0}      # Б11.40 С4': the lines of a pause (``payments_views.pause_charge_rows``): events checked / with lines / with ``charge_later`` / the insurance fired / reference: a change of the charge and no line
+_INSURANCE = []
+
+
+def _insurance_log():
+    """One handler on the logger of the lines: it counts the times the insurance (the sum of the lines is not the change of the charge) fired."""
+    import logging
+
+    if not _INSURANCE:
+        class Count(logging.Handler):
+            def emit(self, record):
+                if "pause_charge_rows" in record.getMessage():
+                    LINES["insurance"] += 1
+        h = Count(level=logging.ERROR)
+        logging.getLogger("src.auth.payments_views").addHandler(h)
+        logging.getLogger("src.auth.payments_views").propagate = False
+        _INSURANCE.append(h)
+
+
+def _live_days(inp):
+    return set().union(*[_span(p.first, p.last) for p in inp.pauses]) if inp.pauses else set()
+
+
+def lines_bad(inp, new):
+    """Б11.40 С4', the STRICT property on every event that changes the days of the live pauses: when the lines of the pause are not empty their sum is the change of the charge (the account after - before); the times the
+    insurance of the function fired are counted apart (expected 0).  Reference: a change of the charge in a set of the common month with no line at all."""
+    if not hasattr(bl.Segment, "lesson_dates") and "lesson_dates" not in bl.Segment.__dataclass_fields__:
+        return False
+    changed = _live_days(inp) ^ _live_days(new)
+    if not changed:
+        return False
+    from src.auth import payments_views as pv
+
+    _insurance_log()
+    before, after = bl.run_ledger(inp), bl.run_ledger(new)
+    fired = LINES["insurance"]
+    rows, later = pv.pause_charge_rows(before, after, inp.today, changed, money=True, membership_id="gen")
+    LINES["events"] += 1
+    LINES["with lines"] += bool(rows)
+    LINES["later"] += later is not None
+    delta = after.charged - before.charged
+    LINES["lost"] += bool(delta and not rows and any(sg.slot is not None and sg.slot[0] == "c" for sg in (*before.segments, *after.segments)))
+    return bool(rows) and sum(r.amount for r in rows) != delta
 
 
 def pieces_bad(inp):
@@ -1405,6 +1450,8 @@ def violations(inp, x):
         bad.append("W now")
     if pieces_bad(new):
         bad.append("M3 piece")
+    if isinstance(x, (bl.Pause, PauseEdit, VoidPause, Chain, ShortenBack, Reenter, Split, TailChange, VoidCancel)) and lines_bad(inp, new):      # the events of a PAUSE only: a leaving cuts the stay too (the lines are for the routes of a pause)
+        bad.append("Lines sum")
     return bad
 
 
@@ -1662,6 +1709,7 @@ def run_counts(seed, n, cfg=Cfg()):
     CANCELS = cfg.cancels
     C1S_MAX[:] = [0, ""]
     CHECKED.clear()
+    LINES.update({k: 0 for k in LINES})
     TOLERANCE[:] = [0, 0]
     TOLERANCE_KINDS.clear()
     NO_CANCEL_WORLDS.clear()
@@ -1704,6 +1752,7 @@ def run_counts(seed, n, cfg=Cfg()):
             counts["P4 nomatch"] += oracle_p4(apply_x(base, x))[1]
     counts["_tolerance events/nonzero"] = tuple(TOLERANCE)
     counts.update({f"_checked {k}": v for k, v in CHECKED.items()})
+    counts.update({f"_lines {k}": v for k, v in LINES.items()})
     return counts, found, (worlds, pays, forgs)
 
 
