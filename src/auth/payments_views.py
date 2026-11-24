@@ -7,8 +7,9 @@ sentences (``payments_texts``).  Nothing here decides an amount.
 from __future__ import annotations
 
 import logging
+from collections import Counter
 from datetime import date, timedelta
-from typing import List, Optional, Tuple
+from typing import Iterable, List, Optional, Tuple
 
 from . import billing_ledger as bl
 from . import pay_due
@@ -19,6 +20,8 @@ from .payments_schemas import (
     Allocation,
     AllocationSummary,
     MoneyRow,
+    PauseChargeLater,
+    PauseChargeRow,
     PaymentAllocationOut,
     PreviewDue,
     PreviewLessons,
@@ -632,6 +635,54 @@ def money_rows(ledger: bl.Ledger, credit_id: str, today: date) -> List[MoneyRow]
     if advance:
         out.append(MoneyRow(label="Аванс: уроки следующего пакета" if ledger.mode == bl.LESSONS else "Аванс", amount=advance, state="advance"))
     return out
+
+
+def _cell_periods(ledger: bl.Ledger) -> dict:
+    """The periods of a calendar month of the common month (``Segment.slot`` = ``("c", start)``) by their slot: the key two accounts of one membership are matched by."""
+    return {s.slot: s for s in ledger.segments if s.kind == "period" and s.slot is not None and s.slot[0] == "c"}
+
+
+def pause_charge_rows(before: bl.Ledger, after: bl.Ledger, today: date, changed: Iterable[date], *, money: bool, membership_id: object = None) -> Tuple[List[PauseChargeRow], Optional[PauseChargeLater]]:
+    """Б11.40 С1'-С5': the lines «период · уроков → сумма» of a change of a pause (the window «Пауза ученика»).  Decides no money: reads the two accounts the route already counted.
+
+    A line is made only where the pause takes lessons out of the price of a month: a period of the common month counted by lessons that BEGAN in at least one of the two accounts and whose charge
+    changed; ``lessons`` / ``lesson_dates`` come from the same set of dates the sum comes from (``Segment.lesson_dates``).  ``changed`` = the days whose state (paused or not) the action changed: the
+    days of them that lie after every begun period are ``charge_later`` (one record, no sum).  A personal period, a package, a period with no lesson in the changed days: no lines (the screen shows the old
+    one line).  Insurance (С4'): when the sum of the lines is not ``charged_delta`` - no lines, no ``charge_later``, an error in the log."""
+    old, new = _cell_periods(before), _cell_periods(after)
+    if not old and not new:
+        return [], None
+    year = today.year
+    rows: List[PauseChargeRow] = []
+    begun_end: Optional[date] = None
+    for slot in sorted(set(old) | set(new)):
+        b, a = old.get(slot), new.get(slot)
+        if not ((b is not None and b.begun) or (a is not None and a.begun)):
+            continue
+        end = (b or a).period_end
+        begun_end = end if begun_end is None or end > begun_end else begun_end
+        amount = (a.amount if a is not None and a.begun else 0) - (b.amount if b is not None and b.begun else 0)
+        if amount == 0 or any(x is not None and x.lesson_dates is None for x in (a, b)):
+            continue
+        days = set(a.days if a is not None else ()) ^ set(b.days if b is not None else ())
+        was, now = Counter(b.lesson_dates if b is not None else ()), Counter(a.lesson_dates if a is not None else ())
+        gone, back = was - now, now - was
+        if not days:
+            continue
+        first, last = min(days), max(days)
+        rows.append(PauseChargeRow(
+            label=tx.range_text(first, last, year), first_day=first, last_day=last, days=len(days), lessons=sum(gone.values()) + sum(back.values()),
+            lessons_passed=sum(n for d, n in back.items() if d < today) if amount > 0 else None, amount=amount))
+    total = sum(r.amount for r in rows)
+    if rows and total != after.charged - before.charged:
+        logger.error("pause_charge_rows: the lines of the pause sum to %s, the change of the charge is %s (membership %s): no lines", total, after.charged - before.charged, membership_id)
+        return [], None
+    if not money:                                                            # С5': the lines stay, the sums do not
+        rows = [r.model_copy(update={"amount": None}) for r in rows]
+    later = sorted(d for d in set(changed) if begun_end is None or d > begun_end)
+    if not later:
+        return rows, None
+    return rows, PauseChargeLater(label=tx.range_text(later[0], later[-1], year), first_day=later[0], last_day=later[-1])
 
 
 def rest_rows(ledger: bl.Ledger, due, name: str, today: date) -> List[RestRow]:

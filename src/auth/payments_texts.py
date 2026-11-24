@@ -101,6 +101,14 @@ def period_text(start: date, end: date) -> str:
     return ddmm(start) if start == end else f"{ddmm(start)}–{ddmm(end)}"
 
 
+def range_text(first: date, last: date, year: int) -> str:
+    """Б11.40 С1': the days of a change - ``24.11–30.11``, one day ``24.11``; the year is written to BOTH dates when at least one is not in ``year`` (the year of the working date of the answer)."""
+    if first.year == year and last.year == year:
+        return period_text(first, last)
+    one, two = first.strftime("%d.%m.%Y"), last.strftime("%d.%m.%Y")
+    return one if first == last else f"{one}–{two}"
+
+
 def decision_consequence(snapshot: Dict[str, Any], *, owner: bool) -> Optional[str]:
     """G3M С9: the line «Последствие» of the journal of decisions - the sentence the answer of the action gave (payroll, then the debts of the other groups, as ``with_sentence`` joins them);
     the payroll sentence with sums only for the owner (``money_effects.decision_texts``)."""

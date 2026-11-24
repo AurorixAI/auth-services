@@ -11,7 +11,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 from uuid import UUID, uuid4
 
 from sqlalchemy import func
@@ -38,6 +38,7 @@ from .ops_rules import OpsError
 from . import membership_periods
 from . import payment_status as ps
 from . import payments_texts
+from . import payments_views as pv
 from .payments_schemas import (
     ImpactMoney,
     MAX_MONEY,
@@ -543,12 +544,13 @@ class PauseService(_Base):
         return moved, text
 
     def _saved(self, org_id, membership, row, before, after, *, money: bool, owner: bool, dry_run: bool, today: date,
-               first: date, last: date, others: Optional[Tuple["_Moved", str]] = None) -> PauseSaved:
+               first: date, last: date, others: Optional[Tuple["_Moved", str]] = None, changed: Iterable[date] = ()) -> PauseSaved:
         excluded, attended = self._lessons(membership, first, last)
+        rows, later = pv.pause_charge_rows(before, after, today, changed, money=money, membership_id=membership.id)      # Б11.40: the lines are THE two accounts the route counted (the probe and the save read the same)
         moved, text = others if others and money else (None, None)
         return PauseSaved(
             new_debts=moved.new_debts if moved else [], advance_drops=moved.advance_drops if moved else [], other_gains=moved.gains if moved else [], other_groups_text=text or None,
-            pause=self._out(row, membership), impact=impact_of(before, after) if money else None,
+            pause=self._out(row, membership), impact=impact_of(before, after) if money else None, charge_rows=rows, charge_later=later,
             lessons=PauseLessons(excluded=[PauseLessonMark(date=d, marks=m) for d, m in excluded],
                                  attended=[PauseLessonMark(date=d, marks=m) for d, m in attended]),
             payroll=self._payroll(org_id, membership, first, last) if owner else None, dry_run=dry_run,
@@ -606,7 +608,7 @@ class PauseService(_Base):
                     "reason": row.reason, "charged_before": before.charged, "charged_after": after.charged,
                     "advance_before": before.advance, "advance_after": after.advance, **self._other_facts(others[0])})
             out = self._saved(org_id, membership, row, before, after, money=money, owner=owner, dry_run=dry_run, today=today,
-                              first=row.first_day, last=row.last_day, others=others)
+                              first=row.first_day, last=row.last_day, others=others, changed=_days(row.first_day, row.last_day))
             if dry_run:
                 self.db.rollback()
                 return out
@@ -624,7 +626,7 @@ class PauseService(_Base):
         invalidate_summary(org_id)
         logger.info("pause created id=%s membership=%s actor=%s", row.id, membership_id, actor_id)
         return self._saved(org_id, membership, row, before, after, money=money, owner=owner, dry_run=False, today=today,
-                           first=row.first_day, last=row.last_day, others=others)
+                           first=row.first_day, last=row.last_day, others=others, changed=_days(row.first_day, row.last_day))
 
     @staticmethod
     def _other_facts(moved: "_Moved") -> Dict[str, Any]:
@@ -744,7 +746,7 @@ class PauseService(_Base):
                 change_reason = self.pay._check_reason(body.reason)
             line.snapshot = {**line.snapshot, "reason": change_reason or row.reason, "charged_before": before.charged, "charged_after": after.charged, **self._other_facts(others[0])}
             out = self._saved(org_id, membership, row, before, after, money=money, owner=owner, dry_run=dry_run, today=today,
-                              first=min(first, old[0]), last=max(last, old[1]), others=others)
+                              first=min(first, old[0]), last=max(last, old[1]), others=others, changed=_days(first, last) ^ _days(old[0], old[1]))
             if dry_run:
                 self.db.rollback()
                 return out
@@ -754,7 +756,7 @@ class PauseService(_Base):
             raise
         invalidate_summary(org_id)
         return self._saved(org_id, membership, row, before, after, money=money, owner=owner, dry_run=False, today=today,
-                           first=min(first, old[0]), last=max(last, old[1]), others=others)
+                           first=min(first, old[0]), last=max(last, old[1]), others=others, changed=_days(first, last) ^ _days(old[0], old[1]))
 
     @deadlock_guard
     def void(self, org_id: str, pause_id: UUID, actor_id: str, reason: str, *, money: bool, actor_role: str, dry_run: bool = False) -> PauseVoided:
@@ -773,8 +775,9 @@ class PauseService(_Base):
             moved, text = self._others(org_id, family, was, membership.id, done=not dry_run)
             after = self.pay._entry_of(org_id, row.membership_id, today).ledger
             self.pay._family_check(org_id, [row.membership_id])
+            rows, later = pv.pause_charge_rows(before, after, today, _days(row.first_day, row.last_day), money=money, membership_id=membership.id)
             if dry_run:
-                out = PauseVoided(pause=self._out(row), impact=impact_of(before, after) if money else None, dry_run=True,
+                out = PauseVoided(pause=self._out(row), impact=impact_of(before, after) if money else None, charge_rows=rows, charge_later=later, dry_run=True,
                                   new_debts=moved.new_debts if money else [], advance_drops=moved.advance_drops if money else [], other_gains=moved.gains if money else [], other_groups_text=(text or None) if money else None)
                 self.db.rollback()
                 return out
@@ -787,7 +790,7 @@ class PauseService(_Base):
             self.db.rollback()
             raise
         invalidate_summary(org_id)
-        return PauseVoided(pause=self._out(row), impact=impact_of(before, after) if money else None, row=self._row(org_id, row.membership_id, today) if money else None,
+        return PauseVoided(pause=self._out(row), impact=impact_of(before, after) if money else None, charge_rows=rows, charge_later=later, row=self._row(org_id, row.membership_id, today) if money else None,
                            new_debts=moved.new_debts if money else [], advance_drops=moved.advance_drops if money else [], other_gains=moved.gains if money else [], other_groups_text=(text or None) if money else None)
 
     # ---- used by leave / transfer / archive (inside the caller's transaction)

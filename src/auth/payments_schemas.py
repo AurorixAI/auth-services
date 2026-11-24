@@ -1587,9 +1587,31 @@ class PauseOtherGroups(PayModel):
     other_groups_text: Optional[str] = None
 
 
+class PauseChargeRow(PayModel):
+    """Б11.40 С1': one line «период · уроков → сумма» of a pause in the common month: the days of ONE begun period whose lessons the pause took out of the price (or gave back); the words are the server's."""
+
+    label: str                                  # «24.11–30.11» / «24.11» (the year is written to both dates when one is not in the year of the working date)
+    first_day: date_type                        # the first and the last DAY of the period whose state changed
+    last_day: date_type
+    days: int                                   # how many days of the period changed
+    lessons: int                                # how many lessons of the period left the price (or came back)
+    lessons_passed: Optional[int] = None        # of them dated BEFORE the working date; only for a line whose days come BACK (``amount`` > 0), else null
+    amount: Optional[int] = None                # the change of the period's charge, signed; null without access to money
+
+
+class PauseChargeLater(PayModel):
+    """Б11.40 С3': the days of the change that lie in a period that is not charged yet (no sum)."""
+
+    label: str
+    first_day: date_type
+    last_day: date_type
+
+
 class PauseSaved(PauseOtherGroups):
     pause: PauseOut
     impact: Optional[ImpactMoney] = None  # null without access to money
+    charge_rows: List[PauseChargeRow] = Field(default_factory=list)           # Б11.40 С1': empty = the old one line (``impact.charged_delta``)
+    charge_later: Optional[PauseChargeLater] = None
     lessons: PauseLessons
     payroll: Optional[PausePayroll] = None  # the owner only
     dry_run: bool = False
@@ -1599,6 +1621,8 @@ class PauseSaved(PauseOtherGroups):
 class PauseVoided(PauseOtherGroups):
     pause: PauseOut
     impact: Optional[ImpactMoney] = None
+    charge_rows: List[PauseChargeRow] = Field(default_factory=list)
+    charge_later: Optional[PauseChargeLater] = None
     row: Optional[MembershipPaymentRow] = None
     dry_run: bool = False
 
