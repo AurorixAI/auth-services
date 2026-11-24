@@ -1212,34 +1212,38 @@ def _days_of(first: date, last: date) -> List[date]:
 
 
 def _pause_worlds(live: Sequence[Pause], past: Sequence[Pause]) -> Callable[[datetime], Tuple[Pause, ...]]:
-    """Б11.30: the pauses of the PARTICIPATION as they were known at a moment, by ONE definition on the days.  The input: the forms of humans (of every pause of the participation, also one a human took off: ``past`` with no
-    ``voided_at``), the standing cuts of leavings (``cuts``; a pause a leaving took off whole is a cut of all its days at ``voided_at``), and the TOTAL = the days of the live pauses as they are plus the days a standing cut
-    hides.  A day ``d`` is a day of a pause in the world of the moment ``T`` if and only if (1) ``d`` is in the total, and (2) among the events about ``d`` written not after ``T`` (a form of a human that has the day; a cut that
-    removed it) there is one, and the last of them is a form of a human (at one moment a cut is after a form).  A day a human took off is in no world (it is not in the total); a day he added is known from the first
-    moment it was in a form; a day a leaving cut is out from the moment of the cut.  The world has one pause per stretch of days."""
-    events: List[Tuple[datetime, int, List[date]]] = []                  # (moment, 0 = a form of a human / 1 = a cut, the days)
-    total: Set[date] = set()
-    for p in (*live, *past):
-        events += [(m, 0, _days_of(a, b)) for m, a, b in (p.forms or ((datetime.min, p.first, p.last),))]
-        events += [(m, 1, _days_of(a, b)) for m, a, b in p.cuts]
+    """Б11.30 п. 1 as changed by Б11.35 п. 1 / Б11.36 п. 2: the pauses of the PARTICIPATION as they were known at a moment, by ONE definition on the days.  The input: the forms of humans (of every pause of the participation, also
+    one a human took off: ``past`` with no ``voided_at``), the cuts of leavings that STAND (a cut counts only on a pause a human did NOT take off: a live one, or one a leaving took off whole - ``voided_at``; the cut on a pause a
+    human took off is no fact of any world), and the days of the live pauses as they are today.  A day ``d`` is a day of a pause in the world of the moment ``T`` iff the last event about ``d`` written not after ``T`` (a form of a
+    human that has the day; a standing cut that took it out; at one moment a cut is after a form) is a form of a human AND (a) ``d`` is a day of a live pause today, or (b) a standing cut took ``d`` out LATER than ``T``.  A live
+    pause with no forms (the journal does not end in its days, or no stamp: it is read as known always) gives its days of today to EVERY world.  The world has one pause per stretch of days."""
+    events: List[Tuple[datetime, int, Set[date]]] = []                   # (moment, 0 = a form of a human / 1 = a standing cut, the days)
+    today: Set[date] = set()
+    always: Set[date] = set()
     for p in live:
-        total.update(_days_of(p.first, p.last))
-        total.update(d for _, a, b in p.cuts for d in _days_of(a, b))
-    for p in past:
-        if p.voided_at is not None:
-            events.append((p.voided_at, 1, _days_of(p.first, p.last)))
-            total.update(_days_of(p.first, p.last))
+        today.update(_days_of(p.first, p.last))
+        if not p.forms:
+            always.update(_days_of(p.first, p.last))
+    for p, is_live in ((*((p, True) for p in live), *((p, False) for p in past))):
+        events += [(m, 0, set(_days_of(a, b))) for m, a, b in (p.forms or ((datetime.min, p.first, p.last),))]
+        if is_live or p.voided_at is not None:
+            events += [(m, 1, set(_days_of(a, b))) for m, a, b in p.cuts]
+        if p.voided_at is not None and not is_live:
+            events.append((p.voided_at, 1, set(_days_of(p.first, p.last))))
     events.sort(key=lambda e: e[:2])
+    cut_events = [e for e in events if e[1] == 1]
 
     def known(moment: datetime) -> Tuple[Pause, ...]:
-        state: Dict[date, int] = {}
+        last: Dict[date, int] = {}
         for at, kind, days in events:
             if at > moment:
                 break
             for d in days:
-                state[d] = kind
+                last[d] = kind
+        later = [days for at, _, days in cut_events if at > moment]
+        shown = {d for d, kind in last.items() if kind == 0 and (d in today or any(d in days for days in later))} | always
         out: List[Pause] = []
-        for d in sorted(d for d, kind in state.items() if kind == 0 and d in total):
+        for d in sorted(shown):
             if out and d == out[-1].last + timedelta(days=1):
                 out[-1] = Pause(out[-1].first, d)
             else:
