@@ -160,13 +160,27 @@ def test_b11_30_w3_a_new_pause_after_an_ordinary_return_is_counted_by_the_days_o
     world_w3(world, fixed_today)
 
 
-def test_b11_30_w3_the_second_leaving_takes_the_new_pause_off_and_its_cancel_gives_it_back_the_numbers_do_not_move(world, fixed_today):
-    # 23.11 the SECOND leaving (it takes the pause of the future off: the stay has no lesson after 23.11 outside the pause): the same numbers (the spec: 300 000 / debt 0 / advance 150 000 / used 100 000; the clean ledger with the
-    # second stay in the input says the same); its cancel the same day: the same numbers.
+def test_b11_30_w3_the_second_leaving_makes_the_stay_empty_and_drops_it_from_the_input_its_cancel_gives_it_back(world, fixed_today):
+    # 23.11 the SECOND leaving: the stay 21 - 23.11 has no lesson of its own (24 26 27 are the days of the pause 24 - 30.11 that goes with the cut), so it never began and leaves no trace (Б11.14: the records made during it
+    # count as made after the previous leaving).  The real stay 01 - 19.11 costs 6 lessons x 50 000 = 300 000; the first payment 150 000; the forgiveness covers the whole debt 150 000 left (used 150 000); the payment of 200 000
+    # made after the return is to give back whole: advance 200 000 = the limit of the refund.  The four numbers (the window of the leaving, the answer, the row, the account after) are one set; the cancel the same day gives
+    # the stay back: used 100 000, advance 150 000 (the same as before the leaving).
+    from tests.payf_helpers import rows
     g, s, new_id = world_w3(world, fixed_today)
     fixed_today(D(2026, 11, 23))
-    leave_numbers(world, s, g, D(2026, 11, 23), (300_000, 0, 150_000, 100_000, 150_000))
-    check(world, s, g, D(2026, 11, 23), charged=300_000, debt=0, advance=150_000, used=100_000, granted=250_000)
+    url = f"{API}/org/groups/{g.id}/students/{s.id}"
+    window = owner(world).get(f"{url}/leave-preview")
+    assert window.status_code == 200, window.text
+    probe = next(m for m in window.json()["memberships"] if m["membership_id"] == str(membership(world, s, g).id))["money"]
+    done = owner(world).post(f"{url}/leave", json={})
+    assert done.status_code == 200, done.text
+    after = led(world, s, g, D(2026, 11, 23))
+    stays = done.json()["effects"]["stays"]
+    row = next(r for r in rows(world, s) if r["membership_id"] == str(membership(world, s, g).id))
+    assert [(x["code"], x["amount"]) for x in stays] == [("advance", 200_000)] and (row["debt_amount"], row["state"], row["state_text"]) == (0, "paid", "Аванс 200\xa0000\xa0сум"), (stays, row)
+    assert (probe["charged_after_leave"], probe["debt_amount"], probe["advance"], probe["refundable"]) == (after.charged, after.debt, after.advance, after.refundable) == (300_000, 0, 200_000, 200_000), (probe, after)
+    assert (after.written_off, after.refundable) == (150_000, 200_000)
+    check(world, s, g, D(2026, 11, 23), charged=300_000, debt=0, advance=200_000, used=150_000, granted=250_000)
     back = add(world, s, group=g, mode="add")["leave_undo"]
     assert back["undone"] is True, back
     check(world, s, g, D(2026, 11, 23), charged=300_000, debt=0, advance=150_000, used=100_000, granted=250_000)
