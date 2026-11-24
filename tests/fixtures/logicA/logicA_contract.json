@@ -3918,6 +3918,18 @@
               }
             ],
             "title": "Lessons Passed"
+          },
+          "period_begins": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Period Begins"
           }
         },
         "required": [
@@ -3927,7 +3939,8 @@
           "days",
           "lessons",
           "lessons_passed",
-          "amount"
+          "amount",
+          "period_begins"
         ],
         "title": "PauseChargeRow",
         "type": "object"
