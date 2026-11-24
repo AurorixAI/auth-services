@@ -64,7 +64,7 @@ ERRORS_BY_OPERATION: Dict[Tuple[str, str], List[Tuple[int, str, str]]] = {
     ("put", "/org/memberships/{membership_id}/opening-balance"): OPENING,
     ("post", "/org/opening-balances/{opening_id}/void"): OPENING[3:4],
     ("post", "/org/memberships/{membership_id}/pauses"): PAUSE,
-    ("patch", "/org/pauses/{pause_id}"): PAUSE + [(422, "REASON_REQUIRED", "Причина: от 3 до 500 символов (обязательна, когда изменение трогает деньги)")],
+    ("patch", "/org/pauses/{pause_id}"): PAUSE + [(409, "PAUSE_CLOSED_BY_LEAVE", "Пауза закрыта уходом ученика. Верните ученика в группу, затем измените паузу. | Пауза закрыта уходом ученика, изменить её нельзя. Можно снять паузу целиком."), (422, "REASON_REQUIRED", "Причина: от 3 до 500 символов (обязательна, когда изменение трогает деньги)")],
     ("post", "/org/pauses/{pause_id}/void"): PAUSE[3:5] + [(422, "REASON_REQUIRED", "Причина: от 3 до 500 символов")],
     ("post", "/org/groups/{group_id}/students/{student_id}/leave"): LEAVE,
     ("post", "/org/students/{student_id}/archive"): LEAVE,

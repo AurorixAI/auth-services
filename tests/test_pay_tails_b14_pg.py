@@ -122,11 +122,10 @@ def test_b11_30_d4_splitting_a_pause_into_two_is_no_edit(world, fixed_today):
 
 
 # ---------------------------------------------------------------------------------------------------------------------------- W3 (the reachable form): the new pause after the return, the second leaving, its cancel
-def test_b11_30_w3_a_new_pause_after_an_ordinary_return_the_second_leaving_takes_it_off_and_its_cancel_gives_it_back(world, fixed_today):
+def world_w3(world, fixed_today):
     # 05.11 paid 150 000; 09.11 the pause 17 - 30.11; 19.11 the leaving (the cut 17 - 19.11); 21.11 an ORDINARY return (the lesson of 20.11 is not his); 21.11 forgiven 250 000 (of the debt 300 000) and paid 200 000: the stay
-    # 01 - 19.11 and from 21.11, the pause 17 - 19: the lessons 3 5 6 10 12 13 17? no - 17 19 are paused: 3 5 6 10 12 13 + 24 26 27 = 9 x 50 000 = 450 000, used 250 000, advance 150 000; 22.11 a NEW pause 24 - 30.11 (the
-    # human enters it: the days 24 - 30 were a pause by the old pause in the worlds before the leaving): the lessons 3 5 6 10 12 13 = 300 000, the forgiveness is cut by 150 000: used 100 000, advance 150 000, debt 0;
-    # 23.11 the SECOND leaving (it takes the pause of the future off: the stay has no lesson after 23.11 outside the pause): the same numbers; its cancel the same day: the same numbers.
+    # 01 - 19.11 and from 21.11, the pause 17 - 19: the lessons 3 5 6 10 12 13 + 24 26 27 = 9 x 50 000 = 450 000, used 250 000, advance 150 000; 22.11 a NEW pause 24 - 30.11 (the human enters it: the days 24 - 30 were a pause by
+    # the old pause in the worlds before the leaving): the lessons 3 5 6 10 12 13 = 300 000, the forgiveness is cut by 150 000: used 100 000, advance 150 000, debt 0 (the clean ledger with the definition).
     g, s = om_at(world, fixed_today, D(2026, 11, 1))
     fixed_today(D(2026, 11, 5))
     pay(world, s, g, amount=150_000, paid_on=D(2026, 11, 5))
@@ -141,6 +140,17 @@ def test_b11_30_w3_a_new_pause_after_an_ordinary_return_the_second_leaving_takes
     check(world, s, g, D(2026, 11, 21), charged=450_000, debt=0, advance=150_000, used=250_000, granted=250_000)
     fixed_today(D(2026, 11, 22))
     new_id = new_pause(world, s, g, D(2026, 11, 22), "2026-11-24", "2026-11-30", debt=0, advance=150_000, charged=300_000, used=100_000, granted=250_000)
+    return g, s, new_id
+
+
+def test_b11_30_w3_a_new_pause_after_an_ordinary_return_is_counted_by_the_days_of_the_old_pause(world, fixed_today):
+    world_w3(world, fixed_today)
+
+
+def test_b11_30_w3_the_second_leaving_takes_the_new_pause_off_and_its_cancel_gives_it_back_the_numbers_do_not_move(world, fixed_today):
+    # 23.11 the SECOND leaving (it takes the pause of the future off: the stay has no lesson after 23.11 outside the pause): the same numbers (the spec: 300 000 / debt 0 / advance 150 000 / used 100 000; the clean ledger with the
+    # second stay in the input says the same); its cancel the same day: the same numbers.
+    g, s, new_id = world_w3(world, fixed_today)
     fixed_today(D(2026, 11, 23))
     leave_numbers(world, s, g, D(2026, 11, 23), (300_000, 0, 150_000, 100_000, 150_000))
     check(world, s, g, D(2026, 11, 23), charged=300_000, debt=0, advance=150_000, used=100_000, granted=250_000)
@@ -270,3 +280,49 @@ def test_b11_30_the_reason_alone_of_a_closed_pause_is_edited_and_a_pause_the_lea
     after = led(world, s, g, D(2026, 11, 19))
     said = lambda i: (i["debt_after"], i["advance_after"])
     assert said(probe.json()["impact"]) == said(saved.json()["impact"]) == (saved.json()["row"]["unpaid"], saved.json()["row"]["advance"]) == (after.debt, after.advance)
+
+
+# ---------------------------------------------------------------------------------------------------------------------------- the leaving and the edit of the days of a pause at the same time
+# What the two routes lock (read in the code, then tested): the edit takes the pause row FOR UPDATE (``_locked_pause``) and the membership FOR NO KEY UPDATE; the leaving takes the student / the membership FOR KEY SHARE (it
+# does NOT wait for an edit by those) and, since this step, the pause rows it cuts FOR UPDATE (``_live(lock=True)`` in ``close_at_leave``: the edit in flight is waited for and the cut is made of the form it wrote).  The edit
+# reads the journal of the pause AFTER its row lock: a leaving that came first is seen (409).  A real concurrent pair is not built on the routes (one session of the test): the two ORDERS are run one after the other, and the
+# locks are asserted on the statements.
+def test_b11_30_race_the_edit_first_then_the_leaving_cuts_the_form_the_edit_wrote(world, fixed_today):
+    # 09.11 the pause 17 - 30.11; 18.11 the edit to 15 - 30.11 (no cut stands: allowed); 19.11 the leaving: the cut 15 - 19.11 with ``was`` = 15 - 30.11; November 3 5 6 10 12 13 = 300 000 (the lessons 17 and 19 are paused).
+    g, s = om_at(world, fixed_today, D(2026, 11, 1))
+    fixed_today(D(2026, 11, 9))
+    pause_id = pause_on(world, s, g, "2026-11-17", "2026-11-30")
+    fixed_today(D(2026, 11, 18))
+    r = owner(world).patch(f"{API}/org/pauses/{pause_id}", json={"first_day": "2026-11-15", "last_day": "2026-11-30", "reason": "Поправили"})
+    assert r.status_code == 200, r.text
+    fixed_today(D(2026, 11, 19))
+    leave(world, g, s)
+    assert row_of(world, pause_id) == (D(2026, 11, 15), D(2026, 11, 19), False)
+    assert journal_of(world, pause_id)[-1] == ("membership_pause_set", "2026-11-15", "2026-11-19", "leave")
+    from src.models.auth import GroupAudit
+    cut = [a for a in world.db.query(GroupAudit).order_by(GroupAudit.created_at, GroupAudit.id) if (a.snapshot or {}).get("pause_id") == pause_id and (a.snapshot or {}).get("via") == "leave"][0]
+    assert cut.snapshot["was"] == ["2026-11-15", "2026-11-30"]
+    assert led(world, s, g, D(2026, 11, 19)).charged == 300_000
+
+
+def test_b11_30_race_the_leaving_first_then_the_edit_is_refused_and_nothing_is_written(world, fixed_today):
+    g, s, pause_id = world_cut(world, fixed_today)                       # 19.11 the leaving cuts 17 - 30 to 17 - 19
+    refused(world, s, g, D(2026, 11, 19), pause_id, CLOSED_NOW)
+
+
+def test_b11_30_race_the_leaving_locks_the_pause_rows_it_cuts(world, fixed_today):
+    from sqlalchemy import event
+    g, s = om_at(world, fixed_today, D(2026, 11, 1))
+    fixed_today(D(2026, 11, 9))
+    pause_on(world, s, g, "2026-11-17", "2026-11-30")
+    fixed_today(D(2026, 11, 19))
+    seen = []
+    engine = world.db.get_bind()
+    spy = lambda conn, cursor, statement, params, context, executemany: seen.append(statement)
+    event.listen(engine, "before_cursor_execute", spy)
+    try:
+        leave(world, g, s)
+    finally:
+        event.remove(engine, "before_cursor_execute", spy)
+    selects = [x for x in seen if "FROM membership_pauses" in x and x.lstrip().upper().startswith("SELECT")]
+    assert selects and any("FOR UPDATE" in x for x in selects), selects

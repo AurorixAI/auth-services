@@ -32,7 +32,7 @@ from src.models.auth import (
 )
 
 from . import billing_ledger as bl
-from .ledger_service import AUDIT_PAUSE_SET, AUDIT_PAUSE_VOID, LEAVE_VOID_REASON
+from .ledger_service import AUDIT_PAUSE_SET, AUDIT_PAUSE_VOID, LEAVE_VIA, LEAVE_VOID_REASON, pause_journal
 from .closed_period import ClosedPeriods, group_teacher_ids
 from .ops_rules import OpsError
 from . import membership_periods
@@ -112,6 +112,16 @@ class PauseLessonInProgress(PaymentConflict):
 
 class PauseOverlapsAttended(PaymentConflict):
     code = "PAUSE_OVERLAPS_ATTENDED"
+
+
+class PauseClosedByLeave(PaymentConflict):
+    """Б11.30 п. 3: a pause a LEAVING cut (a leaving, a transfer, an archive) is closed for the DAYS: what the student has after the cut is not his to move; the text says by the state what can be done."""
+
+    code = "PAUSE_CLOSED_BY_LEAVE"
+
+
+PAUSE_CLOSED_NOW = "Пауза закрыта уходом ученика. Верните ученика в группу, затем измените паузу."
+PAUSE_CLOSED_LATER = "Пауза закрыта уходом ученика, изменить её нельзя. Можно снять паузу целиком."
 
 
 class PauseBreaksRefund(PaymentConflict):
@@ -432,10 +442,12 @@ class PauseService(_Base):
                 .order_by(MembershipPause.first_day.desc(), MembershipPause.created_at.desc()).all())
         return [self._out(r) for r in rows]
 
-    def _live(self, membership_id: UUID) -> List[MembershipPause]:
-        return (self.db.query(MembershipPause)
-                .filter(MembershipPause.membership_id == membership_id, MembershipPause.voided_at.is_(None))
-                .order_by(MembershipPause.first_day).all())
+    def _live(self, membership_id: UUID, *, lock: bool = False) -> List[MembershipPause]:
+        """The live pauses of a membership; ``lock``: the rows are locked and read as they are NOW (an edit of a pause in flight is waited for, not read half-way: a leaving cuts the form that edit wrote)."""
+        query = (self.db.query(MembershipPause)
+                 .filter(MembershipPause.membership_id == membership_id, MembershipPause.voided_at.is_(None))
+                 .order_by(MembershipPause.first_day))
+        return query.populate_existing().with_for_update().all() if lock else query.all()
 
     # ---- checks
 
@@ -629,6 +641,20 @@ class PauseService(_Base):
         """Days that become payable again must not lie in a closed month (422 ``PAUSE_LOCKED``)."""
         self._assert_days_open(org_id, membership, old - new, today)
 
+    def _assert_not_closed_by_leave(self, org_id: str, row: MembershipPause, membership: StudentGroup, days: Tuple[date, date], today: date) -> None:
+        """409 ``PAUSE_CLOSED_BY_LEAVE``: the edit changes the DAYS of a pause a leaving cut (a cut stands in its journal: ``pause_journal``).  The reason alone (the same days) and a pause no leaving touched pass.  The text by the
+        state: the leaving is of today and its cancel is possible (nothing was refunded / forgiven after it, no transfer to another group) - «bring the student back»; else - only «take the pause off»."""
+        if days == (row.first_day, row.last_day):
+            return
+        cut = pause_journal(self.db, org_id, row).cut
+        if cut is None:
+            return
+        from . import leave_undo  # lazy: pulls in the pricing modules
+
+        left = leave_undo.naive_utc(membership.left_at)                  # the leaving whose cancel would give the pause back is the LAST one, and the cut is of it
+        back = not membership.is_active and left is not None and cut.at >= left and leave_undo.left_today(left, today) and leave_undo._blocker(self.db, membership, left, (), False) is None
+        raise PauseClosedByLeave(PAUSE_CLOSED_NOW if back else PAUSE_CLOSED_LATER)
+
     @deadlock_guard
     def patch(
         self, org_id: str, pause_id: UUID, actor_id: str, body: PausePatch, *, dry_run: bool = False, money: bool,
@@ -640,6 +666,7 @@ class PauseService(_Base):
             membership = self.pay._membership(org_id, row.membership_id, lock=True)
             first = body.first_day or row.first_day
             last = body.last_day or row.last_day
+            self._assert_not_closed_by_leave(org_id, row, membership, (first, last), today)          # Б11.30 п. 3: after the lock of the family, before every calculation; the probe and the save say the same
             if last < first:
                 raise PauseRange("Пауза: «по» не раньше «с»")
             if (last - first).days + 1 > PAUSE_MAX_DAYS:
@@ -735,7 +762,7 @@ class PauseService(_Base):
         (``leave`` / ``transfer``), written to the line of the journal."""
         touched = 0
         membership = None
-        for p in self._live(membership_id):
+        for p in self._live(membership_id, lock=True):
             was = [p.first_day.isoformat(), p.last_day.isoformat()]
             if p.first_day > left_day:
                 p.voided_at, p.voided_by, p.void_reason = _utcnow(), UUID(str(actor_id)) if actor_id else None, LEAVE_VOID_REASON
@@ -763,7 +790,7 @@ class PauseService(_Base):
         """The pauses that go with the student when his stay ends by a TRANSFER on ``left_day``: ``[(first_day, last_day, reason, old pause id)]`` - the rest of the pause that holds the
         day (from the day after it) and every later one whole.  Read BEFORE ``close_at_leave`` cuts / voids them in the old group."""
         after = left_day + timedelta(days=1)
-        return [(max(p.first_day, after), p.last_day, p.reason, p.id) for p in self._live(membership_id) if p.last_day > left_day]
+        return [(max(p.first_day, after), p.last_day, p.reason, p.id) for p in self._live(membership_id, lock=True) if p.last_day > left_day]
 
     def carry_to(self, org_id: str, target: StudentGroup, plan: List[Tuple[date, date, Optional[str], UUID]], actor_id: str) -> List[MembershipPause]:
         """Create the planned pauses in the new group of the student (same days, same reason; the days the new group has under a pause of its own are not doubled) - one line of the
@@ -788,9 +815,9 @@ class PauseService(_Base):
     # ---- Money-2 T6: a return on the day of leaving takes the leaving back
 
     def restore_after_leave(self, org_id: str, membership: StudentGroup, since: datetime, actor_id: str) -> List[Tuple[MembershipPause, date, date]]:
-        """Give the membership its pauses back as the journal of THE leaving says they were (the lines ``via`` leave / transfer / archive written since ``since``): a pause that was cut gets its last day
-        back, a cancelled one lives again - each with a line of the journal (``via = leave_undone``).  A pause that somebody changed after the leaving (another last day, cancelled for another reason) is left.
-        Returns ``[(pause, first_day, last_day it has now)]``."""
+        """Give the membership its pauses back as the journal of THE leaving says they were (the cuts written since ``since``, read by ``pause_journal``): a pause that was cut gets its last day back, a cancelled one lives again -
+        each with a line of the journal (``via = leave_undone``).  Under a cut nobody edits the days (409), so what stands is what the cut left.  A pause a human took off after the cut is left (it does not exist, the cancel writes
+        nothing about it).  Returns ``[(pause, first_day, last_day it has now)]``."""
         lines = (self.db.query(GroupAudit).filter(GroupAudit.org_id == org_id, GroupAudit.group_id == membership.group_id, GroupAudit.created_at >= since,
                                                   GroupAudit.action.in_((AUDIT_PAUSE_SET, AUDIT_PAUSE_VOID)))
                  .order_by(GroupAudit.created_at, GroupAudit.id).all())
@@ -798,35 +825,27 @@ class PauseService(_Base):
         seen: Set[str] = set()
         for line in lines:
             snap = line.snapshot or {}
-            if snap.get("membership_id") != str(membership.id) or snap.get("via") not in ("leave", "transfer", "archive") or not snap.get("was"):
+            if snap.get("membership_id") != str(membership.id) or snap.get("via") not in LEAVE_VIA or not snap.get("was") or snap.get("pause_id") in seen:
                 continue
             pause = self.db.get(MembershipPause, UUID(snap["pause_id"]))
-            if pause is None or str(pause.id) in seen:
-                continue
-            first, last = (date.fromisoformat(d) for d in snap["was"])
-            cut = (pause.first_day, pause.last_day)           # the form it has until now (the line of the journal says it: ``was``)
-            restorable = True
-            if line.action == AUDIT_PAUSE_VOID:
+            cut = pause_journal(self.db, org_id, pause).cut if pause is not None else None
+            if cut is None or cut.at < since:
+                continue                                      # no cut stands (a cancel wrote it already, or a later line took it back)
+            if cut.now is None:
                 if pause.voided_at is None or pause.void_reason != LEAVE_VOID_REASON:
                     continue
                 pause.voided_at = pause.voided_by = pause.void_reason = None
             elif pause.voided_at is not None:
-                continue                                      # Б11.28 п. 3: a human took the pause off after the cut - it does not exist, the cancel writes nothing about it
-            elif pause.last_day.isoformat() != snap["last_day"]:
-                restorable = False                            # Б11.26 п. 1: nothing to give back (a human changed the end), but the cancelled leaving leaves the history of the pause: the line below says its days as they are
+                continue                                      # Б11.28 п. 3: a human took the pause off after the cut - it does not exist
             else:
-                pause.last_day = last
+                pause.last_day = cut.was[1]
             seen.add(str(pause.id))
             self.db.flush()
-            if restorable:
-                self._close_excuses(membership, first, last, actor_id)
-            else:
-                last = pause.last_day
+            self._close_excuses(membership, *cut.was, actor_id)
             self._audit(str(pause.org_id), membership, actor_id, self.pay.role_of(str(pause.org_id), actor_id), AUDIT_PAUSE_SET, {
                 "actor_id": str(actor_id), "membership_id": str(membership.id), "student_id": str(pause.student_id), "pause_id": str(pause.id), "first_day": pause.first_day.isoformat(),
-                "last_day": last.isoformat(), "was": [cut[0].isoformat(), cut[1].isoformat()] if line.action == AUDIT_PAUSE_SET else None, "reason": "ученика вернули в день ухода", "via": "leave_undone"})
-            if restorable:
-                done.append((pause, pause.first_day, last))
+                "last_day": cut.was[1].isoformat(), "was": [cut.now[0].isoformat(), cut.now[1].isoformat()] if cut.now is not None else None, "reason": "ученика вернули в день ухода", "via": "leave_undone"})
+            done.append((pause, pause.first_day, cut.was[1]))
         return done
 
 
