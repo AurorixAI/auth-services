@@ -826,8 +826,7 @@ class PauseService(_Base):
 
     def restore_after_leave(self, org_id: str, membership: StudentGroup, since: datetime, actor_id: str) -> List[Tuple[MembershipPause, date, date]]:
         """Give the membership its pauses back as the journal of THE leaving says they were (the cuts written since ``since``, read by ``pause_journal``): a pause that was cut gets its last day back, a cancelled one lives again -
-        each with a line of the journal (``via = leave_undone``).  Under a cut nobody edits the days (409), so what stands is what the cut left.  A pause a human took off after the cut is left (it does not exist, the cancel writes
-        nothing about it).  Returns ``[(pause, first_day, last_day it has now)]``."""
+        each with a line of the journal (``via = leave_undone``).  Under a cut nobody edits the days (409), so what stands is what the cut left.  A pause a human took off after the cut is not given back (it does not exist); the cancel writes the line that erases the cut on it, with ``restored: false``.  Returns ``[(pause, first_day, last_day it has now)]``."""
         lines = (self.db.query(GroupAudit).filter(GroupAudit.org_id == org_id, GroupAudit.group_id == membership.group_id, GroupAudit.created_at >= since,
                                                   GroupAudit.action.in_((AUDIT_PAUSE_SET, AUDIT_PAUSE_VOID)))
                  .order_by(GroupAudit.created_at, GroupAudit.id).all())
@@ -846,7 +845,13 @@ class PauseService(_Base):
                     continue
                 pause.voided_at = pause.voided_by = pause.void_reason = None
             elif pause.voided_at is not None:
-                continue                                      # Б11.28 п. 3: a human took the pause off after the cut - it does not exist
+                # Б11.28 п. 3: a human took the pause off after the cut - it does not exist and is NOT given back.  Б11.35 п. 2 / Б11.36 п. 4: the cut on it is cancelled all the same, by the line of the journal that cancels
+                # a cut (the ONE reader erases the cut by it: ``sound`` stays true, the line is no form of a human): the days of the row as they are, ``was`` none, ``restored`` false; the row of the pause is not touched
+                seen.add(str(pause.id))
+                self._audit(str(pause.org_id), membership, actor_id, self.pay.role_of(str(pause.org_id), actor_id), AUDIT_PAUSE_SET, {
+                    "actor_id": str(actor_id), "membership_id": str(membership.id), "student_id": str(pause.student_id), "pause_id": str(pause.id), "first_day": pause.first_day.isoformat(),
+                    "last_day": pause.last_day.isoformat(), "was": None, "restored": False, "reason": "уход отменён; пауза была снята раньше и не возвращена", "via": "leave_undone"})
+                continue
             else:
                 pause.last_day = cut.was[1]
             seen.add(str(pause.id))

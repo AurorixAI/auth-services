@@ -135,3 +135,11 @@ def test_b11_36_2_a_pause_read_as_known_always_is_in_every_world_a_cut_of_anothe
     assert days(world(at(20))) == span(17, 19) + span(24, 30) and days(world(at(10))) == span(17, 30) and days(world(datetime.min)) == span(24, 30)
     # the days of the live pauses today are the world «now» (the strict property of the generator)
     assert days(world(bl.PROBE_MOMENT)) == days([a_cut(), b_unsound])
+
+
+# Б11.36 п. 9: a form and a cut at ONE moment (one transaction): the cut is after the form.  Not reachable by the routes: the form of a pause (the entering, an edit) and a cut of a leaving are written by different requests, every line
+# is stamped by its own reading of the clock (``logica_service._audit`` / ``close_at_leave`` run in the transaction of the leaving, which does not write a form of the pause it cuts); the order is the key ``(moment, kind)`` of ``_pause_worlds``.
+def test_b11_36_9_a_form_and_a_cut_of_one_moment_the_cut_is_after_the_form():
+    p = bl.Pause(N(17), N(19), ((at(9), N(17), N(30)), (at(19), N(17), N(30))), None, ((at(19), N(20), N(30)),))
+    world = bl._pause_worlds([p], [])
+    assert days(world(at(19))) == span(17, 19) and days(world(at(19, 2, 59))) == span(17, 30) and days(world(bl.PROBE_MOMENT)) == span(17, 19)

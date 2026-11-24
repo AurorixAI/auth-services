@@ -403,8 +403,8 @@ def world_s2(world, fixed_today):
 def test_b11_27_the_leaving_cut_the_pause_the_human_took_it_off_and_the_leaving_is_cancelled_the_pause_stays_off(world, fixed_today):
     # 05.11 forgiven 300 000 and paid 300 000 (November 600 000); 09.11 the pause 17 - 30.11 (November 300 000: used 0, advance 0); 20.11 the leaving: the pause is cut to 17 - 20.11, the stay 01 - 20.11 = 300 000;
     # the same day the human takes the pause OFF with a reason of his own: «there was no pause» - 01 - 20.11 = lessons 3 5 6 10 12 13 17 19 20 = 9 x 50 000 = 450 000 = the money 300 000 + the forgiveness 150 000, debt 0;
-    # the cancel of the leaving: the student is in the group, there is no pause, November 600 000 = the money 300 000 + the forgiveness 300 000, debt 0, advance 0.  The cancel does NOT write ``leave_undone`` for a pause
-    # nobody restores and does not put it back.
+    # the cancel of the leaving: the student is in the group, there is no pause, November 600 000 = the money 300 000 + the forgiveness 300 000, debt 0, advance 0.  The pause is not put back (the row stays off); since PAY-TAILS Б11.35 п. 2 / Б11.36 п. 4 the cancel
+    # writes the line ``leave_undone`` (``restored`` false, the days of the row as they are) that erases the cut on it.
     g, s, pause_id = world_s2(world, fixed_today)
     fixed_today(D(2026, 11, 20))
     leave(world, g, s)
@@ -416,4 +416,4 @@ def test_b11_27_the_leaving_cut_the_pause_the_human_took_it_off_and_the_leaving_
     check(world, s, g, D(2026, 11, 20), charged=600_000, debt=0, advance=0, used=300_000, granted=300_000)
     from src.models.auth import MembershipPause
     row = world.db.get(MembershipPause, UUID(pause_id))
-    assert row.voided_at is not None and undo_line(world, pause_id) == []
+    assert row.voided_at is not None and undo_line(world, pause_id) == [("2026-11-17", "2026-11-20")]          # not put back; the cut on it is cancelled by the line (it was: no line at all)
