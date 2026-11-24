@@ -33,6 +33,11 @@ def later_of(body):
     return None if x is None else (x["label"], x["first_day"], x["last_day"])
 
 
+def begins_of(body):
+    """Б11.43: ``period_begins`` of every line, as ISO text (null = the line of a period that began on both sides or is not carried across the working date)."""
+    return [r["period_begins"] for r in body["charge_rows"]]
+
+
 def make(world, s, g, first, last):
     url = f"{API}/org/memberships/{membership(world, s, g).id}/pauses"
     body = {"first_day": first, "last_day": last, "reason": "Болезнь"}
@@ -48,9 +53,9 @@ def void(world, pause_id):
     return lambda dry: owner(world).post(f"{API}/org/pauses/{pause_id}/void", params={"dry_run": "true"} if dry else {}, json={"reason": "Передумали"})
 
 
-def act(world, s, g, today, call, rows, later, delta, name=None):
+def act(world, s, g, today, call, rows, later, delta, name=None, begins=None):
     """The probe and the save of one action and the FOUR numbers: the lines of the probe = the lines of the save = ``rows`` (the hand count); ``charge_later``; the sum of the lines = ``impact.charged_delta`` of
-    the probe = of the save = the charge of the account after - the charge before = ``delta``."""
+    the probe = of the save = the charge of the account after - the charge before = ``delta``; ``period_begins`` of every line (Б11.43) = ``begins`` (default: null in every line)."""
     before = led(world, s, g, today).charged
     probe, saved = call(True), call(False)
     assert probe.status_code in (200, 201) and saved.status_code in (200, 201), (probe.text[:300], saved.text[:300])
@@ -59,6 +64,7 @@ def act(world, s, g, today, call, rows, later, delta, name=None):
         dump(name, p)                                                   # the REAL answer of the probe for the screens (``$ANSWERS_DIR``; nothing is written without it)
     after = led(world, s, g, today).charged
     assert lines(p) == lines(a) == rows, ("GOT probe / save", lines(p), lines(a))
+    assert begins_of(p) == begins_of(a) == (begins if begins is not None else [None] * len(rows)), ("GOT period_begins", begins_of(p), begins_of(a))
     assert later_of(p) == later_of(a) == later, (later_of(p), later_of(a))
     assert p["impact"]["charged_delta"] == a["impact"]["charged_delta"] == after - before == delta, (p["impact"]["charged_delta"], a["impact"]["charged_delta"], after - before)
     if rows:
@@ -98,7 +104,8 @@ def test_c3_working_date_02_12_the_period_that_the_pause_moves_to_the_future_giv
     g, s = om_at(world, fixed_today, D(2026, 11, 1))
     fixed_today(D(2026, 12, 2))
     act(world, s, g, D(2026, 12, 2), make(world, s, g, "2026-11-24", "2026-12-03"),
-        [("24.11–30.11", "2026-11-24", "2026-11-30", 7, 3, None, -150_000), ("01.12–03.12", "2026-12-01", "2026-12-03", 3, 2, None, -600_000)], None, -750_000, name="pause_probe_create_two_months_begun_0212")
+        [("24.11–30.11", "2026-11-24", "2026-11-30", 7, 3, None, -150_000), ("01.12–03.12", "2026-12-01", "2026-12-03", 3, 2, None, -600_000)], None, -750_000, name="pause_probe_create_two_months_begun_0212",
+        begins=[None, "2026-12-04"])         # Б11.43 п. 1, world 1: the first paid day of December after the pause is 04.12 (> 02.12): December is carried out of the price; November began on both sides
 
 
 def test_c3_working_date_04_12_both_months_begun_two_lines_december_by_the_rounding_of_the_product(world, fixed_today):
@@ -283,3 +290,49 @@ def test_c14_the_list_of_the_pauses_of_a_participation_running_scheduled_and_two
     assert r.status_code == 200, r.text
     assert [(p["first_day"], p["last_day"]) for p in r.json()] == [("2026-12-10", "2026-12-14"), ("2026-11-18", "2026-12-01"), ("2026-10-20", "2026-10-25"), ("2026-10-05", "2026-10-11")]
     dump("pauses_list_mixed", r.json())
+
+
+def test_c15_working_date_02_12_the_pause_taken_off_whole_gives_the_period_back_that_has_begun_with_its_own_first_day(world, fixed_today):
+    # Б11.43 п. 1, world 2.  Hand count BEFORE the run.  The pause 24.11 - 03.12 is put on 02.12 (as in the world 1): the charge is 450 000 (November 9 of 12; December has not begun in the account: 0).  Taken off the same
+    # day: November 600 000 (+150 000, 3 lessons 24 26 27, all three have passed, 7 days, begun on both sides: ``period_begins`` null); December begins on 01.12 <= 02.12: it comes back WHOLE, 600 000, the days 01 - 03.12
+    # (3), the lessons 01.12 and 03.12 (2), of them passed 1 (01.12), ``period_begins`` = 2026-12-01 (the first paid day of the account after).  The sum +750 000 = the change of the charge.
+    g, s = om_at(world, fixed_today, D(2026, 11, 1))
+    fixed_today(D(2026, 12, 2))
+    pause_id = pause_on(world, s, g, "2026-11-24", "2026-12-03")
+    act(world, s, g, D(2026, 12, 2), void(world, pause_id),
+        [("24.11–30.11", "2026-11-24", "2026-11-30", 7, 3, 3, 150_000), ("01.12–03.12", "2026-12-01", "2026-12-03", 3, 2, 1, 600_000)], None, 750_000,
+        name="pause_probe_void_two_months_0212", begins=[None, "2026-12-01"])
+
+
+def test_c16_working_date_04_12_both_months_begun_no_line_is_carried(world, fixed_today):
+    # Б11.43 п. 1, world 3: the numbers of the test c3_04_12 (-150 000 and -86 000); ``period_begins`` is null in both lines (the default of ``act`` checks it there): the first paid day of December is 04.12 = today,
+    # the period has begun on both sides.  This test names the world; the check lives in ``act``.
+    g, s = om_at(world, fixed_today, D(2026, 11, 1))
+    fixed_today(D(2026, 12, 4))
+    a = act(world, s, g, D(2026, 12, 4), make(world, s, g, "2026-11-24", "2026-12-03"),
+            [("24.11–30.11", "2026-11-24", "2026-11-30", 7, 3, None, -150_000), ("01.12–03.12", "2026-12-01", "2026-12-03", 3, 2, None, -86_000)], None, -236_000)
+    assert begins_of(a) == [None, None]
+
+
+def test_c17_a_pause_put_back_in_time_from_the_first_of_the_month_the_whole_period_leaves_with_its_first_paid_day(world, fixed_today):
+    # Б11.43 п. 1, world 4.  Hand count BEFORE the run.  02.12; the pause 01.12 - 10.12 (the child is ill from the 1st).  The lessons of December in 01 - 10: 01 03 04 08 10 = 5 (of 14); the days 10.  The period
+    # began on 01.12 in the account before (600 000); after the pause its first paid day is 11.12 > 02.12: it has not begun, it charges 0.  One line "01.12–10.12", 10 days, 5 lessons, -600 000,
+    # ``period_begins`` = 2026-12-11.  November has no changed day: no line.  The change of the charge -600 000 = the sum; the whole period is begun in the account before, so no ``charge_later``.
+    g, s = om_at(world, fixed_today, D(2026, 11, 1))
+    fixed_today(D(2026, 12, 2))
+    act(world, s, g, D(2026, 12, 2), make(world, s, g, "2026-12-01", "2026-12-10"), [("01.12–10.12", "2026-12-01", "2026-12-10", 10, 5, None, -600_000)], None, -600_000,
+        name="pause_probe_create_backdated_month_start", begins=["2026-12-11"])
+
+
+def test_c18_the_centre_cancelled_lesson_inside_the_pause_the_account_after_has_no_deduction_and_the_debt_is_the_whole_charge(world, fixed_today):
+    # Б11.43 п. 2.  The world of c8 (the setting is on, Tuesday 24.11 is cancelled by the centre, the pause 24.11 - 30.11 on 20.11).  Hand count: the charge after the pause is 450 000 (9 of 12); the deduction for
+    # the cancelled lesson (``recalculated``) is 0 (the day is on the pause: the owner of the day is the paid day of the period only, so the lesson is not deducted twice); nobody paid: the debt = 450 000.
+    g, s = om_at(world, fixed_today, D(2026, 11, 1))
+    assert owner(world).put(f"{API}/org/settings/payments", json={"centre_cancel_recalc": True}).status_code == 200
+    fixed_today(D(2026, 11, 10))
+    r = owner(world).post(f"{API}/org/groups/{g.id}/attendance", json={"lessonDate": "2026-11-24", "lessonId": "s2", "status": "cancelled", "records": {}, "cancellationReason": "Преподаватель заболел", "cancellationKind": "centre"})
+    assert r.status_code == 200, r.text
+    fixed_today(D(2026, 11, 20))
+    act(world, s, g, D(2026, 11, 20), make(world, s, g, "2026-11-24", "2026-11-30"), [("24.11–30.11", "2026-11-24", "2026-11-30", 7, 3, None, -150_000)], None, -150_000)
+    after = led(world, s, g, D(2026, 11, 20))
+    assert (after.recalculated, after.charged, after.debt) == (0, 450_000, 450_000), (after.recalculated, after.charged, after.debt)
