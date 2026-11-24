@@ -10,6 +10,7 @@ from datetime import date
 
 from src.auth.logica_service import PauseService
 from src.auth.payments_schemas import PauseCreate
+from tests.answers_dump import dump
 from tests.pg_world import needs_pg, pg_session, world  # noqa: F401  (fixtures)
 from tests.test_pay2_api_pg import API, fixed_today, membership, owner  # noqa: F401  (fixtures)
 from tests.test_pay_tails_b11_pg import om_at
@@ -47,13 +48,15 @@ def void(world, pause_id):
     return lambda dry: owner(world).post(f"{API}/org/pauses/{pause_id}/void", params={"dry_run": "true"} if dry else {}, json={"reason": "Передумали"})
 
 
-def act(world, s, g, today, call, rows, later, delta):
+def act(world, s, g, today, call, rows, later, delta, name=None):
     """The probe and the save of one action and the FOUR numbers: the lines of the probe = the lines of the save = ``rows`` (the hand count); ``charge_later``; the sum of the lines = ``impact.charged_delta`` of
     the probe = of the save = the charge of the account after - the charge before = ``delta``."""
     before = led(world, s, g, today).charged
     probe, saved = call(True), call(False)
     assert probe.status_code in (200, 201) and saved.status_code in (200, 201), (probe.text[:300], saved.text[:300])
     p, a = probe.json(), saved.json()
+    if name:
+        dump(name, p)                                                   # the REAL answer of the probe for the screens (``$ANSWERS_DIR``; nothing is written without it)
     after = led(world, s, g, today).charged
     assert lines(p) == lines(a) == rows, ("GOT probe / save", lines(p), lines(a))
     assert later_of(p) == later_of(a) == later, (later_of(p), later_of(a))
@@ -67,14 +70,14 @@ def test_c1_a_week_inside_the_month_is_one_line_three_lessons(world, fixed_today
     # 24.11 - 30.11 takes 24 26 27 (3 of 12): 9 x 50 000 = 450 000; the change -150 000.
     g, s = om_at(world, fixed_today, D(2026, 11, 1))
     fixed_today(D(2026, 11, 24))
-    act(world, s, g, D(2026, 11, 24), make(world, s, g, "2026-11-24", "2026-11-30"), [("24.11–30.11", "2026-11-24", "2026-11-30", 7, 3, None, -150_000)], None, -150_000)
+    act(world, s, g, D(2026, 11, 24), make(world, s, g, "2026-11-24", "2026-11-30"), [("24.11–30.11", "2026-11-24", "2026-11-30", 7, 3, None, -150_000)], None, -150_000, name="pause_probe_create_week")
 
 
 def test_c2_two_months_december_not_charged_one_line_and_the_rest_later(world, fixed_today):
     # 24.11 - 03.12: November -150 000 (3 lessons); December is not charged (nobody paid for it, it is not begun): no line, the days 01.12 - 03.12 are ``charge_later``; the sum = the change = -150 000.
     g, s = om_at(world, fixed_today, D(2026, 11, 1))
     fixed_today(D(2026, 11, 24))
-    act(world, s, g, D(2026, 11, 24), make(world, s, g, "2026-11-24", "2026-12-03"), [("24.11–30.11", "2026-11-24", "2026-11-30", 7, 3, None, -150_000)], ("01.12–03.12", "2026-12-01", "2026-12-03"), -150_000)
+    act(world, s, g, D(2026, 11, 24), make(world, s, g, "2026-11-24", "2026-12-03"), [("24.11–30.11", "2026-11-24", "2026-11-30", 7, 3, None, -150_000)], ("01.12–03.12", "2026-12-01", "2026-12-03"), -150_000, name="pause_probe_create_two_months")
 
 
 def test_c2_two_months_december_is_an_advance_no_false_line_of_december_or_january(world, fixed_today):
@@ -95,7 +98,7 @@ def test_c3_working_date_02_12_the_period_that_the_pause_moves_to_the_future_giv
     g, s = om_at(world, fixed_today, D(2026, 11, 1))
     fixed_today(D(2026, 12, 2))
     act(world, s, g, D(2026, 12, 2), make(world, s, g, "2026-11-24", "2026-12-03"),
-        [("24.11–30.11", "2026-11-24", "2026-11-30", 7, 3, None, -150_000), ("01.12–03.12", "2026-12-01", "2026-12-03", 3, 2, None, -600_000)], None, -750_000)
+        [("24.11–30.11", "2026-11-24", "2026-11-30", 7, 3, None, -150_000), ("01.12–03.12", "2026-12-01", "2026-12-03", 3, 2, None, -600_000)], None, -750_000, name="pause_probe_create_two_months_begun_0212")
 
 
 def test_c3_working_date_04_12_both_months_begun_two_lines_december_by_the_rounding_of_the_product(world, fixed_today):
@@ -106,7 +109,7 @@ def test_c3_working_date_04_12_both_months_begun_two_lines_december_by_the_round
     g, s = om_at(world, fixed_today, D(2026, 11, 1))
     fixed_today(D(2026, 12, 4))
     act(world, s, g, D(2026, 12, 4), make(world, s, g, "2026-11-24", "2026-12-03"),
-        [("24.11–30.11", "2026-11-24", "2026-11-30", 7, 3, None, -150_000), ("01.12–03.12", "2026-12-01", "2026-12-03", 3, 2, None, -86_000)], None, -236_000)
+        [("24.11–30.11", "2026-11-24", "2026-11-30", 7, 3, None, -150_000), ("01.12–03.12", "2026-12-01", "2026-12-03", 3, 2, None, -86_000)], None, -236_000, name="pause_probe_create_two_months_begun")
 
 
 def _pause_17_30(world, fixed_today):
@@ -120,27 +123,27 @@ def _pause_17_30(world, fixed_today):
 def test_c4_the_pause_17_30_put_in_advance_ended_today(world, fixed_today):
     # 17 - 30.11 = 17 19 20 24 26 27 (6 of 12): 300 000.  24.11 "end today" = the last day 23.11: 24 26 27 come back: 9 of 12 = 450 000, +150 000; none of the three has passed (24.11 is today).
     g, s, pause_id = _pause_17_30(world, fixed_today)
-    act(world, s, g, D(2026, 11, 24), edit(world, pause_id, "2026-11-17", "2026-11-23"), [("24.11–30.11", "2026-11-24", "2026-11-30", 7, 3, 0, 150_000)], None, 150_000)
+    act(world, s, g, D(2026, 11, 24), edit(world, pause_id, "2026-11-17", "2026-11-23"), [("24.11–30.11", "2026-11-24", "2026-11-30", 7, 3, 0, 150_000)], None, 150_000, name="pause_probe_end_today")
 
 
 def test_c5_the_same_pause_taken_off_whole_three_lessons_have_passed(world, fixed_today):
     # taken off: all 12 lessons, 600 000: +300 000, 6 lessons (17 19 20 have passed: 3; 24.11 is today, 26 27 are ahead).
     g, s, pause_id = _pause_17_30(world, fixed_today)
-    act(world, s, g, D(2026, 11, 24), void(world, pause_id), [("17.11–30.11", "2026-11-17", "2026-11-30", 14, 6, 3, 300_000)], None, 300_000)
+    act(world, s, g, D(2026, 11, 24), void(world, pause_id), [("17.11–30.11", "2026-11-17", "2026-11-30", 14, 6, 3, 300_000)], None, 300_000, name="pause_probe_void_running")
 
 
 def test_c6_a_pause_put_back_in_time_17_30_six_lessons(world, fixed_today):
     # 24.11: the pause 17 - 30.11 (no mark «был» on 17, 19, 20): 6 of 12 lessons leave: 300 000, -300 000; ``lessons_passed`` is for a line whose days come back only.
     g, s = om_at(world, fixed_today, D(2026, 11, 1))
     fixed_today(D(2026, 11, 24))
-    act(world, s, g, D(2026, 11, 24), make(world, s, g, "2026-11-17", "2026-11-30"), [("17.11–30.11", "2026-11-17", "2026-11-30", 14, 6, None, -300_000)], None, -300_000)
+    act(world, s, g, D(2026, 11, 24), make(world, s, g, "2026-11-17", "2026-11-30"), [("17.11–30.11", "2026-11-17", "2026-11-30", 14, 6, None, -300_000)], None, -300_000, name="pause_probe_create_backdated")
 
 
 def test_c7_a_pause_wholly_in_a_month_that_is_not_charged_has_no_line_only_charge_later(world, fixed_today):
     # 01.12 - 10.12 on 24.11: December has not begun: no line, no change of the charge (0); the days are ``charge_later``.
     g, s = om_at(world, fixed_today, D(2026, 11, 1))
     fixed_today(D(2026, 11, 24))
-    act(world, s, g, D(2026, 11, 24), make(world, s, g, "2026-12-01", "2026-12-10"), [], ("01.12–10.12", "2026-12-01", "2026-12-10"), 0)
+    act(world, s, g, D(2026, 11, 24), make(world, s, g, "2026-12-01", "2026-12-10"), [], ("01.12–10.12", "2026-12-01", "2026-12-10"), 0, name="pause_probe_create_future_month")
 
 
 def test_c7_the_same_future_pause_taken_off_is_charge_later_as_well(world, fixed_today):
@@ -148,7 +151,7 @@ def test_c7_the_same_future_pause_taken_off_is_charge_later_as_well(world, fixed
     fixed_today(D(2026, 11, 20))
     pause_id = pause_on(world, s, g, "2026-12-01", "2026-12-10")
     fixed_today(D(2026, 11, 24))
-    act(world, s, g, D(2026, 11, 24), void(world, pause_id), [], ("01.12–10.12", "2026-12-01", "2026-12-10"), 0)
+    act(world, s, g, D(2026, 11, 24), void(world, pause_id), [], ("01.12–10.12", "2026-12-01", "2026-12-10"), 0, name="pause_probe_void_future")
 
 
 def test_c8_the_forgiveness_changes_no_line(world, fixed_today):
@@ -183,6 +186,8 @@ def test_c9_a_personal_period_has_no_lines(world, fixed_today):
         before = led(world, s, g, D(2026, 11, 24)).charged
         probe, saved = make(world, s, g, first, last)(True), make(world, s, g, first, last)(False)
         assert probe.status_code == saved.status_code == 201, (probe.text[:200], saved.text[:200])
+        if first == "2026-11-24":
+            dump("pause_probe_create_personal", probe.json())
         assert probe.json()["charge_rows"] == saved.json()["charge_rows"] == [] and probe.json()["charge_later"] is None and saved.json()["charge_later"] is None
         assert probe.json()["impact"]["charged_delta"] == saved.json()["impact"]["charged_delta"] == led(world, s, g, D(2026, 11, 24)).charged - before
         pid = saved.json()["pause"]["id"]
@@ -200,6 +205,7 @@ def test_c9_packages_have_no_lines(world, fixed_today):
     fixed_today(D(2026, 10, 20))
     probe, saved = make(world, s, g, "2026-10-27", "2026-11-10")(True), make(world, s, g, "2026-10-27", "2026-11-10")(False)
     assert probe.status_code == saved.status_code == 201, (probe.text[:200], saved.text[:200])
+    dump("pause_probe_create_packages", probe.json())
     assert probe.json()["charge_rows"] == saved.json()["charge_rows"] == [] and probe.json()["charge_later"] is None and saved.json()["charge_later"] is None
     gone = void(world, saved.json()["pause"]["id"])(False)
     assert gone.status_code == 200 and gone.json()["charge_rows"] == [] and gone.json()["charge_later"] is None
@@ -212,6 +218,7 @@ def test_c10_a_role_without_the_right_to_money_gets_the_lines_without_sums(world
     m = membership(world, s, g)
     probe = PauseService(world.db).create(str(world.org.id), m.id, str(world.owner.id), PauseCreate(first_day=D(2026, 11, 24), last_day=D(2026, 12, 3)), dry_run=True, money=False, actor_role="owner")
     assert probe.impact is None
+    dump("pause_probe_create_no_money_role", probe.model_dump(mode="json"))
     assert [(r.label, r.days, r.lessons, r.lessons_passed, r.amount) for r in probe.charge_rows] == [("24.11–30.11", 7, 3, None, None)]
     assert (probe.charge_later.label, probe.charge_later.first_day, probe.charge_later.last_day) == ("01.12–03.12", D(2026, 12, 1), D(2026, 12, 3))
     saved = PauseService(world.db).create(str(world.org.id), m.id, str(world.owner.id), PauseCreate(first_day=D(2026, 11, 24), last_day=D(2026, 12, 3)), money=False, actor_role="owner")
@@ -259,3 +266,20 @@ def test_c13_the_insurance_sum_of_the_lines_not_the_change_of_the_charge_gives_n
         rows, later = pv.pause_charge_rows(before, dataclasses.replace(after, charged=after.charged + 1), D(2026, 11, 24), days, money=True, membership_id="m-1")
     assert rows == [] and later is None
     assert any("sum to -150000" in r.getMessage() and "m-1" in r.getMessage() for r in caplog.records)
+
+
+def test_c14_the_list_of_the_pauses_of_a_participation_running_scheduled_and_two_past(world, fixed_today):
+    # The answer of the list for the screens (``pauses_list_mixed``): a running pause, a scheduled one and two past ones, the newest first; the list has no lines (they live in the answers of the actions).
+    g, s = om_at(world, fixed_today, D(2026, 10, 1))
+    fixed_today(D(2026, 10, 12))
+    pause_on(world, s, g, "2026-10-05", "2026-10-11", "Болел")
+    fixed_today(D(2026, 10, 26))
+    pause_on(world, s, g, "2026-10-20", "2026-10-25", "Семейные обстоятельства")
+    fixed_today(D(2026, 11, 18))
+    pause_on(world, s, g, "2026-11-18", "2026-12-01", "Болезнь")
+    fixed_today(D(2026, 11, 24))
+    pause_on(world, s, g, "2026-12-10", "2026-12-14", "Каникулы")
+    r = owner(world).get(f"{API}/org/memberships/{membership(world, s, g).id}/pauses")
+    assert r.status_code == 200, r.text
+    assert [(p["first_day"], p["last_day"]) for p in r.json()] == [("2026-12-10", "2026-12-14"), ("2026-11-18", "2026-12-01"), ("2026-10-20", "2026-10-25"), ("2026-10-05", "2026-10-11")]
+    dump("pauses_list_mixed", r.json())
