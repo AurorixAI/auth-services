@@ -279,6 +279,9 @@ class Segment:
     # PAY-TAILS Б7.7: the PLACE of the period among the periods of the account, the same in every world (see ``_worlds``): a cell of the fixed billing day - ``("c", start of the cell)``;
     # a period of a personal chain - ``("p", first day of the piece of the stay, number in the chain)``; a package - ``("k", number of the chain of its regime window, number of the package)``; ``None`` (the opening debt) = no other world
     slot: Optional[tuple] = field(default=None, repr=False)
+    # PAY-TAILS Б11.40 С2': the dates of the lessons (one entry per lesson) the period itself counted inside its billable days - the SAME set the sum comes from (a whole month too); ``None`` = the period
+    # is not counted by the lessons of a calendar month.  It decides no money: the answers of a pause read the lessons a pause took out of the price from it.
+    lesson_dates: Optional[Tuple[date, ...]] = field(default=None, repr=False, compare=False)
 
     @property
     def nominal(self) -> int:
@@ -677,25 +680,28 @@ class _Gen:
             return Segment(amount=0, basis="zero", lessons_in_part=None, lessons_in_period=None, **common)
 
         def charge(day_list: List[date]):
-            """``(amount, basis, lessons_in_part, lessons_in_period, first_lesson)`` of the period for these billable days."""
+            """``(amount, basis, lessons_in_part, lessons_in_period, first_lesson, lesson_dates)`` of the period for these billable days."""
             n = len(day_list)
-            if n >= nominal:
-                return amount, "full", None, None, None
+            dates = None
             if by_lessons:
                 regular = self.regular(cell[0])             # PAY-F: from the cut-over day only the regular schedule is counted, in both
                 held = self.lesson_days(*cell, regular=regular)             # REAL lessons: the numerator
+                inside = set(day_list)
+                dates = tuple(d for d in held if d in inside)
+            if n >= nominal:
+                return amount, "full", None, None, None, dates
+            if by_lessons:
                 whole = self.pattern_days(*cell, regular=regular)            # lessons of a full month by the schedule: the denominator
                 if whole:
-                    inside = set(day_list)
-                    in_part = sum(1 for d in held if d in inside)
+                    in_part = len(dates)
                     return (ps.prorated(amount, in_part, len(whole)), "lessons", in_part, len(whole),
-                            min((d for d in held if d in inside), default=None))
-            return ps.prorated(amount, n, nominal), "days", None, None, None
+                            min(dates, default=None), dates)
+            return ps.prorated(amount, n, nominal), "days", None, None, None, None
 
-        value, basis, in_part, whole_n, first_lesson = charge(days)
+        value, basis, in_part, whole_n, first_lesson, lesson_dates = charge(days)
         nominal_amount = value if nominal_days is None else charge(nominal_days)[0]
         return Segment(amount=value, basis=basis, lessons_in_part=in_part, lessons_in_period=whole_n, first_lesson=first_lesson,
-                       nominal_amount=nominal_amount, slot=slot, **common)
+                       nominal_amount=nominal_amount, slot=slot, lesson_dates=lesson_dates, **common)
 
     # ---------------------------------------------------------------- calendar: payment date
 
