@@ -13,7 +13,9 @@
     "created_by_name": "Арслан",
     "created_at": "2026-10-21T09:45:00",
     "voided_at": null,
-    "void_reason": null
+    "void_reason": null,
+    "days_locked": false,
+    "days_locked_text": null
   },
   "impact": {
     "debt_before": 20000,

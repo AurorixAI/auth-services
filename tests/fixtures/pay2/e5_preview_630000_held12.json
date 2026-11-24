@@ -118,7 +118,26 @@
     },
     "summary_text": "Погасит долг 500 000 сум · к оплате 100 000 сум → оплачено уроков 12, осталось 0 · аванс 30 000 сум",
     "after_text": "Аванс 30 000 сум",
-    "price_ahead": []
+    "price_ahead": [],
+    "money_rows": [
+      {
+        "label": "Пакет № 1",
+        "amount": 600000,
+        "of": null,
+        "state": "closed",
+        "periods": 1
+      },
+      {
+        "label": "Аванс: уроки следующего пакета",
+        "amount": 30000,
+        "of": null,
+        "state": "advance",
+        "periods": 1
+      }
+    ],
+    "debt_rest": [],
+    "due_after": 0,
+    "due_rest": []
   },
   "warnings": [],
   "recalc": []

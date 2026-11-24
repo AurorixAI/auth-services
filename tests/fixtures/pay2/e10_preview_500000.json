@@ -92,7 +92,19 @@
     "lessons": null,
     "summary_text": "Закроет «К оплате»: 500 000 сум → оплачено до 19.11",
     "after_text": "Оплачено до 19.11",
-    "price_ahead": []
+    "price_ahead": [],
+    "money_rows": [
+      {
+        "label": "20.10–19.11",
+        "amount": 500000,
+        "of": null,
+        "state": "closed",
+        "periods": 1
+      }
+    ],
+    "debt_rest": [],
+    "due_after": 0,
+    "due_rest": []
   },
   "warnings": [],
   "recalc": []

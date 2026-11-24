@@ -39,7 +39,9 @@ from src.auth.payments_schemas import (  # noqa: E402
     PriceOut,
     PreviewDue,
     PreviewLessons,
+    MoneyRow,
     PreviewResult,
+    RestRow,
     ReceiptItem,
     ReceiptItems,
     ReceiptOut,
@@ -428,6 +430,60 @@ def _closes_with(s: HSeg, credits: List[HCredit], cid: str) -> bool:
     return False
 
 
+def _hand_label(s: HSeg, month: bool = False) -> str:
+    """A package by its number; a period of the «Общий месяц» (``month``) by the name of the month (the year of the examples is this year), a personal period by dates."""
+    if s.kind == "package":
+        return f"Пакет № {s.pkg_no}"
+    return tx.MONTHS_NOMINATIVE[s.a.month - 1].capitalize() if month else tx.period_text(s.a, s.b)
+
+
+def hand_rows(segs: List[HSeg], allocs: List[Allocation], names: HNames, month: bool = False) -> dict:
+    """PAY-TAILS Б11.33: «Куда пойдут деньги» by hand, from the pieces of the payment (an independent small copy of the rules written in the design): one line per piece from the oldest period; a period that was
+    already paid in part before the payment is «..., остаток»; closed lines in a row (no «остаток») fold into one; the advance comes last; the rests are the unpaid parts of the names under the periods."""
+    by = {s.id: s for s in segs}
+    lines = []                                    # (start, MoneyRow, rest, seg)
+    advance = []
+    for a in allocs:
+        s = by.get(a.segment_id)
+        if a.bucket == "advance" or s is None:
+            if s is None:
+                label = "Аванс: уроки следующего пакета" if a.label == tx.advance_label_lessons() else "Аванс"
+            else:
+                label = "Аванс: уроки следующего пакета" if s.kind == "package" else f"Аванс на {tx.MONTHS_NOMINATIVE[s.a.month - 1] if month else tx.period_text(s.a, s.b)}"
+            advance.append(MoneyRow(label=label, amount=a.amount, state="advance"))
+            continue
+        before = a.segment_remaining_after + a.amount             # unpaid of the period before this payment
+        rest = s.charge - before > 0
+        closed = a.segment_remaining_after == 0
+        lines.append((s.a, MoneyRow(label=_hand_label(s, month) + (", остаток" if rest else ""), amount=a.amount, of=None if closed else before, state="closed" if closed else "part"), rest, s))
+    lines.sort(key=lambda x: x[0])
+    rows: List[MoneyRow] = []
+    run = []
+
+    def flush():
+        if len(run) == 1:
+            rows.append(run[0][1])
+        elif run:
+            first, last = run[0][3], run[-1][3]
+            label = f"Пакеты № {first.pkg_no}–{last.pkg_no}" if first.kind == "package" else f"{tx.ddmm(first.a)}–{tx.ddmm(last.b)}"
+            rows.append(MoneyRow(label=label, amount=sum(x[1].amount for x in run), state="closed", periods=len(run)))
+        run.clear()
+
+    for line in lines:
+        if line[1].state == "closed" and not line[2]:
+            run.append(line)
+        else:
+            flush()
+            rows.append(line[1])
+    flush()
+
+    def rest_of(name: str) -> List[RestRow]:
+        return [RestRow(label=_hand_label(by[p.seg_id], month), amount=p.unpaid) for p in sorted((q for q in names.parts if q.name == name and q.unpaid > 0), key=lambda q: by[q.seg_id].a)]
+
+    assert sum(r.amount for r in rest_of("debt")) == names.debt and sum(r.amount for r in rest_of("due")) == names.due
+    return dict(money_rows=rows + advance, debt_rest=rest_of("debt"), due_after=names.due, due_rest=rest_of("due"))
+
+
 def adv_alloc(amount: int, on: date, label: Optional[str] = None) -> Allocation:
     return Allocation(
         segment_id="advance", period_from=on, period_to=on, amount=amount, days=0, bucket="advance", closes=False,
@@ -577,7 +633,7 @@ def e1_previews(store):
                 debt_paid=to_debt, debt_before=names0.debt, due_paid=to_due, due_before=names0.due,
                 advance=sum(a.amount for a in allocs if a.bucket == "advance"),
                 debt_after=t["debt"], paid_until_after=t["through"], advance_periods=adv_periods, partial=hand_partial(segs, TODAY, names)),
-            price_ahead=[],
+            price_ahead=[], **hand_rows(segs, allocs, names),
         )
         assert (names.debt, names.due) == (t["debt"], 0)       # both periods are past their term: what is left is all a debt
         # the partial day is read off the segment where the first unpaid day lies
@@ -694,7 +750,7 @@ def e9_price_ahead(store):
         summary_text=tx.summary_text(debt_paid=769_000, debt_before=769_000, due_paid=0, due_before=0, advance=300_000,
                                      debt_after=0, paid_until_after=t["through"],
                                      advance_periods=[(D(2026, 11, 15), D(2026, 12, 14))]),
-        price_ahead=ahead)
+        price_ahead=ahead, **hand_rows(segs, allocs, hand_names(segs, TODAY, tc)))
     from src.auth.payments_schemas import PaymentWarningOut
     warn = PaymentWarningOut(code="price_change_ahead", message=tx.price_change_warning(
         D(2026, 11, 15), D(2026, 12, 14), 600_000, 500_000))
@@ -821,7 +877,8 @@ def e2_e3(store):
                 debt_paid=to_debt, debt_before=323_000, due_paid=0, due_before=0,
                 advance=sum(a.amount for a in allocs if a.bucket == "advance"),
                 debt_after=t["debt"], paid_until_after=t["through"],
-                advance_periods=[(a.period_from, a.period_to) for a in allocs if a.bucket == "advance"]))
+                advance_periods=[(a.period_from, a.period_to) for a in allocs if a.bucket == "advance"]),
+            **hand_rows(ss, allocs, names, month=True))      # E2 is the «Общий месяц» (billing day 1)
         write(f"e2_preview_{amount}.json", PaymentPreview(
             as_of=today, mode="calendar", price=price, due=due, suggested_amount=323_000, amount=amount, result=res,
             warnings=[]), store)
@@ -872,7 +929,8 @@ def e2_e3(store):
             partial_credit_after=partial_exp, lessons=None,
             after_text=tx.after_text(names.debt, 0, t["border"], None, 0),
             summary_text=tx.summary_text(debt_paid=amount, debt_before=213_000, due_paid=0, due_before=0, advance=0, debt_after=t["debt"],
-                                         paid_until_after=t["through"]))
+                                         paid_until_after=t["through"]),
+            **hand_rows(ss, allocs, names, month=True))      # E3 is the «Общий месяц» (billing day 1): the month is named
         write(f"e3_preview_{amount}.json", PaymentPreview(
             as_of=today, mode="calendar", price=price3, due=due3, suggested_amount=213_000, amount=amount, result=res,
             warnings=[]), store)
@@ -925,7 +983,8 @@ def e10(store):
             advance_after=0, paid_until_before=None, paid_until_after=t["through"], status_after=shown_status(st, left_), partial_credit_after=partial_exp,
             lessons=None,
             after_text=tx.after_text(names.debt, names.due, t["border"], None, 0),
-            summary_text=tx.summary_text(debt_paid=0, debt_before=0, due_paid=to_due, due_before=500_000, advance=0, debt_after=left_, paid_until_after=t["through"]))
+            summary_text=tx.summary_text(debt_paid=0, debt_before=0, due_paid=to_due, due_before=500_000, advance=0, debt_after=left_, paid_until_after=t["through"]),
+            **hand_rows(ss, allocs, names))
         write(f"e10_preview_{amount}.json", PaymentPreview(as_of=today, mode="calendar", price=price, due=due, suggested_amount=500_000, amount=amount,
                                                            result=res, warnings=[]), store)
     assert json.loads(store["e10_preview_200000.json"])["result"]["summary_text"] == (
@@ -1100,7 +1159,8 @@ def e5(store):
             summary_text=tx.summary_text(
                 debt_paid=to_debt, debt_before=names0.debt, due_paid=to_due, due_before=names0.due,
                 advance=leftover, debt_after=debt_after, paid_until_after=None,
-                lessons=(covered_lessons, left)))
+                lessons=(covered_lessons, left)),
+            **hand_rows(segs, allocs, names))
         scenario.names0, scenario.names = names0, names
         write(name, PaymentPreview(
             as_of=today, mode="lessons", price=price, due=due, suggested_amount=due_debt, amount=amount, result=res,

@@ -161,7 +161,33 @@
         "amount": 600000,
         "current_amount": 500000
       }
-    ]
+    ],
+    "money_rows": [
+      {
+        "label": "15.09–14.10, остаток",
+        "amount": 269000,
+        "of": null,
+        "state": "closed",
+        "periods": 1
+      },
+      {
+        "label": "15.10–14.11",
+        "amount": 500000,
+        "of": null,
+        "state": "closed",
+        "periods": 1
+      },
+      {
+        "label": "Аванс на 15.11–14.12",
+        "amount": 300000,
+        "of": null,
+        "state": "advance",
+        "periods": 1
+      }
+    ],
+    "debt_rest": [],
+    "due_after": 0,
+    "due_rest": []
   },
   "warnings": [
     {

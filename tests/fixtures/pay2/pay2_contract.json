@@ -1195,6 +1195,53 @@
         "title": "MembershipPaymentRow",
         "type": "object"
       },
+      "MoneyRow": {
+        "description": "Б11.33 п. 2: one line of «Куда пойдут N сум» - the layout of the receipt («Куда пошли деньги») by the periods, from the oldest; the words are the server's.",
+        "properties": {
+          "amount": {
+            "title": "Amount",
+            "type": "integer"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "of": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Of"
+          },
+          "periods": {
+            "default": 1,
+            "title": "Periods",
+            "type": "integer"
+          },
+          "state": {
+            "enum": [
+              "closed",
+              "part",
+              "advance"
+            ],
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "label",
+          "amount",
+          "of",
+          "state",
+          "periods"
+        ],
+        "title": "MoneyRow",
+        "type": "object"
+      },
       "NextPeriod": {
         "description": "Money-1 R3 №4: the first period of the student that begins on or after the day the change reaches him, and what it costs before -> after (a student who pays in time shows no\ndifference in his account that day, but the next period costs another sum).",
         "properties": {
@@ -3353,10 +3400,29 @@
             "title": "Debt Amount After",
             "type": "integer"
           },
+          "debt_rest": {
+            "items": {
+              "$ref": "#/components/schemas/RestRow"
+            },
+            "title": "Debt Rest",
+            "type": "array"
+          },
+          "due_after": {
+            "default": 0,
+            "title": "Due After",
+            "type": "integer"
+          },
           "due_amount_after": {
             "default": 0,
             "title": "Due Amount After",
             "type": "integer"
+          },
+          "due_rest": {
+            "items": {
+              "$ref": "#/components/schemas/RestRow"
+            },
+            "title": "Due Rest",
+            "type": "array"
           },
           "due_until_after": {
             "anyOf": [
@@ -3379,6 +3445,13 @@
                 "type": "null"
               }
             ]
+          },
+          "money_rows": {
+            "items": {
+              "$ref": "#/components/schemas/MoneyRow"
+            },
+            "title": "Money Rows",
+            "type": "array"
           },
           "overdue_days_after": {
             "anyOf": [
@@ -3454,7 +3527,11 @@
           "lessons",
           "summary_text",
           "after_text",
-          "price_ahead"
+          "price_ahead",
+          "money_rows",
+          "debt_rest",
+          "due_after",
+          "due_rest"
         ],
         "title": "PreviewResult",
         "type": "object"
@@ -5592,6 +5669,24 @@
           "text"
         ],
         "title": "RegimeOverride",
+        "type": "object"
+      },
+      "RestRow": {
+        "properties": {
+          "amount": {
+            "title": "Amount",
+            "type": "integer"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          }
+        },
+        "required": [
+          "label",
+          "amount"
+        ],
+        "title": "RestRow",
         "type": "object"
       },
       "Segment": {

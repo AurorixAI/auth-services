@@ -3045,6 +3045,53 @@
         "title": "MembershipPaymentRow",
         "type": "object"
       },
+      "MoneyRow": {
+        "description": "Б11.33 п. 2: one line of «Куда пойдут N сум» - the layout of the receipt («Куда пошли деньги») by the periods, from the oldest; the words are the server's.",
+        "properties": {
+          "amount": {
+            "title": "Amount",
+            "type": "integer"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "of": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Of"
+          },
+          "periods": {
+            "default": 1,
+            "title": "Periods",
+            "type": "integer"
+          },
+          "state": {
+            "enum": [
+              "closed",
+              "part",
+              "advance"
+            ],
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "label",
+          "amount",
+          "of",
+          "state",
+          "periods"
+        ],
+        "title": "MoneyRow",
+        "type": "object"
+      },
       "MonthOverview": {
         "properties": {
           "divisor": {
@@ -3909,6 +3956,24 @@
             "title": "Days",
             "type": "integer"
           },
+          "days_locked": {
+            "default": false,
+            "description": "На паузе стоит действующая обрезка уходом / переводом / архивом: дни изменить нельзя (Б11.33 п. 1)",
+            "title": "Days Locked",
+            "type": "boolean"
+          },
+          "days_locked_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Готовая фраза причины (та же, что в отказе 409 PAUSE_CLOSED_BY_LEAVE); null, когда days_locked ложь",
+            "title": "Days Locked Text"
+          },
           "first_day": {
             "format": "date",
             "title": "First Day",
@@ -3971,7 +4036,9 @@
           "created_by_name",
           "created_at",
           "voided_at",
-          "void_reason"
+          "void_reason",
+          "days_locked",
+          "days_locked_text"
         ],
         "title": "PauseOut",
         "type": "object"
@@ -6446,10 +6513,29 @@
             "title": "Debt Amount After",
             "type": "integer"
           },
+          "debt_rest": {
+            "items": {
+              "$ref": "#/components/schemas/RestRow"
+            },
+            "title": "Debt Rest",
+            "type": "array"
+          },
+          "due_after": {
+            "default": 0,
+            "title": "Due After",
+            "type": "integer"
+          },
           "due_amount_after": {
             "default": 0,
             "title": "Due Amount After",
             "type": "integer"
+          },
+          "due_rest": {
+            "items": {
+              "$ref": "#/components/schemas/RestRow"
+            },
+            "title": "Due Rest",
+            "type": "array"
           },
           "due_until_after": {
             "anyOf": [
@@ -6472,6 +6558,13 @@
                 "type": "null"
               }
             ]
+          },
+          "money_rows": {
+            "items": {
+              "$ref": "#/components/schemas/MoneyRow"
+            },
+            "title": "Money Rows",
+            "type": "array"
           },
           "overdue_days_after": {
             "anyOf": [
@@ -6547,7 +6640,11 @@
           "lessons",
           "summary_text",
           "after_text",
-          "price_ahead"
+          "price_ahead",
+          "money_rows",
+          "debt_rest",
+          "due_after",
+          "due_rest"
         ],
         "title": "PreviewResult",
         "type": "object"
@@ -8113,6 +8210,24 @@
           "text"
         ],
         "title": "RegimeOverride",
+        "type": "object"
+      },
+      "RestRow": {
+        "properties": {
+          "amount": {
+            "title": "Amount",
+            "type": "integer"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          }
+        },
+        "required": [
+          "label",
+          "amount"
+        ],
+        "title": "RestRow",
         "type": "object"
       },
       "Segment": {

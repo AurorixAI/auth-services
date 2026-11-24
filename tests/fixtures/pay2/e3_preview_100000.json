@@ -92,7 +92,24 @@
     "lessons": null,
     "summary_text": "Погасит 100 000 сум из долга 213 000 сум → оплачено до 10.10 · останется 113 000 сум",
     "after_text": "Останется: долг 113 000 сум",
-    "price_ahead": []
+    "price_ahead": [],
+    "money_rows": [
+      {
+        "label": "Октябрь",
+        "amount": 100000,
+        "of": 213000,
+        "state": "part",
+        "periods": 1
+      }
+    ],
+    "debt_rest": [
+      {
+        "label": "Октябрь",
+        "amount": 113000
+      }
+    ],
+    "due_after": 0,
+    "due_rest": []
   },
   "warnings": [],
   "recalc": []

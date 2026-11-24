@@ -92,7 +92,24 @@
     "lessons": null,
     "summary_text": "Закроет 200 000 сум из «К оплате» 500 000 сум → оплачено до 31.10 · останется 300 000 сум",
     "after_text": "Останется: к оплате 300 000 сум",
-    "price_ahead": []
+    "price_ahead": [],
+    "money_rows": [
+      {
+        "label": "20.10–19.11",
+        "amount": 200000,
+        "of": 500000,
+        "state": "part",
+        "periods": 1
+      }
+    ],
+    "debt_rest": [],
+    "due_after": 300000,
+    "due_rest": [
+      {
+        "label": "20.10–19.11",
+        "amount": 300000
+      }
+    ]
   },
   "warnings": [],
   "recalc": []

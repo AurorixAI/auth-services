@@ -153,7 +153,19 @@
     },
     "summary_text": "Погасит долг 600 000 сум · к оплате 100 000 сум → оплачено уроков 14, осталось 0",
     "after_text": "Всё оплачено",
-    "price_ahead": []
+    "price_ahead": [],
+    "money_rows": [
+      {
+        "label": "Пакеты № 1–2",
+        "amount": 700000,
+        "of": null,
+        "state": "closed",
+        "periods": 2
+      }
+    ],
+    "debt_rest": [],
+    "due_after": 0,
+    "due_rest": []
   },
   "warnings": [],
   "recalc": []
