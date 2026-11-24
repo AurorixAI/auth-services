@@ -924,6 +924,21 @@ class PriceAhead(PayModel):
     current_amount: Optional[int] = None
 
 
+class MoneyRow(PayModel):
+    """Б11.33 п. 2: one line of «Куда пойдут N сум» - the layout of the receipt («Куда пошли деньги») by the periods, from the oldest; the words are the server's."""
+
+    label: str                              # «Сентябрь» / «Сентябрь, остаток» / «Декабрь 2025» / «15.10–14.11» / «Пакет № 3» / «Аванс на январь» / «Октябрь – декабрь» (closed periods in a row)
+    amount: int                             # how much of THIS payment went into the line
+    of: Optional[int] = None                # how much of the period was unpaid before the payment (only for ``part``: «508 000 из 550 000»)
+    state: Literal["closed", "part", "advance"]
+    periods: int = 1                        # how many periods the line folds (closed ones in a row with no «остаток»)
+
+
+class RestRow(PayModel):
+    label: str
+    amount: int
+
+
 class PreviewResult(PayModel):
     allocations: List[Allocation] = Field(default_factory=list)
     unpaid_after: int = 0       # everything unpaid after the payment (a sum; the names are ``debt_amount_after`` / ``due_amount_after``)
@@ -939,6 +954,10 @@ class PreviewResult(PayModel):
     summary_text: str = ""
     after_text: str = ""        # the state after the payment in the words of the server: «Останется: долг X сум · к оплате Y сум» / «Оплачено до ДД.ММ» / «Осталось K урока»
     price_ahead: List[PriceAhead] = Field(default_factory=list)
+    money_rows: List[MoneyRow] = Field(default_factory=list)       # Б11.33 п. 2: where the typed sum goes, by periods (the same function as the receipt)
+    debt_rest: List[RestRow] = Field(default_factory=list)         # what stays a DEBT after the payment, by periods (the sum = ``debt_amount_after``)
+    due_after: int = 0                                             # what stays «к оплате» within the term after the payment (= ``due_amount_after``)
+    due_rest: List[RestRow] = Field(default_factory=list)          # the same by periods (the sum = ``due_after``)
 
 
 class PaymentPreview(PayModel):

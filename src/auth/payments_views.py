@@ -17,6 +17,7 @@ from . import payments_texts as tx
 from .payments_schemas import (
     Allocation,
     AllocationSummary,
+    MoneyRow,
     PaymentAllocationOut,
     PreviewDue,
     PreviewLessons,
@@ -24,6 +25,7 @@ from .payments_schemas import (
     PriceAhead,
     PriceOut,
     RecalcOut,
+    RestRow,
     Segment,
     SegmentLessons,
     SegmentPart,
@@ -524,6 +526,94 @@ def paid_by_name(due, raw_allocs) -> Tuple[int, int]:
     return to_debt, to_due
 
 
+def period_label(seg: bl.Segment, today: date, *, advance: bool = False) -> str:
+    """The name of a period in the words of the server (Б11.33): ``Сентябрь`` (a whole calendar month; with the year when it is not this year: ``Декабрь 2025``), ``15.10–14.11`` (any other period), ``Пакет № 3``,
+    ``Долг на начало учёта``; ``advance``: ``Аванс на январь`` / ``Аванс на 15.11–14.12`` / ``Аванс: уроки следующего пакета``."""
+    if seg.kind == "opening":
+        return "Долг на начало учёта"
+    if seg.kind == "package":
+        return "Аванс: уроки следующего пакета" if advance else f"Пакет № {seg.package_no}" if seg.package_no is not None else "Пакет"
+    first, last = seg.period_start, seg.period_end
+    if seg.by_cell and first.day == 1 and (last + timedelta(days=1)).day == 1 and (first.year, first.month) == (last.year, last.month):
+        name = tx.MONTHS_NOMINATIVE[first.month - 1] + (f" {first.year}" if first.year != today.year else "")
+        return f"Аванс на {name}" if advance else name.capitalize()
+    name = tx.period_text(first, last)
+    return f"Аванс на {name}" if advance else name
+
+
+def money_rows(ledger: bl.Ledger, credit_id: str, today: date) -> List[MoneyRow]:
+    """THE layout of one payment by the periods (Б11.33 п. 2, lesson 174): the window «Внести оплату» (the probe) and the receipt (the written payment) read the same pieces of the ledger.  From the oldest period; a period
+    that was already paid in part before this payment is named «…, остаток»; the money that reached no begun period is «Аванс»; closed periods in a row (no «остаток») are folded into one line."""
+    by_id = {s.id: s for s in ledger.segments}
+    pieces: List[Tuple[Optional[bl.Segment], bl.Allocation]] = []
+    for a in ledger.allocations:
+        if a.credit_id != credit_id or a.amount <= 0:
+            continue
+        pieces.append((by_id.get(a.segment_id), a))
+    merged: List[List] = []                                     # one line per segment (a payment can touch it by several pieces)
+    for seg, a in pieces:
+        for m in merged:
+            if m[0] is seg and m[0] is not None:
+                m[1] += a.amount
+                m[2] = a.remaining_after
+                break
+        else:
+            merged.append([seg, a.amount, a.remaining_after, a.segment_id])
+    rows: List[Tuple] = []
+    advance = 0
+    advance_lines: List[Tuple] = []
+    for seg, amount, remaining, segment_id in merged:
+        if segment_id == bl.ADVANCE_SEGMENT or seg is None or not seg.begun:
+            if seg is None:
+                advance += amount
+            else:
+                advance_lines.append((seg.period_start, MoneyRow(label=period_label(seg, today, advance=True), amount=amount, state="advance")))
+            continue
+        left = remaining if remaining is not None else seg.unpaid
+        of = left + amount                                      # what was unpaid of the period before this payment
+        rest = seg.amount - of > 0                              # it was paid in part before: «, остаток»
+        label = period_label(seg, today) + (", остаток" if rest else "")
+        closed = left <= 0
+        rows.append((seg.period_start, MoneyRow(label=label, amount=amount, of=None if closed else of, state="closed" if closed else "part"), rest, seg))
+    rows.sort(key=lambda r: r[0])
+    out: List[MoneyRow] = []
+    run: List[Tuple] = []
+
+    def flush() -> None:
+        if len(run) == 1:
+            out.append(run[0][1])
+        elif run:
+            first, last = run[0][3], run[-1][3]
+            if first.kind == "package":
+                label = f"Пакеты № {first.package_no}–{last.package_no}"
+            elif all(r[3].by_cell and r[3].period_start.day == 1 and (r[3].period_end + timedelta(days=1)).day == 1 for r in run):
+                label = f"{period_label(first, today)} – {period_label(last, today)}"
+            else:
+                label = f"{tx.ddmm(first.period_start)}–{tx.ddmm(last.period_end)}"
+            out.append(MoneyRow(label=label, amount=sum(r[1].amount for r in run), state="closed", periods=len(run)))
+        run.clear()
+
+    for r in rows:
+        if r[1].state == "closed" and not r[2]:
+            run.append(r)
+        else:
+            flush()
+            out.append(r[1])
+    flush()
+    advance_lines.sort(key=lambda r: r[0])
+    out.extend(r[1] for r in advance_lines)
+    if advance:
+        out.append(MoneyRow(label="Аванс: уроки следующего пакета" if ledger.mode == bl.LESSONS else "Аванс", amount=advance, state="advance"))
+    return out
+
+
+def rest_rows(ledger: bl.Ledger, due, name: str, today: date) -> List[RestRow]:
+    """What stays unpaid after a payment under ONE name (``debt`` / ``due``), by the periods from the oldest: the same parts the sums ``debt_amount`` / ``due_amount`` are made of."""
+    by_id = {s.id: s for s in ledger.segments}
+    parts = sorted((p for p in due.parts if p.name == name and p.unpaid > 0), key=lambda p: by_id[p.segment_id].period_start if p.segment_id in by_id else date.min)
+    return [RestRow(label=period_label(by_id[p.segment_id], today) if p.segment_id in by_id else "Долг", amount=p.unpaid) for p in parts]
+
+
 def preview_result(before: bl.Ledger, after: bl.Ledger, credit_id: str, price_today: Optional[int], due_before, due_after, today: date, closed: bool = False) -> PreviewResult:
     allocs = allocations_of(after, credit_id)
     raw = [a for a in after.allocations if a.credit_id == credit_id]
@@ -549,6 +639,8 @@ def preview_result(before: bl.Ledger, after: bl.Ledger, credit_id: str, price_to
         partial_credit_after=after.partial_credit, lessons=lessons, summary_text=text,
         after_text=tx.after_text(due_after.debt_amount, due_after.due_amount, cover_until(after, closed), after.lessons.left if lessons else None, after.advance, after.covered_by),
         price_ahead=price_ahead(after, credit_id, price_today),
+        money_rows=money_rows(after, credit_id, today), debt_rest=rest_rows(after, due_after, pay_due.DEBT, today),
+        due_after=due_after.due_amount, due_rest=rest_rows(after, due_after, pay_due.DUE, today),
     )
 
 
