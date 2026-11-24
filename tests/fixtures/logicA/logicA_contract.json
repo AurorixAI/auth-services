@@ -3846,6 +3846,92 @@
         "title": "OverrideStudent",
         "type": "object"
       },
+      "PauseChargeLater": {
+        "description": "Б11.40 С3': the days of the change that lie in a period that is not charged yet (no sum).",
+        "properties": {
+          "first_day": {
+            "format": "date",
+            "title": "First Day",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "last_day": {
+            "format": "date",
+            "title": "Last Day",
+            "type": "string"
+          }
+        },
+        "required": [
+          "label",
+          "first_day",
+          "last_day"
+        ],
+        "title": "PauseChargeLater",
+        "type": "object"
+      },
+      "PauseChargeRow": {
+        "description": "Б11.40 С1': one line «период · уроков → сумма» of a pause in the common month: the days of ONE begun period whose lessons the pause took out of the price (or gave back); the words are the server's.",
+        "properties": {
+          "amount": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Amount"
+          },
+          "days": {
+            "title": "Days",
+            "type": "integer"
+          },
+          "first_day": {
+            "format": "date",
+            "title": "First Day",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "last_day": {
+            "format": "date",
+            "title": "Last Day",
+            "type": "string"
+          },
+          "lessons": {
+            "title": "Lessons",
+            "type": "integer"
+          },
+          "lessons_passed": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lessons Passed"
+          }
+        },
+        "required": [
+          "label",
+          "first_day",
+          "last_day",
+          "days",
+          "lessons",
+          "lessons_passed",
+          "amount"
+        ],
+        "title": "PauseChargeRow",
+        "type": "object"
+      },
       "PauseCreate": {
         "properties": {
           "first_day": {
@@ -4117,6 +4203,23 @@
             "title": "Advance Drops",
             "type": "array"
           },
+          "charge_later": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PauseChargeLater"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "charge_rows": {
+            "items": {
+              "$ref": "#/components/schemas/PauseChargeRow"
+            },
+            "title": "Charge Rows",
+            "type": "array"
+          },
           "dry_run": {
             "default": false,
             "title": "Dry Run",
@@ -4193,6 +4296,8 @@
           "other_groups_text",
           "pause",
           "impact",
+          "charge_rows",
+          "charge_later",
           "lessons",
           "payroll",
           "dry_run",
@@ -4248,6 +4353,23 @@
               "type": "object"
             },
             "title": "Advance Drops",
+            "type": "array"
+          },
+          "charge_later": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PauseChargeLater"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "charge_rows": {
+            "items": {
+              "$ref": "#/components/schemas/PauseChargeRow"
+            },
+            "title": "Charge Rows",
             "type": "array"
           },
           "dry_run": {
@@ -4313,6 +4435,8 @@
           "other_groups_text",
           "pause",
           "impact",
+          "charge_rows",
+          "charge_later",
           "row",
           "dry_run"
         ],

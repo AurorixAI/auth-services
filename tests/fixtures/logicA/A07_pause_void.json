@@ -28,6 +28,8 @@
     "refundable_before": 80000,
     "refundable_after": 0
   },
+  "charge_rows": [],
+  "charge_later": null,
   "row": {
     "debt_amount": 20000,
     "due_amount": 0,

@@ -28,6 +28,8 @@
     "refundable_before": 0,
     "refundable_after": 80000
   },
+  "charge_rows": [],
+  "charge_later": null,
   "lessons": {
     "excluded": [
       {
