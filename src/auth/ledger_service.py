@@ -58,6 +58,69 @@ logger = logging.getLogger(__name__)
 
 LEAVE_VOID_REASON = "ученик ушёл из группы"      # the reason ``close_at_leave`` writes on a pause it takes off (the one reader / writer of the words: ``logica_service``)
 MAX_TRANSFER_HOPS = 8
+
+
+@dataclass(frozen=True)
+class PauseCut:
+    """A cut of a leaving / a transfer / an archive that STANDS (it was not cancelled): the moment, the form before it, the form after it (``None`` = the pause was taken off whole)."""
+
+    at: datetime
+    was: Tuple[date, date]
+    now: Optional[Tuple[date, date]]
+
+    @property
+    def removed(self) -> Optional[Tuple[date, date]]:
+        """The days the cut took out of the pause."""
+        if self.now is None:
+            return self.was
+        return (max(self.was[0], self.now[1] + timedelta(days=1)), self.was[1]) if self.now[1] < self.was[1] else None
+
+
+@dataclass(frozen=True)
+class PauseJournal:
+    """Б11.30 п. 2: what the journal of decisions says of ONE pause.  ``forms``: what a HUMAN made of it - the entering and every edit, ``(moment, first, last)``; ``cut``: the cut of a leaving that stands, or ``None``;
+    ``sound``: the journal ends in the days the row has now (a row written past the journal is not sound: the pause is then read as it is, known always)."""
+
+    forms: Tuple[Tuple[datetime, date, date], ...]
+    cut: Optional[PauseCut]
+    sound: bool
+
+    @property
+    def leave_voided(self) -> bool:
+        """A leaving took the pause off whole and nobody gave it back."""
+        return self.cut is not None and self.cut.now is None
+
+
+def read_pause_journal(lines: Sequence[Tuple[datetime, str, Dict[str, Any]]], *, created_at: datetime, first_day: date, last_day: date, voided: bool) -> PauseJournal:
+    """THE ONE reader of the journal of a pause (the loader, the edit of a pause and the cancel of a leaving read it here: lessons 139, 140).  ``lines``: ``(moment, action, snapshot)`` of the lines of the pause, in time.
+    A line that has ``via`` leave / transfer / archive AND ``was`` is a CUT (an edit of the end, or the taking off of the whole pause); ``via`` ``leave_undone`` erases the cut that stands; a line of the entering of a
+    pause carried by a transfer (``via`` transfer, no ``was``) is the entering of a human, not a cut; every other line is a form of a human."""
+    def days(snap: Dict[str, Any]) -> Tuple[date, date]:
+        return date.fromisoformat(snap["first_day"]), date.fromisoformat(snap["last_day"])
+
+    rest = list(lines)
+    if rest and rest[0][1] == AUDIT_PAUSE_SET and not rest[0][2].get("was") and rest[0][2].get("via") != "leave_undone":     # the entering is in the journal
+        forms = [(created_at, *days(rest.pop(0)[2]))]
+    else:                                                                              # it is not: the first line says what the pause was
+        first_was = rest[0][2].get("was") if rest else None
+        forms = [(created_at, *(date.fromisoformat(d) for d in first_was))] if first_was else [(created_at, first_day, last_day)]
+    cut: Optional[PauseCut] = None
+    for at, action, snap in rest:
+        via = snap.get("via")
+        if via == "leave_undone":
+            cut = None
+        elif via in LEAVE_VIA and snap.get("was"):
+            was = (date.fromisoformat(snap["was"][0]), date.fromisoformat(snap["was"][1]))
+            cut = PauseCut(at, was, None if action == AUDIT_PAUSE_VOID else days(snap))
+        elif action == AUDIT_PAUSE_SET:
+            forms.append((at, *days(snap)))
+    if cut is None:
+        shown = forms[-1][1:]
+    else:
+        shown = cut.was if cut.now is None else cut.now
+    row = (first_day, last_day)
+    sound = True if voided and cut is None else shown == row                           # a pause a human took off with no cut: the row is not in the account, nothing to match
+    return PauseJournal(tuple(forms), cut, sound)
 SCHEDULE_HORIZON_DAYS = 800  # the preload of the schedule reaches this far past today (24 future periods + slack)
 FORECAST_DAYS = 400          # how far ahead the forecast of a package looks for the day of its last lesson (a package of 57 weekly lessons fits)
 
@@ -302,6 +365,14 @@ def _days(first: date, last: date) -> List[date]:
     return [first + timedelta(days=i) for i in range((last - first).days + 1)]
 
 
+def pause_journal(db: Session, org_id: str, pause: MembershipPause) -> PauseJournal:
+    """The journal of ONE pause read by ``read_pause_journal`` (one query): the edit of a pause and the cancel of a leaving ask it, the loader reads the same lines for all the pauses at once."""
+    lines = [(at, action, snap or {}) for action, at, snap in db.query(GroupAudit.action, GroupAudit.created_at, GroupAudit.snapshot).filter(
+        GroupAudit.org_id == org_id, GroupAudit.group_id == pause.group_id, GroupAudit.action.in_((AUDIT_PAUSE_SET, AUDIT_PAUSE_VOID)),
+        GroupAudit.snapshot["pause_id"].astext == str(pause.id)).order_by(GroupAudit.created_at, GroupAudit.id)]
+    return read_pause_journal(lines, created_at=pause.created_at, first_day=pause.first_day, last_day=pause.last_day, voided=pause.voided_at is not None)
+
+
 class LedgerLoader:
     """Loads the facts of a set of memberships (and of the memberships linked to them by transfers) and runs the ledger."""
 
@@ -325,10 +396,10 @@ class LedgerLoader:
         self.writeoffs: Dict[UUID, List[StudentWriteoff]] = {}
         self.refunds: Dict[UUID, List[StudentRefund]] = {}
         self.pauses: Dict[UUID, List[MembershipPause]] = {}
-        self.past_pauses: Dict[UUID, List[MembershipPause]] = {}       # Б11.8: the pauses a LEAVING took off (``close_at_leave``): history for the worlds known before the leaving
+        self.past_pauses: Dict[UUID, List[MembershipPause]] = {}       # Б11.30: the pauses that are not live - taken off by a leaving or by a human: history for the worlds (only their forms and cuts count)
         self._chained: List[StudentPayment] = []                      # the payments read, waiting for the moments of their chains (``_load_chains``)
         self.first_moment: Dict[Any, datetime] = {}                   # payment id -> the moment of the FIRST record of its chain of corrections / restorations (Б11.1)
-        self.pause_lines: Dict[str, List[Tuple[datetime, Dict[str, Any]]]] = {}       # pause id -> the lines of the journal that entered / edited it, in time (Б7.7 п. 5)
+        self.pause_lines: Dict[str, List[Tuple[datetime, str, Dict[str, Any]]]] = {}       # pause id -> the lines of the journal of the pause (entered / edited / voided / cut), in time (Б7.7 п. 5)
         self.openings: Dict[UUID, Optional[MembershipOpeningBalance]] = {}
         self.t_in: Dict[UUID, List[MembershipTransfer]] = {}
         self.t_out: Dict[UUID, List[MembershipTransfer]] = {}
@@ -480,36 +551,17 @@ class LedgerLoader:
             StudentRefund.org_id == self.org_id, StudentRefund.membership_id.in_(found), StudentRefund.voided_at.is_(None)
         ):
             self.refunds[refund.membership_id].append(refund)
-        entered: Dict[str, List[Tuple[datetime, Dict[str, Any]]]] = {}
-        taken_off: Dict[str, Tuple[MembershipPause, UUID]] = {}            # the voided pauses the WORDS of the reason ask about: the journal decides (Б11.12 п. 2)
-        for pause in self.db.query(MembershipPause).filter(
-            MembershipPause.org_id == self.org_id, MembershipPause.membership_id.in_(found),
-            or_(MembershipPause.voided_at.is_(None), MembershipPause.void_reason == LEAVE_VOID_REASON),        # the live ones, and the ones that MAY be taken off by a leaving (a preselect only: Б11.12 п. 2, lesson 165)
-        ):
-            if pause.voided_at is None:                    # a cancelled leaving gave its pauses back: they are live
-                self.pauses[pause.membership_id].append(pause)
-            else:
-                taken_off[str(pause.id)] = (pause, pause.membership_id)
+        entered: Dict[str, List[Tuple[datetime, str, Dict[str, Any]]]] = {}
+        for pause in self.db.query(MembershipPause).filter(MembershipPause.org_id == self.org_id, MembershipPause.membership_id.in_(found)):      # Б11.30: ALL the pauses of the participation (the forms of one a human took off matter to the days of another)
+            (self.pauses if pause.voided_at is None else self.past_pauses)[pause.membership_id].append(pause)
             entered[str(pause.id)] = []
         if entered:                                       # Б7.7 п. 5: the forms of the pauses in time are in the journal of decisions
-            by_leave: Set[str] = set()                     # Б11.12 п. 2: «taken off by a leaving» = a line of the journal that VOIDS the pause with ``via`` leave / transfer / archive; the words of a human are not a sign
             for action, at, snap in (self.db.query(GroupAudit.action, GroupAudit.created_at, GroupAudit.snapshot)
                                      .filter(GroupAudit.org_id == self.org_id, GroupAudit.group_id.in_({self.members[m][2].id for m in found}), GroupAudit.action.in_((AUDIT_PAUSE_SET, AUDIT_PAUSE_VOID)))
                                      .order_by(GroupAudit.created_at, GroupAudit.id)):
                 snap = snap or {}
-                if snap.get("pause_id") not in entered:
-                    continue
-                if action == AUDIT_PAUSE_SET:
-                    entered[snap["pause_id"]].append((at, snap))
-                    if snap.get("via") == "leave_undone":      # Б11.14 п. 2: the cancel of the leaving gave the pause back: it is no more «taken off by a leaving» (the window of a human's void reads it before his line is written)
-                        by_leave.discard(snap["pause_id"])
-                elif snap.get("via") in LEAVE_VIA:         # the LAST line that voids the pause decides (b11.13 p.1): a leaving, its cancel and then a human's void is a pause a human took off
-                    by_leave.add(snap["pause_id"])
-                else:
-                    by_leave.discard(snap["pause_id"])
-            for pause_id, (pause, mid) in taken_off.items():
-                if pause_id in by_leave:
-                    self.past_pauses[mid].append(pause)
+                if snap.get("pause_id") in entered:
+                    entered[snap["pause_id"]].append((at, action, snap))
             self.pause_lines.update(entered)
         for opening in self.db.query(MembershipOpeningBalance).filter(
             MembershipOpeningBalance.org_id == self.org_id, MembershipOpeningBalance.membership_id.in_(found),
@@ -971,48 +1023,20 @@ class LedgerLoader:
         return value
 
     def _pause_of(self, p: MembershipPause) -> bl.Pause:
-        """Б7.7 п. 5: the pause with its FORMS in time - the moment it was entered with the days it had then, and every later edit (the lines of the journal of decisions: the days they wrote).  The form of the
-        pause at a moment is the last one at or before it.  A pause whose journal does not end in the days it has now (an old row, a change nobody wrote) is taken whole from its creation.
-        Б11.8 п. 2: what a LEAVING wrote to the pause (the cut: a line ``via`` leave / transfer / archive) is a form while the leaving stands; the cancel of the leaving (``leave_undone``) erases it and its own line:
-        the pause is what the last HUMAN made of it.  Б11.24: what a human WANTS of the pause (H, one stretch) and the visible end under a standing cut (K) go by the table of the case.  Б11.28: a cancel erases a cut only by a line that ANSWERS a cut (it says ``was``: the pause had a form; a pause the leaving took off whole has none); a cut stands (K and the hidden tail do not change) whatever a human edits under it, and the tail is in H only when his CURRENT form ends on K.  A pause taken off by a leaving carries the moment it was taken off (``voided_at``)."""
-        voided = p.voided_at
+        """Б11.30: the pause for the core - the forms a HUMAN made of it, the cut of a leaving that stands (the days it took out, at its moment), or the moment a leaving took it off whole (``voided_at``); a pause a human took
+        off has its forms only.  ONE reader of the journal (``read_pause_journal``).  A row whose journal does not end in its days (a change nobody wrote) is read as it is, known always, and the server says so (it is
+        not folded in silence: the nightly check of the rows of the pauses is a step of its own)."""
         if not p.created_at:
-            return bl.Pause(p.first_day, p.last_day, voided_at=voided)
-        lines = self.pause_lines.get(str(p.id), [])
-
-        def days(snap: Dict[str, Any]) -> Tuple[date, date]:
-            return date.fromisoformat(snap["first_day"]), date.fromisoformat(snap["last_day"])
-
-        if lines and not lines[0][1].get("was"):                 # the first line is the entering of the pause
-            first_form, edits = days(lines[0][1]), lines[1:]
-        elif lines:                                               # the entering is not in the journal: the first edit says what it was
-            first_form, edits = tuple(date.fromisoformat(d) for d in lines[0][1]["was"]), lines
-        else:
-            first_form, edits = (p.first_day, p.last_day), []
-        forms: List[Tuple[datetime, date, date]] = [(p.created_at, *first_form)]
-        wanted: List[Optional[Tuple[date, date]]] = [first_form]  # per form: what the HUMAN wanted of the pause when it was written (``None`` for a form a leaving wrote)
-        cuts: List[Tuple[int, Optional[date], Optional[date]]] = []  # the cuts that stand: (the index of the form, K and the tail before it) - the LAST one is what a cancel of a leaving ANSWERING a cut erases
-        human, kept, tail = first_form, None, None                # Б11.24: H = what the human wants (one stretch); K = the visible end under a standing cut (``None`` = none stands); the tail = the end of H the cut hides
-        for at, snap in edits:
-            via = snap.get("via")
-            if via == "leave_undone":                             # the leaving is cancelled: its cut is erased EVEN after the edits of a human (his forms read as what he wanted then); a line with no ``was`` answers no cut (a pause taken off whole)
-                if snap.get("was") and cuts:
-                    index, kept, tail = cuts.pop()
-                    del forms[index], wanted[index]
-                    forms[index:] = [(moment, *days_) for (moment, _, _), days_ in zip(forms[index:], wanted[index:])]
-                continue
-            first_day, last_day = days(snap)
-            forms.append((at, first_day, last_day))
-            if via in LEAVE_VIA:                                               # the cut: the visible form ends on the day of the leaving, H does not change (the tail after it is hidden, not given up)
-                wanted.append(None)
-                cuts.append((len(forms) - 1, kept, tail))
-                kept, tail = last_day, human[1]
-                continue
-            human = (first_day, tail if kept == last_day else last_day)   # Б11.28: the tail is his when the CURRENT form ends on the day of the cut (``kept`` is None: no cut, no tail); the cut stands whatever he edits
-            wanted.append(human)
-        if forms[-1][1:] != (p.first_day, p.last_day):
-            forms, human = [(p.created_at, p.first_day, p.last_day)], (p.first_day, p.last_day)
-        return bl.Pause(p.first_day, p.last_day, tuple(forms), voided, human)
+            return bl.Pause(p.first_day, p.last_day)
+        voided = p.voided_at is not None
+        journal = read_pause_journal(self.pause_lines.get(str(p.id), []), created_at=p.created_at, first_day=p.first_day, last_day=p.last_day, voided=voided)
+        if not journal.sound:
+            logger.warning("pause %s of membership %s: the journal does not end in the days of the row (%s - %s): the pause is read as it is, known always", p.id, p.membership_id, p.first_day, p.last_day)
+            return bl.Pause(p.first_day, p.last_day, voided_at=p.voided_at if voided and p.void_reason == LEAVE_VOID_REASON else None)
+        if journal.leave_voided:
+            return bl.Pause(p.first_day, p.last_day, journal.forms, voided_at=journal.cut.at)
+        removed = journal.cut.removed if journal.cut is not None else None
+        return bl.Pause(p.first_day, p.last_day, journal.forms, None, ((journal.cut.at, *removed),) if removed is not None else ())
 
     def build_input(
         self,

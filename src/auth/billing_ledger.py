@@ -24,7 +24,7 @@ import calendar as _calendar
 from bisect import bisect_right
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timedelta
-from typing import Callable, Dict, List, Optional, Sequence, Tuple
+from typing import Callable, Dict, List, Optional, Sequence, Set, Tuple
 
 from . import payment_status as ps
 from . import payments_texts as tx
@@ -139,17 +139,17 @@ class CountedLesson:
 
 @dataclass(frozen=True)
 class Pause:
-    """A live pause of the membership, business days, both ends included: its days are not charged."""
+    """A pause of the participation, business days, both ends included: its days are not charged.  PAY-TAILS Б11.30: the pause says what HUMANS made of it and what LEAVINGS cut from it, apart (the core reads the
+    days of the whole participation, ``_pause_worlds``)."""
 
     first: date
     last: date
-    # PAY-TAILS Б7.7: the forms of the pause in time, ``(moment, first, last)`` ascending: the first is the moment it was entered; a later one is an edit.  ``first`` / ``last`` above are the LAST form.
-    # Empty = no stamp: the pause is known always (see ``entered_at``).
+    # The forms a HUMAN wrote, ``(moment, first, last)`` ascending: the first is the moment the pause was entered, a later one is an edit.  Empty = no stamp: the pause is known always (see ``entered_at``).
     forms: Tuple[Tuple[datetime, date, date], ...] = ()
-    # PAY-TAILS Б11.8: a pause that a LEAVING took off (``close_at_leave``): the moment it was taken off; it lives in ``LedgerInput.past_pauses`` and is known to the worlds until that moment.  ``None`` = a live pause.
+    # A pause that a LEAVING took off whole (``close_at_leave``): the moment it was taken off; it lives in ``LedgerInput.past_pauses``.  ``None`` in ``past_pauses`` = a pause a HUMAN took off (only its forms count).
     voided_at: Optional[datetime] = None
-    # PAY-TAILS Б11.25: what a HUMAN wants of the pause in the end, ``(first, last)`` (H of the table of Б11.24).  ``None`` = nobody says: the forms stand as written.  The loader fills it from the journal (``via``), the core never guesses it from the days (lesson 167).
-    human: Optional[Tuple[date, date]] = None
+    # The STANDING cuts of leavings (not cancelled): ``(moment, first removed day, last removed day)``; ``first`` / ``last`` above are the days that stay.  The loader fills it from the journal, the core never guesses it from the days (lesson 167).
+    cuts: Tuple[Tuple[datetime, date, date], ...] = ()
 
 
 NO_MOMENT = datetime(9998, 12, 31)        # a leaving without a known moment: entered after all the records, before the probe of a window (``PROBE_MOMENT``)
@@ -1207,23 +1207,51 @@ class _World:
     periods: Dict[tuple, Tuple[date, int]]
 
 
-def _pauses_known_at(pauses: Sequence[Pause], moment: datetime) -> Tuple[Pause, ...]:
-    """The pauses as they were known at ``moment``: one entered later is not there; a pause without a stamp is known always.  Б11.25, ONE rule: the pause of the world of a moment = the form visible by the last line of
-    the moment - whoever wrote it, a human or a leaving / a transfer / an archive - crossed with what the human wants in the end (``human``): a day he took off later was never a pause in that world (the account only
-    grows dearer), a day he added later is not there yet; the crossing is empty = no pause in that world."""
-    out: List[Pause] = []
-    for p in pauses:
-        if p.voided_at is not None and p.voided_at <= moment:
-            continue                                   # taken off by a leaving by then
-        if not p.forms:
-            out.append(p)
-            continue
-        form = [(first, last) for m, first, last in p.forms if m <= moment][-1:]
-        if form and p.human is not None:
-            form = [(max(form[0][0], p.human[0]), min(form[0][1], p.human[1]))]
-        if form and form[0][0] <= form[0][1]:
-            out.append(replace(p, first=form[0][0], last=form[0][1]))
-    return tuple(out)
+def _days_of(first: date, last: date) -> List[date]:
+    return [first + timedelta(days=k) for k in range((last - first).days + 1)]
+
+
+def _pause_worlds(live: Sequence[Pause], past: Sequence[Pause]) -> Callable[[datetime], Tuple[Pause, ...]]:
+    """Б11.30: the pauses of the PARTICIPATION as they were known at a moment, by ONE definition on the days.  The input: the forms of humans (of every pause of the participation, also one a human took off: ``past`` with no
+    ``voided_at``), the standing cuts of leavings (``cuts``; a pause a leaving took off whole is a cut of all its days at ``voided_at``), and the TOTAL = the days of the live pauses as they are plus the days a standing cut
+    hides.  A day ``d`` is a day of a pause in the world of the moment ``T`` if and only if (1) ``d`` is in the total, and (2) among the events about ``d`` written not after ``T`` (a form of a human that has the day; a cut that
+    removed it) there is one, and the last of them is a form of a human (at one moment a cut is after a form).  A day a human took off is in no world (it is not in the total); a day he added is known from the first
+    moment it was in a form; a day a leaving cut is out from the moment of the cut.  The world has one pause per stretch of days."""
+    events: List[Tuple[datetime, int, List[date]]] = []                  # (moment, 0 = a form of a human / 1 = a cut, the days)
+    total: Set[date] = set()
+    for p in (*live, *past):
+        events += [(m, 0, _days_of(a, b)) for m, a, b in (p.forms or ((datetime.min, p.first, p.last),))]
+        events += [(m, 1, _days_of(a, b)) for m, a, b in p.cuts]
+    for p in live:
+        total.update(_days_of(p.first, p.last))
+        total.update(d for _, a, b in p.cuts for d in _days_of(a, b))
+    for p in past:
+        if p.voided_at is not None:
+            events.append((p.voided_at, 1, _days_of(p.first, p.last)))
+            total.update(_days_of(p.first, p.last))
+    events.sort(key=lambda e: e[:2])
+
+    def known(moment: datetime) -> Tuple[Pause, ...]:
+        state: Dict[date, int] = {}
+        for at, kind, days in events:
+            if at > moment:
+                break
+            for d in days:
+                state[d] = kind
+        out: List[Pause] = []
+        for d in sorted(d for d, kind in state.items() if kind == 0 and d in total):
+            if out and d == out[-1].last + timedelta(days=1):
+                out[-1] = Pause(out[-1].first, d)
+            else:
+                out.append(Pause(d, d))
+        return tuple(out)
+
+    return known
+
+
+def _pauses_known_at(live: Sequence[Pause], past: Sequence[Pause], moment: datetime) -> Tuple[Pause, ...]:
+    """The pauses of the world known at ``moment`` (``_pause_worlds``)."""
+    return _pause_worlds(live, past)(moment)
 
 
 def cancel_entered(versions: Sequence[RecalcVersion], cancel: CentreCancel) -> datetime:
@@ -1307,13 +1335,17 @@ def _worlds(inp: LedgerInput, segments: Sequence[Segment], recalcs: Sequence[Rec
     without a stamped fact has one world."""
     cancel_moments = {m for m in (cancel_entered(inp.recalc_versions, c) for c in inp.centre_cancels) if m != datetime.min}
     leave_moments = {m for m in (_leave_moment(s) for s in inp.stays) if m is not None}
+    pauses_at = _pause_worlds(inp.pauses, inp.past_pauses)
     history = (*inp.pauses, *inp.past_pauses)
-    moments = sorted({m for p in history for m, _, _ in p.forms} | {p.voided_at for p in inp.past_pauses if p.voided_at is not None} | cancel_moments | leave_moments)
+    moments = sorted({m for p in history for m, _, _ in (*p.forms, *p.cuts)} | {p.voided_at for p in inp.past_pauses if p.voided_at is not None} | cancel_moments | leave_moments)
     if not moments:
         return [_World(datetime.min, _slots_of(segments, recalcs))]
+    known: Dict[datetime, Tuple[Tuple[Pause, ...], Tuple[Stay, ...]]] = {}
 
     def facts_at(moment: datetime) -> Tuple[Tuple[Pause, ...], Tuple[Stay, ...]]:
-        return _pauses_known_at(history, moment), _stays_known_at(inp.stays, moment)
+        if moment not in known:
+            known[moment] = (pauses_at(moment), _stays_known_at(inp.stays, moment))
+        return known[moment]
 
     now = facts_at(PROBE_MOMENT)
     sets = {facts_at(m) for m in [datetime.min, *moments]}
