@@ -20,18 +20,6 @@ def chain_2_world(world, fixed_today):
     return november_with_forgiveness_and_money(world, fixed_today)
 
 
-def test_taking_a_pause_off_and_entering_a_new_one_is_not_an_edit_as_it_is_now(world, fixed_today):
-    # LEDGER-FREEZE (the finding 3, a blocker of the launch): the same facts through two actions.  12.11 the pause 24 - 30.11 is EDITED to 17 - 30.11 (November 300 000, 6 lessons): the forgiveness entered before the
-    # edit loses 150 000 and keeps 300 000 (used 300 000), the money is not touched: advance 600 000.  Taken off and entered anew (a new record, a new moment: the old one left the past worlds): used 150 000,
-    # advance 450 000, and from 01.12 a debt of 150 000.  AS IT SHOULD BE: the same account in both ways - 600 000 / 300 000 (the property «the same final facts - the same account», in LEDGER-FREEZE).
-    g, s = chain_2_world(world, fixed_today)
-    fixed_today(D(2026, 11, 12))
-    pause = owner(world).get(f"{API}/org/memberships/{membership(world, s, g).id}/pauses").json()[0]["id"]
-    assert owner(world).post(f"{API}/org/pauses/{pause}/void", json={"reason": "Поставили не так"}).status_code == 200
-    pause_on(world, s, g, "2026-11-17", "2026-11-30")
-    check(world, s, g, D(2026, 11, 12), charged=300_000, debt=0, advance=450_000, used=150_000, granted=450_000)       # as it is; should be advance 600 000, used 300 000
-
-
 def test_the_same_edit_through_the_edit_of_the_pause_gives_the_account_that_the_other_way_should_give(world, fixed_today):
     g, s = chain_2_world(world, fixed_today)
     fixed_today(D(2026, 11, 12))

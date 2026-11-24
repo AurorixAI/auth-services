@@ -13,6 +13,7 @@ from tests.pg_world import ensure_billing, give_group_price, make_group, needs_p
 from tests.test_pay2_api_pg import API, fixed_today, membership, owner  # noqa: F401  (fixture)
 from tests.test_pay_tails_b11_pg import om_at
 from tests.test_pay_tails_b13_pg import edit_pause, leave_numbers
+from tests.test_pay_tails_as_is_pg import chain_2_world
 from tests.test_pay_tails_b77_pg import pause_on
 from tests.test_pay_tails_money_pg import TTF, check, forgive, leave, led
 from tests.test_payments_service_pg import pay
@@ -110,6 +111,18 @@ def test_b11_30_d3_taking_a_pause_off_and_entering_the_same_days_again_is_no_edi
     void_pause(world, s, g, D(2026, 11, 12), pause_id, debt=0, advance=0, charged=600_000, used=300_000, granted=300_000)
     fixed_today(D(2026, 11, 13))
     new_pause(world, s, g, D(2026, 11, 13), "2026-11-17", "2026-11-30", debt=0, advance=300_000, charged=300_000, used=300_000, granted=300_000)
+
+
+def test_b11_30_d3_the_world_of_the_freeze_taking_a_pause_off_and_entering_a_longer_one_is_the_edit_of_the_pause(world, fixed_today):
+    # The test «as it is» of step 8.9 moved here with the number the rule gives (the ONLY change of an expectation of this step): the student since 01.11; 02.11 a pause 24 - 30.11; 05.11 the whole 450 000 forgiven; 10.11 the parent
+    # pays 600 000.  12.11 the pause is TAKEN OFF and a new one 17 - 30.11 is entered: the final days are the days of the edit 24 - 30 -> 17 - 30 (the sibling test of the as-it-is file): November 300 000, the forgiveness
+    # keeps 300 000 (used 300 000), the money is not touched: advance 600 000 (was: used 150 000, advance 450 000, a debt of 150 000 from 01.12).
+    g, s = chain_2_world(world, fixed_today)
+    fixed_today(D(2026, 11, 12))
+    pause = owner(world).get(f"{API}/org/memberships/{membership(world, s, g).id}/pauses").json()[0]["id"]
+    assert owner(world).post(f"{API}/org/pauses/{pause}/void", json={"reason": "Поставили не так"}).status_code == 200
+    pause_on(world, s, g, "2026-11-17", "2026-11-30")
+    check(world, s, g, D(2026, 11, 12), charged=300_000, debt=0, advance=600_000, used=300_000, granted=450_000)
 
 
 def test_b11_30_d4_splitting_a_pause_into_two_is_no_edit(world, fixed_today):
