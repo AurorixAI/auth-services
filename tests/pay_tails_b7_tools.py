@@ -21,6 +21,7 @@ import random
 import sys
 from dataclasses import dataclass, replace
 from types import SimpleNamespace
+from typing import Optional
 from datetime import date, datetime, timedelta
 
 _TREE = os.environ.get("B7_TREE") or os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -41,7 +42,7 @@ EARLIEST = D(2026, 9, 15)                # the earliest date the generator gives
 PROPERTIES = ("P1c debt", "P1c advance", "P1c used", "P3u advance>=", "P3u advance<=freed", "P3u advance<=money", "P3u debt", "P3u used", "P3u transfer", "P6 same", "P6 amount", "P6b restore", "P7 undo", "P7 relapse", "P7 ordinary return",
               "P1 debt", "P1 used", "P1 advance", "P1 advance<=money", "P1 identity", "P2 debt", "P2 advance<=money", "P2 advance today", "P2 advance back",
               "P3 used", "P3 debt", "P3 advance", "P3 advance<=money", "P3k used", "P3k debt", "P3k advance", "P3k advance<=money", "P3e used", "P3e debt", "P3e advance", "P3e advance<=money", "P3c advance", "P3ec advance", "P4 early", "P4 today", "P5 probe",
-              "C1 chain", "C1 chain days", "C2 shorten-back", "C2 shorten-back days", "C3 reenter", "C3 reenter days", "C3 split", "C3 split days", "C4 leave free", "C4 leave free days", "C5 void", "C5 void days")
+              "C1 chain", "C1 chain days", "C2 shorten-back", "C2 shorten-back days", "C3 reenter", "C3 reenter days", "C3 split", "C3 split days", "C4 leave free", "C4 leave free days", "C5 void", "C5 void days", "C6 empty stay")
 
 
 @dataclass(frozen=True)
@@ -876,6 +877,57 @@ def new_leave_free(rng, inp):
     return LeaveFree(), replace(inp, pauses=(mk_pause(first, inp.today + timedelta(days=75), entered, 2),), past_pauses=())
 
 
+@dataclass(frozen=True)
+class EmptyLeave:
+    """C6 (Б11.14 п. 1, Б11.31): the student left earlier; an ORDINARY return on ``back``; ``records`` entered during the stay (after the return); a NEW pause on the days after today (entered after the records);
+    a leaving TODAY before the first lesson of the stay: it never began (the day he was to be charged from ``billing`` is after today, or the stay was opened and closed on ONE day with no mark) and leaves no trace:
+    the records made during it count as made after the previous leaving, the new pause is taken off by the leaving.  The stays are built by the LOADER (lesson 166), the oracle is the input rebuilt: the same facts,
+    no second stay, no new pause."""
+
+    back: date
+    records: tuple
+    billing: Optional[date]
+
+
+EMPTY_RETURN, EMPTY_PAUSE, EMPTY_LEAVE = 900, 930, 940          # the order inside the day: the return, the records (905 .. 925), the new pause, the leaving
+
+
+def new_empty_leave(rng, inp):
+    if not can_return(inp):
+        return None
+    after = [d for d in inp.lesson_days(inp.today + timedelta(days=1), inp.today + timedelta(days=21)) if d > inp.today]
+    if rng.random() < 0.5 and after:                                    # «Оплата с» the first lesson after today: the stay is billed from a day that never came
+        back, billing = max(inp.stays[-1].last + timedelta(days=1), inp.today - timedelta(days=rng.randint(0, 3))), after[0]
+    else:                                                               # back and gone on ONE day, no counted mark
+        back, billing = inp.today, None
+    records = []
+    for k, kind in enumerate((bl.PAYMENT, bl.WRITEOFF)):
+        if rng.random() < 0.6:
+            c = new_payment(rng, inp, f"emp{k}") if kind == bl.PAYMENT else new_forgiveness(rng, inp, f"emp{k}")
+            if c is not None:
+                day = back + timedelta(days=rng.randint(0, (inp.today - back).days))
+                records.append(replace(c, created_at=at(day, 905 + 10 * k)))
+    return EmptyLeave(back, tuple(records), billing) if records or rng.random() < 0.3 else None
+
+
+def empty_leave_input(inp, x):
+    """The input after the sequence, as the product writes it: the stays of the membership by the LOADER (the previous period, the period of the return closed today), the records, the new pause taken off by the leaving."""
+    from src.auth import ledger_service as ls
+    moment = at(inp.today, EMPTY_LEAVE)
+    last = inp.stays[-1]
+    membership = SimpleNamespace(id=None, joined_at=last.joined_at, left_at=moment, is_active=False)
+    periods = [SimpleNamespace(joined_at=last.joined_at or at(last.first, 0), left_at=last.left_at or at(last.last, 900), billing_from=last.first),
+               SimpleNamespace(joined_at=at(x.back, EMPTY_RETURN), left_at=moment, billing_from=x.billing)]
+    new = replace(inp, stays=(*inp.stays[:-1], *ls.stays_of_membership(membership, periods, lambda day: False)), credits=(*inp.credits, *x.records))
+    pauses, past = leave_pauses((*inp.pauses, mk_pause(inp.today + timedelta(days=1), inp.today + timedelta(days=75), inp.today, EMPTY_PAUSE)), getattr(inp, "past_pauses", ()), inp.today, moment)
+    return with_pauses(new, pauses, past)
+
+
+def empty_leave_oracle(inp, x):
+    """The world in which the return never was: the same records (entered after the previous leaving: every one of them is), no second stay, no new pause."""
+    return replace(inp, credits=(*inp.credits, *x.records))
+
+
 def with_new_pause_before_leave(rng, inp):
     """A pause entered NOW (880) on the days of the future of the stay, then a leaving (900) follows: the world before that leaving, ``None`` when the student cannot leave."""
     if not can_leave(inp):
@@ -885,7 +937,7 @@ def with_new_pause_before_leave(rng, inp):
     return replace(inp, pauses=(*inp.pauses, p))
 
 
-EVENTS = (Leave, UndoLeave, Relapse, OrdinaryRelapse, Return, Correct, RoundTrip, Chain, ShortenBack, Reenter, Split, VoidPause, LeaveFree)
+EVENTS = (Leave, UndoLeave, Relapse, OrdinaryRelapse, Return, Correct, RoundTrip, Chain, ShortenBack, Reenter, Split, VoidPause, LeaveFree, EmptyLeave)
 
 
 def new_leave(rng, inp, kind="leave"):
@@ -1040,6 +1092,9 @@ def event_violations(inp, x):
     elif isinstance(x, LeaveFree):                                  # C4: no lesson after the day of the leaving is outside the pause: the leaving changes no sum
         if any(d > inp.today for seg in bl.run_ledger(inp).segments if seg.begun for d in seg.days):        # the precondition (also for the shrinker): no charged day after the day of the leaving, i.e. every lesson of the begun periods after it is inside a pause
             return bad
+        last = inp.stays[-1]
+        if len(inp.stays) > 1 and not any(last.first <= d <= inp.today for seg in bl.run_ledger(inp).segments if seg.begun for d in seg.days):          # the leaving makes the piece of the return EMPTY (it never began: Б11.14 п. 1, C6): its records count as made after the previous leaving, the account may move - C6 judges it
+            return bad
         _checked("C4 leave free")
         new = apply_leave(inp)
         if bl.run_ledger(new).flags:
@@ -1048,6 +1103,17 @@ def event_violations(inp, x):
             bad.append("C4 leave free")
         if worlds_differ(new):
             bad.append("C4 leave free days")
+    elif isinstance(x, EmptyLeave):                                 # C6 (Б11.31): a stay that never began leaves no trace: the account = the world without the return (the input rebuilt, not the core)
+        if not can_return(inp) or x.back < inp.stays[-1].last + timedelta(days=1) or x.back > inp.today or any(p.last > inp.today for p in inp.pauses):       # the preconditions (also for the shrinker)
+            return bad
+        new = empty_leave_input(inp, x)
+        if not allowed(new):
+            return bad
+        _checked("C6 empty stay")
+        if bl.run_ledger(new).flags:
+            bad.append("flags")
+        if state_of(new) != state_of(empty_leave_oracle(inp, x)):
+            bad.append("C6 empty stay")
     elif isinstance(x, UndoLeave):                                  # P7: the leaving cancelled the same day = the account before the leaving
         if state_of(apply_undo(inp)) != state_of(inp):
             bad.append("P7 undo")
@@ -1401,6 +1467,8 @@ def apply_x(inp, x):
         return human_void(inp, 0)
     if isinstance(x, LeaveFree):
         return apply_leave(inp)
+    if isinstance(x, EmptyLeave):
+        return empty_leave_input(inp, x)
     if isinstance(x, RoundTrip):
         return roundtrip_input(inp, x)
     if isinstance(x, Leave):
@@ -1441,7 +1509,7 @@ def run_counts(seed, n, cfg=Cfg()):
     for _ in range(n):
         inp = allowed_world(rng, cfg)
         worlds += 1
-        for kind in (bl.PAYMENT, bl.WRITEOFF, "pause", "edit", "cancel", "leave", "transfer", "undo", "relapse_pay", "relapse_forgive", "ordinary_pay", "ordinary_forgive", "return", "same", "amount", "restore", "leave_pause", "transfer_pause", "roundtrip", "roundtrip_pay", "roundtrip_leave", "roundtrip_transfer", "roundtrip_archive", "chain", "shorten_back", "reenter", "split", "void", "leave_free", "newpause_leave"):
+        for kind in (bl.PAYMENT, bl.WRITEOFF, "pause", "edit", "cancel", "leave", "transfer", "undo", "relapse_pay", "relapse_forgive", "ordinary_pay", "ordinary_forgive", "return", "same", "amount", "restore", "leave_pause", "transfer_pause", "roundtrip", "roundtrip_pay", "roundtrip_leave", "roundtrip_transfer", "roundtrip_archive", "chain", "shorten_back", "reenter", "split", "void", "leave_free", "newpause_leave", "empty_leave"):
             EVENT[0], EVENT[1] = kind, inp
             base = inp
             if kind == "leave_free":
@@ -1458,7 +1526,7 @@ def run_counts(seed, n, cfg=Cfg()):
                  else new_pause(rng, inp) if kind == "pause" else new_pause_edit(rng, inp) if kind == "edit" else new_cancel(rng, inp) if kind == "cancel" and inp.centre_cancels
                  else new_leave(rng, inp, kind) if kind in ("leave", "transfer") else new_leave_in_pause(rng, inp, kind[:-6]) if kind.endswith("_pause") else new_roundtrip(rng, inp, kind == "roundtrip_pay", kind[10:] if kind.startswith("roundtrip_") and kind != "roundtrip_pay" else "") if kind.startswith("roundtrip") else new_undo(rng, inp) if kind == "undo" else new_relapse(rng, inp, kind[8:]) if kind.startswith("relapse_") else new_ordinary_relapse(rng, inp, kind[9:]) if kind.startswith("ordinary_") else new_return(rng, inp) if kind == "return"
                  else new_correct(rng, inp, kind) if kind in ("same", "amount", "restore") else new_chain(rng, inp) if kind == "chain" else new_shorten_back(rng, inp) if kind == "shorten_back"
-                 else new_reenter(rng, inp) if kind == "reenter" else new_split(rng, inp) if kind == "split" else new_void(rng, inp) if kind == "void" else None)
+                 else new_reenter(rng, inp) if kind == "reenter" else new_split(rng, inp) if kind == "split" else new_void(rng, inp) if kind == "void" else new_empty_leave(rng, inp) if kind == "empty_leave" else None)
             if x is None:
                 continue
             pays += kind == bl.PAYMENT
