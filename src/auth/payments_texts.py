@@ -52,6 +52,13 @@ def opening_over_payments_text(total: int, covered_until: date) -> str:
     return f"У ученика уже есть оплаты на {money(total)} — покрытие станет до {ddmm(covered_until)}"
 
 
+# Б11.30 п. 3 / Б11.36 п. 5: the words of a pause a leaving cut (the 409 ``PAUSE_CLOSED_BY_LEAVE`` and ``PauseOut.days_locked_text`` say the same): by the kind of the cut and by whether the way back is open today
+PAUSE_CLOSED_NOW = "Пауза закрыта уходом ученика. Верните ученика в группу, затем измените паузу."
+PAUSE_CLOSED_LATER = "Пауза закрыта уходом ученика, изменить её нельзя. Можно снять паузу целиком."
+PAUSE_CLOSED_TRANSFER_NOW = "Пауза закрыта переводом ученика. Переведите ученика обратно в эту группу, затем измените паузу."
+PAUSE_CLOSED_TRANSFER_LATER = "Пауза закрыта переводом ученика, изменить её нельзя. Можно снять паузу целиком."
+
+
 def receipt_state_text(debt: int, advance: int, cover: Optional[str] = None, partial: bool = False, closed: bool = False, forward: Optional[str] = None) -> str:
     """The ONE state of the receipt on the day it is issued, a whole phrase without a date (the day is ``state_on_issue.as_of``): ``не оплачено 100 000 сум, оплачено до 14.11`` / ``аванс 50 000 сум`` / ``всё оплачено, оплачено до 30.11``.
     PAY-TAILS Б1.5: ``cover`` is the phrase of the coverage as far as the words allow (``cover_phrase``); a period paid in part (``partial``) says its own remainder and the head is not repeated:

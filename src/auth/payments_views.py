@@ -6,6 +6,7 @@ sentences (``payments_texts``).  Nothing here decides an amount.
 """
 from __future__ import annotations
 
+import logging
 from datetime import date, timedelta
 from typing import List, Optional, Tuple
 
@@ -30,6 +31,8 @@ from .payments_schemas import (
     SegmentLessons,
     SegmentPart,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def price_out(info: bl.PriceInfo) -> PriceOut:
@@ -541,9 +544,28 @@ def period_label(seg: bl.Segment, today: date, *, advance: bool = False) -> str:
     return f"Аванс на {name}" if advance else name
 
 
+def _folding_kind(seg: bl.Segment) -> str:
+    """Б11.36 п. 6: the KIND of a period for the folding of closed lines: a package, a calendar month (named by its month), a personal period (named by dates), the opening debt (never folded)."""
+    if seg.kind == "package":
+        return "package"
+    if seg.kind == "opening":
+        return "opening"
+    return "month" if seg.by_cell and seg.period_start.day == 1 and (seg.period_end + timedelta(days=1)).day == 1 and (seg.period_start.year, seg.period_start.month) == (seg.period_end.year, seg.period_end.month) else "personal"
+
+
+def _next_period(prev: bl.Segment, seg: bl.Segment) -> bool:
+    """``seg`` comes right after ``prev`` and is of the same kind: a package whose number is the next one, a period that begins the day after ``prev`` ends (a month after a month, a personal period after a personal one)."""
+    kind = _folding_kind(prev)
+    if kind != _folding_kind(seg) or kind == "opening":
+        return False
+    if kind == "package":
+        return prev.package_no is not None and seg.package_no == prev.package_no + 1
+    return seg.period_start == prev.period_end + timedelta(days=1)
+
+
 def money_rows(ledger: bl.Ledger, credit_id: str, today: date) -> List[MoneyRow]:
     """THE layout of one payment by the periods (Б11.33 п. 2, lesson 174): the window «Внести оплату» (the probe) and the receipt (the written payment) read the same pieces of the ledger.  From the oldest period; a period
-    that was already paid in part before this payment is named «…, остаток»; the money that reached no begun period is «Аванс»; closed periods in a row (no «остаток») are folded into one line."""
+    that was already paid in part before this payment is named «…, остаток»; the money that reached no begun period is «Аванс»; closed periods in a row IN THE CALENDAR (no «остаток»; Б11.35 М2: the next begins the day after the previous ends, of one kind; packages by their numbers) are folded into one line."""
     by_id = {s.id: s for s in ledger.segments}
     pieces: List[Tuple[Optional[bl.Segment], bl.Allocation]] = []
     for a in ledger.allocations:
@@ -565,6 +587,8 @@ def money_rows(ledger: bl.Ledger, credit_id: str, today: date) -> List[MoneyRow]
     for seg, amount, remaining, segment_id in merged:
         if segment_id == bl.ADVANCE_SEGMENT or seg is None or not seg.begun:
             if seg is None:
+                if segment_id != bl.ADVANCE_SEGMENT:        # Б11.35 М3: a piece that points at no period of the account is a defect of the ledger, not the advance: said in the log, shown as «Аванс» (the sum of the lines stays the payment)
+                    logger.error("money_rows: the piece of the payment %s (%s) points at the period %s that is not in the account", credit_id, amount, segment_id)
                 advance += amount
             else:
                 advance_lines.append((seg.period_start, MoneyRow(label=period_label(seg, today, advance=True), amount=amount, state="advance")))
@@ -586,8 +610,9 @@ def money_rows(ledger: bl.Ledger, credit_id: str, today: date) -> List[MoneyRow]
             first, last = run[0][3], run[-1][3]
             if first.kind == "package":
                 label = f"Пакеты № {first.package_no}–{last.package_no}"
-            elif all(r[3].by_cell and r[3].period_start.day == 1 and (r[3].period_end + timedelta(days=1)).day == 1 for r in run):
-                label = f"{period_label(first, today)} – {period_label(last, today)}"
+            elif _folding_kind(first) == "month":
+                end = period_label(last, today)
+                label = f"{period_label(first, today)} – {end[0].lower()}{end[1:]}"
             else:
                 label = f"{tx.ddmm(first.period_start)}–{tx.ddmm(last.period_end)}"
             out.append(MoneyRow(label=label, amount=sum(r[1].amount for r in run), state="closed", periods=len(run)))
@@ -595,6 +620,8 @@ def money_rows(ledger: bl.Ledger, credit_id: str, today: date) -> List[MoneyRow]
 
     for r in rows:
         if r[1].state == "closed" and not r[2]:
+            if run and not _next_period(run[-1][3], r[3]):         # Б11.35 М2: only periods one after another in the CALENDAR (or packages by their numbers) are one line
+                flush()
             run.append(r)
         else:
             flush()

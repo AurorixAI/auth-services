@@ -469,8 +469,15 @@ def hand_rows(segs: List[HSeg], allocs: List[Allocation], names: HNames, month: 
             rows.append(MoneyRow(label=label, amount=sum(x[1].amount for x in run), state="closed", periods=len(run)))
         run.clear()
 
+    def follows(prev, seg) -> bool:
+        if prev.kind == "package" or seg.kind == "package":
+            return prev.kind == seg.kind == "package" and seg.pkg_no == prev.pkg_no + 1
+        return seg.a == prev.b + timedelta(days=1)
+
     for line in lines:
         if line[1].state == "closed" and not line[2]:
+            if run and not follows(run[-1][3], line[3]):
+                flush()                               # Б11.35 М2: only periods one after another in the CALENDAR (packages: numbers in a row) are one line
             run.append(line)
         else:
             flush()
@@ -678,7 +685,8 @@ def e1_create_replace_void(store):
     snapshot = ReceiptSnapshot(
         computed_at="2026-10-21T09:12:00", business_date=TODAY, amount=300_000, method="cash", allocations=allocs,
         debt_before=769_000, debt_after=469_000, advance_after=0, paid_until_before=t0["through"],
-        paid_until_after=t["through"], price=SnapshotPrice(amount=500_000, source="group"), mode="calendar")
+        paid_until_after=t["through"], price=SnapshotPrice(amount=500_000, source="group"), mode="calendar",
+        money_rows=hand_rows(segs, allocs, names)["money_rows"])          # Б11.35 М1: the same lines the window of the payment says, counted by hand from the pieces
     write("e1_receipt_snapshot.json", snapshot, store)
     write("e1_receipt_300000.json", ReceiptOut(
         receipt_no=18, org_name="ALGO Math Center", org_city="Ташкент", org_phone="+998901234567",
@@ -687,7 +695,7 @@ def e1_create_replace_void(store):
         amount_words="Триста тысяч сум", currency="UZS", paid_on=TODAY, valid_from=D(2026, 9, 15),
         valid_to=t["through"], lessons_count=None, partial_period=False, method="cash", mode="calendar", allocations=allocs,
         debt_before=769_000, debt_after=469_000, advance_after=0, paid_until_before=t0["through"],
-        paid_until_after=t["through"], price_snapshot=SnapshotPrice(amount=500_000, source="group"),
+        paid_until_after=t["through"], price_snapshot=SnapshotPrice(amount=500_000, source="group"), money_rows=snapshot.money_rows,
         note="за октябрь", accepted_by_name="Рустам Каримов", created_at="2026-10-21T09:12:00", voided_at=None,
         void_reason=None, replaced_by_receipt_no=19, replaces_receipt_no=None), store)
 

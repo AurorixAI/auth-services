@@ -4104,6 +4104,13 @@
             ],
             "title": "Mode"
           },
+          "money_rows": {
+            "items": {
+              "$ref": "#/components/schemas/MoneyRow"
+            },
+            "title": "Money Rows",
+            "type": "array"
+          },
           "note": {
             "anyOf": [
               {

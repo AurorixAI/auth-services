@@ -67,6 +67,7 @@ class PauseCut:
     at: datetime
     was: Tuple[date, date]
     now: Optional[Tuple[date, date]]
+    via: str = "leave"                         # what made the cut: ``leave`` / ``transfer`` / ``archive`` (the words of a closed pause differ for a transfer)
 
     @property
     def removed(self) -> Optional[Tuple[date, date]]:
@@ -111,7 +112,7 @@ def read_pause_journal(lines: Sequence[Tuple[datetime, str, Dict[str, Any]]], *,
             cut = None
         elif via in LEAVE_VIA and snap.get("was"):
             was = (date.fromisoformat(snap["was"][0]), date.fromisoformat(snap["was"][1]))
-            cut = PauseCut(at, was, None if action == AUDIT_PAUSE_VOID else days(snap))
+            cut = PauseCut(at, was, None if action == AUDIT_PAUSE_VOID else days(snap), via)
         elif action == AUDIT_PAUSE_SET:
             forms.append((at, *days(snap)))
     if cut is None:
@@ -1041,7 +1042,7 @@ class LedgerLoader:
         journal = read_pause_journal(self.pause_lines.get(str(p.id), []), created_at=p.created_at, first_day=p.first_day, last_day=p.last_day, voided=voided)
         if not journal.sound:
             logger.warning("pause %s of membership %s: the journal does not end in the days of the row (%s - %s): the pause is read as it is, known always", p.id, p.membership_id, p.first_day, p.last_day)
-            return bl.Pause(p.first_day, p.last_day, voided_at=p.voided_at if voided and p.void_reason == LEAVE_VOID_REASON else None)
+            return bl.Pause(p.first_day, p.last_day, voided_at=p.voided_at if voided and journal.leave_voided else None)         # the SIGN is the journal (a cut that took the pause off whole), not the words of the reason (lesson 165)
         if journal.leave_voided:
             return bl.Pause(p.first_day, p.last_day, journal.forms, voided_at=journal.cut.at)
         removed = journal.cut.removed if journal.cut is not None else None

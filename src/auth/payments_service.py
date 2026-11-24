@@ -1686,6 +1686,7 @@ class PaymentService:
             advance_after=after.advance, paid_until_before=before.status.paid_until, paid_until_after=after.status.paid_until,
             price=SnapshotPrice(amount=price.amount, source=price.source), mode=after.mode,
             recalc=self._recalc_news(payment.membership_id, after, exclude_payment=payment.id),
+            money_rows=pv.money_rows(after, str(payment.id), today),
         )
         self.db.add(PaymentReceiptSnapshot(payment_id=payment.id, org_id=UUID(str(org_id)), created_at=payment.created_at,
                                            snapshot=snap.model_dump(mode="json")))
@@ -2549,7 +2550,7 @@ class PaymentService:
                 mode=parsed.mode, allocations=parsed.allocations, debt_before=parsed.debt_before,
                 debt_after=parsed.debt_after, advance_after=parsed.advance_after,
                 paid_until_before=parsed.paid_until_before, paid_until_after=parsed.paid_until_after,
-                price_snapshot=parsed.price, recalc=parsed.recalc)
+                price_snapshot=parsed.price, recalc=parsed.recalc, money_rows=parsed.money_rows)
         return ReceiptOut(
             receipt_no=payment.receipt_no,
             org_name=org.name,

@@ -120,8 +120,10 @@ class PauseClosedByLeave(PaymentConflict):
     code = "PAUSE_CLOSED_BY_LEAVE"
 
 
-PAUSE_CLOSED_NOW = "Пауза закрыта уходом ученика. Верните ученика в группу, затем измените паузу."
-PAUSE_CLOSED_LATER = "Пауза закрыта уходом ученика, изменить её нельзя. Можно снять паузу целиком."
+PAUSE_CLOSED_NOW = payments_texts.PAUSE_CLOSED_NOW
+PAUSE_CLOSED_LATER = payments_texts.PAUSE_CLOSED_LATER
+PAUSE_CLOSED_TRANSFER_NOW = payments_texts.PAUSE_CLOSED_TRANSFER_NOW
+PAUSE_CLOSED_TRANSFER_LATER = payments_texts.PAUSE_CLOSED_TRANSFER_LATER
 
 
 class PauseBreaksRefund(PaymentConflict):
@@ -428,7 +430,7 @@ def _days(first: date, last: date) -> Set[date]:
 
 
 class PauseService(_Base):
-    def _out(self, row: MembershipPause, membership: Optional[StudentGroup] = None, journals: Optional[Dict[str, Any]] = None) -> PauseOut:
+    def _out(self, row: MembershipPause, membership: Optional[StudentGroup] = None, journals: Optional[Dict[str, Any]] = None, cancel_known: Optional[Dict[str, bool]] = None) -> PauseOut:
         """``days_locked`` (Б11.33 п. 1): a live pause a leaving / a transfer / an archive cut - the days are not to be moved; its phrase is the one of the 409 (``_closed_text``).  ``membership`` None (a taking off): nothing to lock."""
         users = self.pay._users([row.created_by])
         cut = None
@@ -438,7 +440,7 @@ class PauseService(_Base):
             id=str(row.id), membership_id=str(row.membership_id), first_day=row.first_day, last_day=row.last_day,
             days=(row.last_day - row.first_day).days + 1, reason=row.reason, created_by_name=_person(users.get(row.created_by)),
             created_at=_iso(row.created_at), voided_at=_iso(row.voided_at), void_reason=row.void_reason,
-            days_locked=cut is not None, days_locked_text=self._closed_text(membership, cut, ps.business_today()) if cut is not None else None,
+            days_locked=cut is not None, days_locked_text=self._closed_text(membership, cut, ps.business_today(), cancel_known) if cut is not None else None,
         )
 
     def list(self, org_id: str, membership_id: UUID) -> List[PauseOut]:
@@ -446,7 +448,8 @@ class PauseService(_Base):
         rows = (self.db.query(MembershipPause).filter(MembershipPause.membership_id == membership_id, MembershipPause.org_id == org_id)
                 .order_by(MembershipPause.first_day.desc(), MembershipPause.created_at.desc()).all())
         journals = pause_journals(self.db, org_id, [r for r in rows if r.voided_at is None])
-        return [self._out(r, membership, journals) for r in rows]
+        cancel_known: Dict[str, bool] = {}                                  # Б11.36 п. 7: «the cancel of the leaving is not forbidden» is asked ONCE for the participation, not once for every closed pause
+        return [self._out(r, membership, journals, cancel_known) for r in rows]
 
     def _live(self, membership_id: UUID, *, lock: bool = False) -> List[MembershipPause]:
         """The live pauses of a membership; ``lock``: the rows are locked and read as they are NOW (an edit of a pause in flight is waited for, not read half-way: a leaving cuts the form that edit wrote)."""
@@ -657,13 +660,35 @@ class PauseService(_Base):
             return
         raise PauseClosedByLeave(self._closed_text(membership, cut, today))
 
-    def _closed_text(self, membership: StudentGroup, cut: Any, today: date) -> str:
-        """THE phrase of a pause a leaving cut (the 409 and ``PauseOut.days_locked_text`` say the same): by the state - the leaving is of today and its cancel is possible - «bring the student back»; else only «take it off»."""
+    def _closed_text(self, membership: StudentGroup, cut: Any, today: date, cancel_known: Optional[Dict[str, bool]] = None) -> str:
+        """THE phrase of a pause a leaving cut (the 409 and ``PauseOut.days_locked_text`` say the same): by the KIND of the cut (a leaving / an archive, or a transfer) and by the state - the return into this group today
+        would be the cancel of the leaving (``leave_undo.return_cancels_leaving``, the question the real return asks) - «bring the student back» / «transfer him back»; else only «take it off».  ``cancel_known``: the answers
+        already found for this participation (the list of the pauses asks it once, per kind of the way back); the condition «the cut is of the LAST leaving» is asked of every pause."""
         from . import leave_undo  # lazy: pulls in the pricing modules
 
+        transfer = cut.via == "transfer"
         left = leave_undo.naive_utc(membership.left_at)                  # the leaving whose cancel would give the pause back is the LAST one, and the cut is of it
-        back = not membership.is_active and left is not None and cut.at >= left and leave_undo.left_today(left, today) and leave_undo._blocker(self.db, membership, left, (), False) is None
+        back = not membership.is_active and left is not None and cut.at >= left
+        if back:
+            key = "transfer" if transfer else "leave"
+            if cancel_known is None or key not in cancel_known:
+                now_in = self._transferred_to(membership, left) if transfer else None
+                ok = leave_undo.return_cancels_leaving(self.db, membership, now_in, today) if not transfer or now_in is not None else False
+                if cancel_known is not None:
+                    cancel_known[key] = ok
+            else:
+                ok = cancel_known[key]
+            back = ok
+        if transfer:
+            return PAUSE_CLOSED_TRANSFER_NOW if back else PAUSE_CLOSED_TRANSFER_LATER
         return PAUSE_CLOSED_NOW if back else PAUSE_CLOSED_LATER
+
+    def _transferred_to(self, membership: StudentGroup, since: datetime) -> Optional[StudentGroup]:
+        """The membership the student was TRANSFERRED to by the leaving of ``since`` and is in now (``None``: no live transfer, or he is not in the new group any more)."""
+        link = (self.db.query(MembershipTransfer).filter(MembershipTransfer.from_membership_id == membership.id, MembershipTransfer.voided_at.is_(None), MembershipTransfer.at >= since)
+                .order_by(MembershipTransfer.at.desc()).first())
+        target = self.db.get(StudentGroup, link.to_membership_id) if link is not None else None
+        return target if target is not None and target.is_active else None
 
     @deadlock_guard
     def patch(
@@ -841,7 +866,7 @@ class PauseService(_Base):
             if cut is None or cut.at < since:
                 continue                                      # no cut stands (a cancel wrote it already, or a later line took it back)
             if cut.now is None:
-                if pause.voided_at is None or pause.void_reason != LEAVE_VOID_REASON:
+                if pause.voided_at is None:               # the sign of «a leaving took it off whole» is the cut of the journal (``cut.now is None``), not the words of the reason
                     continue
                 pause.voided_at = pause.voided_by = pause.void_reason = None
             elif pause.voided_at is not None:

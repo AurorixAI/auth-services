@@ -31,6 +31,15 @@
  "membership_id": "id-2",
  "method": "cash",
  "mode": "calendar",
+ "money_rows": [
+  {
+   "amount": 420000,
+   "label": "01.11–30.11",
+   "of": null,
+   "periods": 1,
+   "state": "closed"
+  }
+ ],
  "note": null,
  "org_city": null,
  "org_name": "N13 org",

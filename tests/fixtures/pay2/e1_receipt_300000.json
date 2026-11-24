@@ -55,6 +55,22 @@
     "source": "group"
   },
   "recalc": [],
+  "money_rows": [
+    {
+      "label": "15.09–14.10, остаток",
+      "amount": 269000,
+      "of": null,
+      "state": "closed",
+      "periods": 1
+    },
+    {
+      "label": "15.10–14.11",
+      "amount": 31000,
+      "of": 500000,
+      "state": "part",
+      "periods": 1
+    }
+  ],
   "note": "за октябрь",
   "accepted_by_name": "Рустам Каримов",
   "created_at": "2026-10-21T09:12:00",

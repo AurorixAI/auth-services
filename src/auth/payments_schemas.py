@@ -865,6 +865,7 @@ class ReceiptOut(BaseModel):
     paid_until_after: Optional[date] = None
     price_snapshot: Optional[SnapshotPrice] = None
     recalc: List[RecalcOut] = Field(default_factory=list)  # PAY-F: «−46 000 сум: урок 21.10 отменён центром»
+    money_rows: List[MoneyRow] = Field(default_factory=list)  # Б11.35 М1: the layout of the payment by periods (the words and sums of the server; the same lines the window «Внести оплату» showed); empty on a legacy receipt
     note: Optional[str] = None
     accepted_by_name: Optional[str] = None
     created_at: Optional[str] = None
@@ -1382,6 +1383,7 @@ class ReceiptSnapshot(PayModel):
     price: SnapshotPrice = Field(default_factory=SnapshotPrice)
     mode: PeriodMode = "calendar"
     recalc: List[RecalcOut] = Field(default_factory=list)  # PAY-F: the deductions for cancelled lessons this payment took into account
+    money_rows: List[MoneyRow] = Field(default_factory=list)  # Б11.35 М1: «Куда пошли деньги» by periods, the SAME function as the probe of the window (``payments_views.money_rows``); empty on a snapshot made before it
 
 
 class AccountingStartImpact(PayModel):

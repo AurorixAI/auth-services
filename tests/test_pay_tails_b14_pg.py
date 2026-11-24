@@ -24,6 +24,7 @@ D = date
 
 CLOSED_NOW = "Пауза закрыта уходом ученика. Верните ученика в группу, затем измените паузу."
 CLOSED_LATER = "Пауза закрыта уходом ученика, изменить её нельзя. Можно снять паузу целиком."
+TRANSFER_NOW = "Пауза закрыта переводом ученика. Переведите ученика обратно в эту группу, затем измените паузу."          # Б11.36 п. 5: a pause a TRANSFER cut
 
 
 def four(world, s, g, probe, saved, today, *, debt, advance, charged, used, granted):
@@ -262,7 +263,7 @@ def test_b11_30_refusal_after_a_transfer_and_the_carried_pause_of_the_new_group_
     fixed_today(D(2026, 11, 19))
     add(world, s, group=b, mode="transfer", from_group_id=str(g.id))
     assert row_of(world, old_id) == (D(2026, 11, 17), D(2026, 11, 19), False)
-    refused(world, s, g, D(2026, 11, 19), old_id, CLOSED_LATER)
+    refused(world, s, g, D(2026, 11, 19), old_id, TRANSFER_NOW)          # Б11.36 п. 5: a transfer, not a leaving: the way back is the transfer back (it was «a leaving ... cannot be edited»)
     from src.models.auth import MembershipPause
     carried = world.db.query(MembershipPause).filter(MembershipPause.membership_id == membership(world, s, b).id, MembershipPause.voided_at.is_(None)).one()
     assert (carried.first_day, carried.last_day) == (D(2026, 11, 20), D(2026, 11, 30))
@@ -365,7 +366,7 @@ def test_b11_33_the_pause_a_transfer_carried_is_not_locked_the_one_it_cut_is(wor
     old_id = pause_on(world, s, g, "2026-11-17", "2026-11-30")
     fixed_today(D(2026, 11, 19))
     add(world, s, group=b, mode="transfer", from_group_id=str(g.id))
-    assert [(p["id"], p["days_locked"], p["days_locked_text"]) for p in pauses_of(world, s, g)] == [(old_id, True, CLOSED_LATER)]
+    assert [(p["id"], p["days_locked"], p["days_locked_text"]) for p in pauses_of(world, s, g)] == [(old_id, True, TRANSFER_NOW)]
     carried = pauses_of(world, s, b)
     assert [(p["first_day"], p["last_day"], p["days_locked"], p["days_locked_text"]) for p in carried] == [("2026-11-20", "2026-11-30", False, None)]
 

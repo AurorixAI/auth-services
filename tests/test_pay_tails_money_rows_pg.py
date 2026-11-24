@@ -54,7 +54,11 @@ def check_world(w, s, g, today, amount, name, *, rows, debt_rest, due_rest, debt
     assert (account.debt, account.advance) == (res["debt_amount_after"] + res["due_after"], res["advance_after"])
     assert (written["row"]["debt_amount"], written["row"]["due_amount"], written["row"]["advance"]) == (res["debt_amount_after"], res["due_after"], res["advance_after"])
     # I5: the layout of the window = the layout of the receipt of the same payment (the pieces of the receipt, in order, add up to the rows; a closing piece = a closed row)
-    items = receipt_of(w, written)["allocations"]
+    receipt = receipt_of(w, written)
+    assert receipt["money_rows"] == res["money_rows"], ("Б11.35 М1: the receipt says the lines of the window (the same function)", receipt["money_rows"], res["money_rows"])
+    if name in ("owner_550000", "owner_1800000", "personal_500000"):
+        dump(f"receipt_{name}", receipt)
+    items = receipt["allocations"]
     assert [i["amount"] for i in items] == [i["amount"] for i in written["payment"]["allocation"]["items"]]
     money = [i for i in items if i["bucket"] != "advance"]
     advance = [i for i in items if i["bucket"] == "advance"]
@@ -89,10 +93,10 @@ def test_money_rows_the_world_of_the_owner_550_000_closes_the_rest_of_the_oldest
 
 
 def test_money_rows_a_payment_of_1_800_000_folds_three_closed_months_and_keeps_the_advance_for_next_year(world, fixed_today):
-    # The same debt 1 692 000; 1 800 000: 42 000 close September («остаток» keeps its own line), October + November + December = 3 x 550 000 = 1 650 000 are closed in a row and FOLD into one line (periods 3), the advance 108 000 = 1 800 000 - 1 692 000
+    # The same debt 1 692 000; 1 800 000: 42 000 close September («остаток» keeps its own line), October + November + December = 3 x 550 000 = 1 650 000 are closed in a row IN THE CALENDAR and FOLD into one line (periods 3; the second half of the name is in lower case: «Октябрь – декабрь»), the advance 108 000 = 1 800 000 - 1 692 000
     # is January 2027 (the year is not this one: «Аванс на январь 2027»).  Nothing stays unpaid.
     g, s = owner_world(world, fixed_today, D(2026, 12, 10))
-    check_world(world, s, g, D(2026, 12, 10), 1_800_000, "owner_1800000", rows=[row("Сентябрь, остаток", 42_000, "closed"), row("Октябрь – Декабрь", 1_650_000, "closed", periods=3), row("Аванс на январь 2027", 108_000, "advance")],
+    check_world(world, s, g, D(2026, 12, 10), 1_800_000, "owner_1800000", rows=[row("Сентябрь, остаток", 42_000, "closed"), row("Октябрь – декабрь", 1_650_000, "closed", periods=3), row("Аванс на январь 2027", 108_000, "advance")],
                 debt_rest=[], due_rest=[], debt_before=1_692_000, due_before=0, debt_after=0, due_after=0, advance_after=108_000)
 
 
@@ -159,3 +163,35 @@ def test_money_rows_packages_two_closed_packages_fold_and_the_rest_is_the_advanc
     g, s = packages_world(world, fixed_today)
     check_world(world, s, g, D(2026, 10, 21), 700_000, "packages_700000", rows=[row("Пакеты № 1–2", 450_000, "closed", periods=2), row("Аванс: уроки следующего пакета", 250_000, "advance")],
                 debt_rest=[], due_rest=[], debt_before=350_000, due_before=100_000, debt_after=0, due_after=0, advance_after=250_000)
+
+
+# ---------------------------------------------------------------------------------------------------------------------------- Б11.35 М2 / Б11.36 п. 6: only periods one after another in the CALENDAR fold into one line
+def test_money_rows_october_and_december_closed_with_no_november_between_are_two_lines_not_october_to_december(world, fixed_today):
+    # Common month 550 000 (Tue / Thu / Fri); the student since 01.10, left on 31.10 (October is whole: 550 000), came back on 01.12 (November has no charge: he was not in the group).  10.12: October 550 000 and December 550 000
+    # (its term ended on 05.12) = a debt 1 100 000.  The payment 1 100 000 closes both: two lines (the next period of October is not December: November is between them), NOT «Октябрь – декабрь» (the old fold).
+    from tests.test_pay_tails_money_pg import leave
+    g, s = om_at(world, fixed_today, D(2026, 10, 1), price=550_000)
+    fixed_today(D(2026, 10, 31))
+    leave(world, g, s)
+    fixed_today(D(2026, 12, 1))
+    add(world, s, group=g, mode="add")
+    fixed_today(D(2026, 12, 10))
+    check_world(world, s, g, D(2026, 12, 10), 1_100_000, "gap_1100000", rows=[row("Октябрь", 550_000, "closed"), row("Декабрь", 550_000, "closed")],
+                debt_rest=[], due_rest=[], debt_before=1_100_000, due_before=0, debt_after=0, due_after=0, advance_after=0)
+
+
+def test_money_rows_a_personal_period_before_a_gap_and_the_one_after_it_are_two_lines(world, fixed_today):
+    # Personal period 420 000; joined 15.10, left on 14.11 (the period 15.10 - 14.11 is whole: 420 000), came back on 01.12 (a new period from 01.12; nothing between: the periods are NOT one after another).  10.12: 420 000 + 420 000
+    # (the term of the second is over) = 840 000 of debt.  The payment 840 000 closes both: TWO lines named by dates, never one «15.10–...» line (personal periods fold only when the next begins the day after the previous ends).
+    from tests.test_pay_tails_money_pg import leave
+    g, s = lp(world, fixed_today, joined=D(2026, 10, 15))
+    fixed_today(D(2026, 11, 14))
+    leave(world, g, s)
+    fixed_today(D(2026, 12, 1))
+    add(world, s, group=g, mode="add")
+    fixed_today(D(2026, 12, 10))
+    window = probe(world, s, g, 840_000, D(2026, 12, 10))
+    rows = window["result"]["money_rows"]
+    assert len(rows) == 2 and all(r["state"] == "closed" and r["periods"] == 1 for r in rows) and [r["amount"] for r in rows] == [420_000, 420_000], rows
+    assert rows[0]["label"].startswith("15.10") and rows[1]["label"].startswith("01.12"), rows
+    assert window["due"]["debt_amount"] + window["due"]["due_amount"] == 840_000, window["due"]

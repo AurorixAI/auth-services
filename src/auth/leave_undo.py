@@ -72,6 +72,12 @@ def would_undo(db: Session, membership: StudentGroup, left_at: Optional[datetime
     return left_today(left_at, today) and _blocker(db, membership, naive_utc(left_at), coming_from, money) is None
 
 
+def return_cancels_leaving(db: Session, membership: StudentGroup, now_in: Optional[StudentGroup], today: date) -> bool:
+    """Б11.36 п. 5: the return into ``membership`` (the participation the student LEFT) TODAY would be the cancel of the leaving - the question the real way back asks (``would_undo``).  ``now_in``: the participation he is in
+    now after a TRANSFER (he comes back from it: the way back is a transfer); ``None`` after a leaving / an archive.  The window of a pause a leaving cut asks it to say whether «bring him back» is true."""
+    return would_undo(db, membership, membership.left_at, today, [now_in.id] if now_in is not None else [], False)
+
+
 def try_undo(
     db: Session, org_id: str, membership: StudentGroup, left_at: Optional[datetime], now: datetime, actor_id: str,
     *, coming_from: Sequence[Any], money: bool,
