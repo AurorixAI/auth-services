@@ -601,6 +601,7 @@ def test_receipt_content(world):
         "note": "Наличные", "accepted_by_name": "Иван Owner", "created_at": p["created_at"], "voided_at": None,
         "void_reason": None, "replaced_by_receipt_no": None, "replaces_receipt_no": None, "replaces_amount": None,
         "recalc": [],                                           # PAY-F: no cancelled lesson was deducted
+        "money_rows": [{"label": "Аванс", "amount": 1_250_000, "of": None, "state": "advance", "periods": 1}],          # Б11.35 М1: the whole payment reached no begun period - one line «Аванс» (the same function as the window)
         "is_copy": False, "print_count": 0, "void_note": None, "receipt_state_text": "аванс 1\u00a0250\u00a0000\u00a0сум", "disclaimer": "Не является фискальным чеком",      # Money-1 V5
     }
 
