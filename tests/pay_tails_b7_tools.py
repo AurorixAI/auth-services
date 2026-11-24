@@ -193,7 +193,7 @@ def now_world_bad(inp):
     return shown != live
 
 
-LINES = {"events": 0, "with lines": 0, "later": 0, "insurance": 0, "lost": 0}      # Б11.40 С4': the lines of a pause (``payments_views.pause_charge_rows``): events checked / with lines / with ``charge_later`` / the insurance fired / reference: a change of the charge and no line
+LINES = {"events": 0, "with lines": 0, "later": 0, "insurance": 0, "lost": 0, "with period_begins": 0}      # Б11.43: the last = events whose lines have a line with ``period_begins`` (a reference counter, expected > 0).  Б11.40 С4': the lines of a pause (``payments_views.pause_charge_rows``): events checked / with lines / with ``charge_later`` / the insurance fired / reference: a change of the charge and no line
 _INSURANCE = []
 
 
@@ -233,6 +233,7 @@ def lines_bad(inp, new):
     LINES["events"] += 1
     LINES["with lines"] += bool(rows)
     LINES["later"] += later is not None
+    LINES["with period_begins"] += any(getattr(r, "period_begins", None) is not None for r in rows)
     delta = after.charged - before.charged
     LINES["lost"] += bool(delta and not rows and any(sg.slot is not None and sg.slot[0] == "c" for sg in (*before.segments, *after.segments)))
     return bool(rows) and sum(r.amount for r in rows) != delta
@@ -1030,9 +1031,10 @@ class VoidCancel:
 
 
 def tail_base(rng, inp, payments_only=False):
-    """The world with ONE pause A that has a tail after today, entered after every record of the world; ``None`` where the sequence is not meant (a package, a stay not open, cancels).  ``payments_only``: the oracle of
-    «C5 tail» needs the world to have no forgiveness BEFORE A: a pause entered after a forgiveness cuts it by the days it has in THAT world (the tail included), and the cut is never given back by the leaving
-    (Б11.19, the guard of a leaving inside a pause) - with the days that stay only, the forgiveness would be cut less."""
+    """The world with ONE pause A that has a tail after today, entered after every record of the world; ``None`` where the sequence is not meant (a package, a stay not open, cancels).  ``payments_only``: the OLD oracle of
+    «C5 tail» (A entered at once with the days that stay) needs the world to have no forgiveness BEFORE A: a pause entered after a forgiveness cuts it by the days it has in THAT world (the tail included), and the cut is
+    never given back by the leaving (Б11.19, the guard of a leaving inside a pause) - with the days that stay only, the forgiveness would be cut less.  Б11.42 п. 2: the oracle «the same world with the tail, B not entered /
+    entered at once as it became» has no such limit, so the events of «C5 tail» are made for every world; the old oracle runs where the world has payments only."""
     if not can_leave(inp) or inp.regimes[0].mode == bl.LESSONS or inp.centre_cancels or len(inp.stays) != 1:
         return None
     if payments_only and any(c.kind != bl.PAYMENT for c in inp.credits):
@@ -1046,7 +1048,7 @@ def tail_base(rng, inp, payments_only=False):
 
 
 def new_tail_change(rng, inp, kind):
-    base = tail_base(rng, inp, payments_only=True)
+    base = tail_base(rng, inp)
     if base is None:
         return None
     a = base.pauses[0]
@@ -1068,9 +1070,14 @@ def new_tail_change(rng, inp, kind):
     return x, base
 
 
-def tail_input(inp, x, upto=None, with_tail=True):
+def payments_only_world(inp):
+    return all(c.kind == bl.PAYMENT for c in inp.credits)
+
+
+def tail_input(inp, x, upto=None, with_tail=True, b_as_became=False):
     """The input of the sequence on ``inp`` (the pause A live with its tail): the leaving, the ordinary return, the records and the new pause B, the change of B by the human.  ``with_tail`` False = the ORACLE: the same
-    sequence with A entered at once with the days that stay (no cut, no tail)."""
+    sequence with A entered at once with the days that stay (no cut, no tail).  ``b_as_became`` (Б11.42 п. 2) = the SECOND oracle: the same world WITH the tail, B not entered at all ("void") / entered at once as it
+    became ("shorten": ``b_to``, no edit by the human)."""
     if not with_tail:
         a = _gen(inp.pauses[0])
         stay = (a.hforms[0][0], a.first, min(a.last, inp.today))
@@ -1081,6 +1088,10 @@ def tail_input(inp, x, upto=None, with_tail=True):
     credits = list(new.credits)
     if x.forgive is not None:
         credits.append(x.forgive)
+    if b_as_became:
+        b = None if x.kind == "void" else mk_pause(*x.b_to, inp.today, TAIL_PAUSE)
+        new = replace(new, credits=tuple(credits), pauses=new.pauses if b is None else (*new.pauses, b))
+        return replace(new, credits=(*new.credits, x.pay)) if x.pay is not None else new
     b = mk_pause(*x.b, inp.today, TAIL_PAUSE)
     new = replace(new, credits=tuple(credits), pauses=(*new.pauses, b))
     if x.pay is not None:
@@ -1289,7 +1300,14 @@ def event_violations(inp, x):
         _checked(name)
         if bl.run_ledger(new).flags:
             bad.append("flags")
-        if state_of(new) != state_of(tail_input(inp, x, with_tail=False)):
+        if payments_only_world(inp):                                # the OLD oracle: A entered at once with the days that stay (the forgiveness before A would be cut less there)
+            _checked(name + " (A at once)")
+            if state_of(new) != state_of(tail_input(inp, x, with_tail=False)):
+                bad.append(name)
+        else:
+            _checked(name + " (forgiveness before A)")
+        _checked(name + " (A kept)")                                # Б11.42 п. 2: the same world with the tail, B not entered / entered at once as it became
+        if state_of(new) != state_of(tail_input(inp, x, b_as_became=True)):
             bad.append(name)
         if worlds_differ(new):
             bad.append(name + " days")
