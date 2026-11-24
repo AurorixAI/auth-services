@@ -548,12 +548,15 @@ def period_label(seg: bl.Segment, today: date, *, advance: bool = False) -> str:
 
 
 def _folding_kind(seg: bl.Segment) -> str:
-    """Б11.36 п. 6: the KIND of a period for the folding of closed lines: a package, a calendar month (named by its month), a personal period (named by dates), the opening debt (never folded)."""
+    """Б11.36 п. 6: the KIND of a period for the folding of closed lines: a package, a calendar month (named by its month), a cell of the common month with another billing day (named by dates), a personal period (named by dates), the opening debt (never folded)."""
     if seg.kind == "package":
         return "package"
     if seg.kind == "opening":
         return "opening"
-    return "month" if seg.by_cell and seg.period_start.day == 1 and (seg.period_end + timedelta(days=1)).day == 1 and (seg.period_start.year, seg.period_start.month) == (seg.period_end.year, seg.period_end.month) else "personal"
+    if not seg.by_cell:
+        return "personal"
+    calendar = seg.period_start.day == 1 and (seg.period_end + timedelta(days=1)).day == 1 and (seg.period_start.year, seg.period_start.month) == (seg.period_end.year, seg.period_end.month)
+    return "month" if calendar else "cell"                  # Б11.42 п. 2: a cell of the common month with a billing day other than the 1st is no personal period (a change of the mode must not fold the two)
 
 
 def _next_period(prev: bl.Segment, seg: bl.Segment) -> bool:
