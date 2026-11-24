@@ -7,12 +7,12 @@ from datetime import date, datetime
 
 import pytest
 
-from src.models.auth import StudentGroup
+from src.models.auth import Group, StudentGroup
 
 from sqlalchemy.orm.attributes import flag_modified
 
 from tests.money1b_helpers import account, add, fresh_student, set_schedule, slot
-from tests.pg_world import ensure_billing, give_group_price, make_group, needs_pg, pg_session, world  # noqa: F401  (fixtures)
+from tests.pg_world import LIVE_SLOT, ensure_billing, give_group_price, make_group, needs_pg, pg_session, world  # noqa: F401  (fixtures)
 from tests.test_payments_service_pg import pay
 from tests.test_pay2_api_pg import API, fixed_today, membership, owner, settings_block, stay  # noqa: F401  (fixture)
 
@@ -22,7 +22,17 @@ TTF = [slot("s2", 2, "2026-01-01", "14:00", "15:00"), slot("s4", 4, "2026-01-01"
 LEFT = date(2026, 11, 11)
 
 
+def without_the_slot_of_the_run_date(w):
+    """The date of the RUN of the test moved these worlds: ``make_group`` gives every group of the world an all-day slot on the weekday of the REAL run date (``LIVE_SLOT``), and the restore of «Арх» (Tue / Thu / Fri 14:00) asks the
+    teacher (the same one in every group of the world) whether he is free for the next 56 days: on a run day that is a Tue / Thu / Fri the default group of the world held him all day (409 ``TEACHER_BUSY``).  The tests of this
+    file need no lesson «today», so the slot of the run date is taken off the groups of the world: the world is the same on any day of the run."""
+    for other in w.db.query(Group).filter(Group.org_id == w.org.id).all():
+        other.schedule = [x for x in other.schedule if x["id"] != LIVE_SLOT]
+    w.db.commit()
+
+
 def tue_world(w, fixed_today, price=600_000):
+    without_the_slot_of_the_run_date(w)
     fixed_today(date(2026, 11, 2))
     settings_block(w, accounting_start_date="2026-10-01", billing_anchor="fixed_day", billing_day=1)
     group = make_group(w.db, w.org, w.teacher, "Арх")
@@ -110,6 +120,7 @@ def test_g3_a_leaver_with_a_debt_blocks_the_archive_and_the_charge_does_not_move
 
 def test_g4_a_leaver_of_october_keeps_the_charge_when_the_group_is_archived_in_november(world, fixed_today):
     # October 2026: Thu 1, 8, 15, 22, 29; Tue 6, 13, 20, 27; Fri 2, 9, 16, 23, 30 = 14 lessons.  Left 09.10 after Fri 02, Tue 06, Thu 08 and Fri 09 = 4 lessons: 600 000 x 4 / 14 = 171 428.57 (rounded by the ledger)
+    without_the_slot_of_the_run_date(world)
     fixed_today(date(2026, 10, 1))
     settings_block(world, accounting_start_date="2026-09-01", billing_anchor="fixed_day", billing_day=1)
     group = make_group(world.db, world.org, world.teacher, "Арх")
