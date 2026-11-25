@@ -3890,6 +3890,17 @@
             "title": "Days",
             "type": "integer"
           },
+          "deferred": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Deferred"
+          },
           "first_day": {
             "format": "date",
             "title": "First Day",
@@ -3930,6 +3941,17 @@
               }
             ],
             "title": "Period Begins"
+          },
+          "period_label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Period Label"
           }
         },
         "required": [
@@ -3940,7 +3962,9 @@
           "lessons",
           "lessons_passed",
           "amount",
-          "period_begins"
+          "period_begins",
+          "deferred",
+          "period_label"
         ],
         "title": "PauseChargeRow",
         "type": "object"
