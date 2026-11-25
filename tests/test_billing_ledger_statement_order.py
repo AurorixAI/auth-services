@@ -89,8 +89,11 @@ def _scenarios():
                         outflows=[outflow("o1", DAY, 120_000, bl.TRANSFER_OUT, minutes=3), outflow("o2", D(2026, 11, 15), 10_000, bl.REFUND, minutes=1)])
 
 
-GOLDEN = {"back_and_forth": "03af7157e6d9", "refund_pay": "1b1e9195ae39", "two_pays": "1aa96212efc8", "writeoff": "b582a521d8b2",
-          "first_day": "218f36a81295", "chain": "7a687b9018ce"}     # taken from the code before the change
+# taken from the code before the change; PAY-TAILS 8.14.18 (Б11.52) moved THREE of them on purpose: a transfer / refund no longer takes money entered AFTER it on its own day
+# (back_and_forth: the transfer out takes «pay» 600 000, not the transfer in of minute 3; refund_pay: the refund 50 000 takes «early», not the payment of minute 2; chain: o1 120 000
+# takes p2 30 000 + p1 90 000, not «in» of minute 4).  Checked: of the Ledger only allocations / net_money / refunded_from / transferred_from differ from the old rule; the statement is the same.
+GOLDEN = {"back_and_forth": "5254e6d9f373", "refund_pay": "653c3d6f8016", "two_pays": "1aa96212efc8", "writeoff": "b582a521d8b2",
+          "first_day": "218f36a81295", "chain": "bc8c3779c372"}
 
 
 def _digest(kw):
