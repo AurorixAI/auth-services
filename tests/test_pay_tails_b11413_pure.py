@@ -7,6 +7,7 @@ from dataclasses import replace
 from datetime import date as D
 
 from src.auth import billing_ledger as bl
+from src.auth import payments_views as pv
 from tests.pay2_ledger_helpers import flat
 from tests.test_pay_tails_b11411_pure import FIX, PERSONAL, TTF, base, pause, run, shown
 
@@ -69,3 +70,38 @@ def test_p6_a_package_that_is_not_finished_keeps_its_days_no_clause():
     regimes = (FIX, bl.Regime(effective_from=D(2026, 11, 1), mode=bl.LESSONS), replace(FIX, effective_from=D(2026, 11, 20), defer=True))
     (rows, later), delta = run(base(D(2026, 11, 24), regimes, counted=held), D(2026, 12, 1), D(2026, 12, 5))
     assert rows == [] and later is None and delta == 0
+
+
+def test_promise_holds_both_ways_and_the_generator_counts_what_it_checked():
+    # Б11.46 п.6.  By hand (working date 02.12, 600 000 a month; the pause 24.11 - 03.12 carries December out of the account): the line of December has deferred -514 000 (12 of 14 lessons), begins 04.12; the account AFTER on
+    # 04.12 charges December 514 000 = -deferred: the promise is true.  The void of that pause (the other way, the same two accounts swapped): deferred +514 000; the account BEFORE (with the pause) on 04.12 - the first paid
+    # day it had - charges 514 000 = deferred.  Counters: 2 events, 2 promises, 1 negative, 1 positive; ``lines_bad`` False for both.
+    from tests import pay_tails_b7_tools as tools
+
+    T = D(2026, 12, 2)
+    free = base(T, (FIX,))
+    paused = replace(free, pauses=(pause(D(2026, 11, 24), D(2026, 12, 3), T),))
+    start = dict(tools.LINES)
+    assert tools.lines_bad(free, paused) is False and tools.lines_bad(paused, free) is False
+    got = {k: tools.LINES[k] - start[k] for k in ("promise events", "promise promises", "promise negative", "promise positive")}
+    assert got == {"promise events": 2, "promise promises": 2, "promise negative": 1, "promise positive": 1}, got
+
+
+def test_promise_has_teeth_a_promise_that_is_off_by_1000_is_red_and_the_sum_still_holds(monkeypatch):
+    # By hand: the same worlds, the function made WRONG on purpose: deferred +1 000 and amount -1 000 (the sum of the lines is the change of the charge still, the shape is right): only the Promise can see it:
+    # the account after on 04.12 charges 514 000, the line promises 513 000 (or 515 000 the other way).  ``lines_bad`` True in both, the insurance counter 0 (the sum is right).
+    from tests import pay_tails_b7_tools as tools
+
+    T = D(2026, 12, 2)
+    free = base(T, (FIX,))
+    paused = replace(free, pauses=(pause(D(2026, 11, 24), D(2026, 12, 3), T),))
+    real = pv.pause_charge_rows
+
+    def off(*a, **k):
+        rows, later = real(*a, **k)
+        return [r.model_copy(update={"deferred": r.deferred + 1000, "amount": r.amount - 1000}) if r.deferred else r for r in rows], later
+
+    monkeypatch.setattr(pv, "pause_charge_rows", off)
+    insurance = tools.LINES["insurance"]
+    assert tools.lines_bad(free, paused) is True and tools.lines_bad(paused, free) is True
+    assert tools.LINES["insurance"] == insurance

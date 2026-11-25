@@ -193,7 +193,7 @@ def now_world_bad(inp):
     return shown != live
 
 
-LINES = {"events": 0, "with lines": 0, "later": 0, "insurance": 0, "lost": 0, "with period_begins": 0, "with deferred": 0}      # Б11.43: the last = events whose lines have a line with ``period_begins`` (a reference counter, expected > 0).  Б11.40 С4': the lines of a pause (``payments_views.pause_charge_rows``): events checked / with lines / with ``charge_later`` / the insurance fired / reference: a change of the charge and no line
+LINES = {"events": 0, "with lines": 0, "later": 0, "insurance": 0, "lost": 0, "with period_begins": 0, "with deferred": 0, "promise events": 0, "promise promises": 0, "promise negative": 0, "promise positive": 0}      # Б11.43: the last = events whose lines have a line with ``period_begins`` (a reference counter, expected > 0).  Б11.40 С4': the lines of a pause (``payments_views.pause_charge_rows``): events checked / with lines / with ``charge_later`` / the insurance fired / reference: a change of the charge and no line
 
 
 def _with_insurance_count(call):
@@ -244,7 +244,35 @@ def lines_bad(inp, new):
     # Б11.44 М2: the insurance that fired IS the violation (the function itself empties the lines when the sum is wrong).  Б11.45 С: the sum is Σ amount + Σ deferred; a line with ``deferred`` has the label of its period
     # and the day it begins, a line with no ``deferred`` has neither the label nor a ``deferred``; a line is given only with a changed price or a ``deferred``.
     shape = any((r.deferred is None) != (r.period_label is None) or (r.deferred is not None and r.period_begins is None) or (r.amount == 0 and r.deferred is None) for r in rows)
-    return fired > 0 or shape or (bool(rows) and sum(r.amount + (r.deferred or 0) for r in rows) != delta)
+    return fired > 0 or shape or (bool(rows) and sum(r.amount + (r.deferred or 0) for r in rows) != delta) or promise_bad(inp, new, before, after, rows)
+
+
+def promise_bad(inp, new, before, after, rows):
+    """Б11.46 п.6, the STRICT property «the Promise»: what a line with ``deferred`` promises comes true.  ``deferred < 0`` (the period leaves the account today): the account AFTER, counted on ``period_begins`` (the first
+    paid day of the period), charges for that period exactly ``-deferred``.  ``deferred > 0`` (the period comes back): the account BEFORE, counted on the first paid day of the period (the one it had before the action), charges for it
+    exactly ``deferred``.  The counters ``promise *`` keep what was checked (events with a promise, promises, negative, positive); a world with no promise checks nothing."""
+    promises = [r for r in rows if r.deferred]
+    if not promises:
+        return False
+    LINES["promise events"] += 1
+    cells = lambda led: {sg.slot: sg for sg in led.segments if sg.kind == "period" and sg.slot is not None and sg.slot[0] == "c"}
+    old, now = cells(before), cells(after)
+    bad = False
+    for r in promises:
+        LINES["promise promises"] += 1
+        if r.deferred < 0:
+            LINES["promise negative"] += 1
+            at = bl.run_ledger(replace(new, today=r.period_begins))
+            slots = [k for k, a in now.items() if a.days and min(a.days) == r.period_begins and k in old and old[k].begun and not a.begun]
+            got = [sg.amount for k, sg in cells(at).items() if k in slots and sg.begun]
+            bad = bad or got != [-r.deferred] * len(slots) or not slots
+        else:
+            LINES["promise positive"] += 1
+            slots = [k for k, b in old.items() if b.days and b.amount == r.deferred and k in now and now[k].begun and not b.begun]
+            got = [bl.run_ledger(replace(inp, today=min(old[k].days))) for k in slots]
+            got = [cells(led)[k].amount for led, k in zip(got, slots) if k in cells(led) and cells(led)[k].begun]
+            bad = bad or not slots or got != [r.deferred] * len(slots)
+    return bad
 
 
 def pieces_bad(inp):
