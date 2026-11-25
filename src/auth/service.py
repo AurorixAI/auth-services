@@ -2837,6 +2837,7 @@ class AuthService:
             carry_before = PaymentService(self.db).account_after(org_id, existing.id, now_dt)      # Money-1 D-6: the account the money lands on, BEFORE the transfer
 
         new_period = None
+        view_before: dict = {}        # PAY-TAILS Б11.51 С2': the periods of the account before a return (the text says when the period is already in it)
         charged_before = None         # Stage 6 (М11Б): what the closed stay had charged (the preview says what the return ADDS to it)
         returned_rows: list = []      # Stage 6 (М11Б): the balance of the closed stay in THIS group (a returning student); empty for a new one
         leave_undo_result = None
@@ -2852,10 +2853,12 @@ class AuthService:
                 closed_pay_from = closed_period.billing_from if closed_period is not None else None
                 if mode == "add" and not closing and not will_undo:      # Stage 6 (М11Б): what the last stay left on this account, and what the stay had charged, read BEFORE it is reopened (not when the leaving of today is going to be cancelled: the row is thrown away then)
                     returned_rows = leave_effects.returned_balance(self.db, org_id, existing.id, money=payments_detail)
-                    if immediate and payments_detail and dry_run:
-                        from . import billing_start  # lazy: pulls in the payments modules
+                    from . import billing_start  # lazy: pulls in the payments modules
 
-                        charged_before = billing_start.immediate_charge(self.db, org_id, existing.id, ps.business_date(now_dt))
+                    if immediate and payments_detail and dry_run:
+                        charged_before = billing_start.immediate_charge(self.db, org_id, existing.id, ps.business_date(now_dt), view=view_before)
+                    else:
+                        view_before.update(billing_start.period_view(self.db, org_id, existing.id, ps.business_date(now_dt)))
                 new_period = open_period(existing, now_dt)
                 if actor_id:      # Money-2 T6: back on the day of leaving = the leaving is cancelled (prices and pauses come back); else the ordinary return
                     leave_undo_result = leave_undo.try_undo(self.db, org_id, existing, left_before, now_dt, actor_id, coming_from=[m.id for m in closing], money=payments_detail)
@@ -2910,9 +2913,15 @@ class AuthService:
             billing = billing_start.apply(
                 self.db, group, new_period, today=ps.business_date(now_dt), accounting_start=billing_start.accounting_start_of(self.db, org_id, cache),
                 explicit=pay_from, cache=cache)
+            view_after: dict = {}
             if immediate and payments_detail and dry_run:        # R3 / lead 11: the sum is in the PREVIEW (dry_run) and only for a caller who may see money; the real answer carries no sum (test_n13_p2_permissions): the window says what is charged AT ONCE (a past «Оплата с»)
                 self.db.flush()                                  # the new membership gets its id here
-                billing["immediate"] = billing_start.immediate_charge(self.db, org_id, membership.id, ps.business_date(now_dt), charged_before)
+                billing["immediate"] = billing_start.immediate_charge(self.db, org_id, membership.id, ps.business_date(now_dt), charged_before, view=view_after)
+            elif view_before:
+                view_after = billing_start.period_view(self.db, org_id, membership.id, ps.business_date(now_dt))
+            said = billing_start.returned_text(view_before, view_after) if view_before and not billing["explicit"] else None      # PAY-TAILS Б11.51 С2': only the words (the day and the sums are the account's)
+            if said:
+                billing["text"] = said
 
         if billing is not None and not leave_undone:      # PAY-TAILS Б1.4: the charge that has NOT begun - the forecast of the first period (the date only for a caller without the right to money); never a part of any sum
             self.db.flush()

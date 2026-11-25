@@ -52,17 +52,17 @@ def _blocker(db: Session, membership: StudentGroup, since: datetime, coming_from
     refund = db.query(StudentRefund).filter(StudentRefund.membership_id == membership.id, StudentRefund.voided_at.is_(None), StudentRefund.created_at >= since).first()
     if refund is not None:
         what = f"вернули аванс {tx.money(int(refund.amount))}" if money else "вернули аванс"
-        return f"Ученика убрали сегодня, но после этого ему {what} — поэтому он записывается заново: прежние индивидуальная цена и паузы не вернутся"
+        return f"Ученика убрали сегодня, но после этого ему {what} — поэтому уход не отменяется, ученик зачисляется обычным порядком: прежние индивидуальная цена и паузы не вернутся"
     forgiven = db.query(StudentWriteoff).filter(StudentWriteoff.membership_id == membership.id, StudentWriteoff.voided_at.is_(None), StudentWriteoff.created_at >= since).first()
     if forgiven is not None:
         what = f"прощено {tx.money(int(forgiven.amount))}" if money else "прощена неоплаченная сумма"
-        return f"Ученика убрали сегодня, но после этого ему {what} — поэтому он записывается заново: прежние индивидуальная цена и паузы не вернутся"
+        return f"Ученика убрали сегодня, но после этого ему {what} — поэтому уход не отменяется, ученик зачисляется обычным порядком: прежние индивидуальная цена и паузы не вернутся"
     link = db.query(MembershipTransfer).filter(MembershipTransfer.from_membership_id == membership.id, MembershipTransfer.voided_at.is_(None), MembershipTransfer.at >= since).first()
     if link is not None and str(link.to_membership_id) not in {str(x) for x in coming_from}:
         target = db.query(Group.name, StudentGroup.is_active).join(StudentGroup, StudentGroup.group_id == Group.id).filter(StudentGroup.id == link.to_membership_id).first()
         name, still_there = target if target is not None else ("", False)
         if not still_there:             # a chain A -> B -> C -> A in one day: he is not in B any more, there is nothing to transfer back from
-            return f"Сегодня ученика перевели в группу «{name}», а оттуда дальше — поэтому он записывается заново: прежние индивидуальная цена и паузы не вернутся"
+            return f"Сегодня ученика перевели в группу «{name}», а оттуда дальше — поэтому уход не отменяется, ученик зачисляется обычным порядком: прежние индивидуальная цена и паузы не вернутся"
         return f"Сегодня ученика перевели в группу «{name}». Чтобы вернуть всё как было, переведите его обратно из этой группы"
     return None
 

@@ -131,7 +131,7 @@ def apply(db: Session, group: Group, period: StudentGroupPeriod, *, today: date,
             "text": text_of(chosen, today, explicit is not None, info["first_lesson"])}
 
 
-def immediate_charge(db: Session, org_id: Any, membership_id: Any, today: date, before: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
+def immediate_charge(db: Session, org_id: Any, membership_id: Any, today: date, before: Optional[Dict[str, Any]] = None, view: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
     """Money-1 R3 (lead, 11) + PAY-DUE 10.4: what the account of the new stay owes ON THE DAY of adding (a past «Оплата с», or a first lesson that is today), told by the name the function of the term gives it
     (``К оплате до ДД.ММ`` / ``Долг сразу``): the unpaid sum of the periods that have begun and the lessons of the group inside their days.  ``None``: nothing is owed at once (a start in the future, a package, no price,
     the advance covers it).  Read from the account the add has just made (flushed, not committed: a dry run rolls it back).
@@ -142,8 +142,41 @@ def immediate_charge(db: Session, org_id: Any, membership_id: Any, today: date, 
     db.flush()
     loader = PaymentService(db)._loader(str(org_id), today)
     (entry,) = loader.run([membership_id])
+    if view is not None:      # the same account, read once: ``period_view`` for the text of a return (no second run of the ledger)
+        view.update(_period_view(entry))
     due = pay_due.classify(entry.ledger, today, loader.settings.pay_due_days, loader.settings.pay_due_lessons, True)
     return immediate_from_ledger(entry.ledger, entry.inp.lesson_days, due, before)
+
+
+def _period_view(entry: Any) -> Dict[str, Any]:
+    """PAY-TAILS Б11.51 С2': what the text of a return needs of an account - the begun periods (start, end, the word of the window) and the first day of the newest stay; ``package``: a package is in the account (the text does not say a period for it)."""
+    segments = entry.ledger.segments
+    return {"package": any(s.kind == "package" for s in segments),
+            "periods": [(s.period_start, s.period_end, immediate_label(s)) for s in segments if s.kind == "period" and s.begun and s.amount > 0],
+            "first": max((st.first for st in entry.inp.stays), default=None)}
+
+
+def period_view(db: Session, org_id: Any, membership_id: Any, today: date) -> Dict[str, Any]:
+    """``_period_view`` of the account of the membership as it is now (a read of its own: for a caller that does not read the immediate charge)."""
+    from .payments_service import PaymentService  # lazy: pulls in the status maths
+
+    db.flush()
+    loader = PaymentService(db)._loader(str(org_id), today)
+    (entry,) = loader.run([membership_id])
+    return _period_view(entry)
+
+
+def returned_text(before: Dict[str, Any], after: Dict[str, Any]) -> Optional[str]:
+    """PAY-TAILS Б11.51 С2': the sentence of a return whose first day lies in a period that began EARLIER and was in the account BEFORE the return (the same ``period_start`` as ``_minus_before``): the period is not counted again, it only
+    grows by the days of the new stay.  ``None``: no such period (a new month, a first adding, a package) - the text stays what it was.  Only the words: the day «Оплата с» and the sums are not touched."""
+    first = after.get("first")
+    if not before or not after or first is None or before.get("package") or after.get("package"):
+        return None
+    was = {start for start, _, _ in before["periods"]}
+    for start, end, label in after["periods"]:
+        if start < first <= end and start in was:
+            return f"Возврат без перерыва: {label} уже в счёте и заново не считается."
+    return None
 
 
 def immediate_from_ledger(ledger: Any, lesson_days: Any, due: pay_due.DueResult, before: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
