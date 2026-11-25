@@ -117,3 +117,33 @@ def test_m5_a_period_counted_by_days_is_lawful_no_lines_and_no_error(caplog):
         (rows, later), delta = run(base(T, (FIX,)), D(2026, 11, 24), D(2026, 12, 1))
         assert shown(rows) == [("24.11–30.11", 3, -150_000), ("01.12", 1, -43_000)] and delta == -193_000 and later is None
         assert not [r for r in caplog.records if "pause_charge_rows" in r.getMessage()]
+
+
+def test_generator_insurance_is_a_strict_violation_and_the_logger_is_left_as_it_was(caplog, monkeypatch):
+    # Б11.44 М2 + М3.  By hand: (1) a real pause in the clean world (24.11 - 30.11, one line, no error): ``lines_bad`` False, the counter of the insurance 0; (2) the insurance forced to fire (the function logs the
+    # error as the real one does): ``lines_bad`` True, the counter 1; (3) the world of the days (M5): lawful, False; (4) after all that the logger of the lines has no handler of the generator and still
+    # propagates, so ``caplog`` sees an error written after the generator (the test of the journal does not depend on the order of the files).
+    from tests import pay_tails_b7_tools as tools
+
+    log = logging.getLogger("src.auth.payments_views")
+    handlers, propagate = list(log.handlers), log.propagate
+    inp = base(D(2026, 11, 24), (FIX,))
+    new = replace(inp, pauses=(pause(D(2026, 11, 24), D(2026, 11, 30), inp.today),))
+    start = tools.LINES["insurance"]
+    assert tools.lines_bad(inp, new) is False and tools.LINES["insurance"] == start
+    real = pv.pause_charge_rows
+
+    def fires(*a, **k):
+        logging.getLogger("src.auth.payments_views").error("pause_charge_rows: forced")
+        return [], None
+
+    monkeypatch.setattr(pv, "pause_charge_rows", fires)
+    assert tools.lines_bad(inp, new) is True and tools.LINES["insurance"] == start + 1
+    monkeypatch.setattr(pv, "pause_charge_rows", real)
+    T = D(2026, 12, 2)
+    days_world = base(T, (FIX,), pattern=_no_pattern_in_november)
+    assert tools.lines_bad(days_world, replace(days_world, pauses=(pause(D(2026, 11, 24), D(2026, 12, 1), T),))) is False
+    assert list(log.handlers) == handlers and log.propagate is propagate is True
+    with caplog.at_level(logging.ERROR, logger="src.auth.payments_views"):
+        log.error("pause_charge_rows: after the generator")
+    assert [r.getMessage() for r in caplog.records if "after the generator" in r.getMessage()]

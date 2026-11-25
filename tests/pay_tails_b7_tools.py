@@ -194,22 +194,27 @@ def now_world_bad(inp):
 
 
 LINES = {"events": 0, "with lines": 0, "later": 0, "insurance": 0, "lost": 0, "with period_begins": 0}      # Б11.43: the last = events whose lines have a line with ``period_begins`` (a reference counter, expected > 0).  Б11.40 С4': the lines of a pause (``payments_views.pause_charge_rows``): events checked / with lines / with ``charge_later`` / the insurance fired / reference: a change of the charge and no line
-_INSURANCE = []
 
 
-def _insurance_log():
-    """One handler on the logger of the lines: it counts the times the insurance (the sum of the lines is not the change of the charge) fired."""
+def _with_insurance_count(call):
+    """Б11.44 М3: a handler on the logger of the lines ONLY for the time of the call (taken off in ``finally``; ``propagate`` and the level of the logger are not touched, so ``caplog`` of any test sees
+    the records whatever ran before).  Returns ``(result of the call, number of the times the insurance fired in it)``."""
     import logging
 
-    if not _INSURANCE:
-        class Count(logging.Handler):
-            def emit(self, record):
-                if "pause_charge_rows" in record.getMessage():
-                    LINES["insurance"] += 1
-        h = Count(level=logging.ERROR)
-        logging.getLogger("src.auth.payments_views").addHandler(h)
-        logging.getLogger("src.auth.payments_views").propagate = False
-        _INSURANCE.append(h)
+    fired = []
+
+    class Count(logging.Handler):
+        def emit(self, record):
+            if "pause_charge_rows" in record.getMessage():
+                fired.append(1)
+
+    handler, log = Count(level=logging.ERROR), logging.getLogger("src.auth.payments_views")
+    log.addHandler(handler)
+    try:
+        result = call()
+    finally:
+        log.removeHandler(handler)
+    return result, len(fired)
 
 
 def _live_days(inp):
@@ -218,7 +223,7 @@ def _live_days(inp):
 
 def lines_bad(inp, new):
     """Б11.40 С4', the STRICT property on every event that changes the days of the live pauses: when the lines of the pause are not empty their sum is the change of the charge (the account after - before); the times the
-    insurance of the function fired are counted apart (expected 0).  Reference: a change of the charge in a set of the common month with no line at all."""
+    insurance of the function firing (an error in the log during the call) is a VIOLATION too (Б11.44 М2); ``LINES["insurance"]`` keeps the count for the report (expected 0).  Reference: a change of the charge in a set of the common month with no line at all."""
     if not hasattr(bl.Segment, "lesson_dates") and "lesson_dates" not in bl.Segment.__dataclass_fields__:
         return False
     changed = _live_days(inp) ^ _live_days(new)
@@ -226,17 +231,16 @@ def lines_bad(inp, new):
         return False
     from src.auth import payments_views as pv
 
-    _insurance_log()
     before, after = bl.run_ledger(inp), bl.run_ledger(new)
-    fired = LINES["insurance"]
-    rows, later = pv.pause_charge_rows(before, after, inp.today, changed, money=True, membership_id="gen")
+    (rows, later), fired = _with_insurance_count(lambda: pv.pause_charge_rows(before, after, inp.today, changed, money=True, membership_id="gen"))
+    LINES["insurance"] += fired
     LINES["events"] += 1
     LINES["with lines"] += bool(rows)
     LINES["later"] += later is not None
     LINES["with period_begins"] += any(getattr(r, "period_begins", None) is not None for r in rows)
     delta = after.charged - before.charged
     LINES["lost"] += bool(delta and not rows and any(sg.slot is not None and sg.slot[0] == "c" for sg in (*before.segments, *after.segments)))
-    return bool(rows) and sum(r.amount for r in rows) != delta
+    return fired > 0 or (bool(rows) and sum(r.amount for r in rows) != delta)      # Б11.44 М2: the insurance that fired IS the violation (the function itself empties the lines when the sum is wrong)
 
 
 def pieces_bad(inp):
