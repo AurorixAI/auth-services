@@ -53,22 +53,33 @@ def void(world, pause_id):
     return lambda dry: owner(world).post(f"{API}/org/pauses/{pause_id}/void", params={"dry_run": "true"} if dry else {}, json={"reason": "Передумали"})
 
 
-def act(world, s, g, today, call, rows, later, delta, name=None, begins=None):
+def extras_of(body):
+    """Б11.45 С: ``(deferred, period_label)`` of every line (null, null = a line of a period that is not carried)."""
+    return [(r["deferred"], r["period_label"]) for r in body["charge_rows"]]
+
+
+def act(world, s, g, today, call, rows, later, delta, name=None, begins=None, extras=None, debts=None):
     """The probe and the save of one action and the FOUR numbers: the lines of the probe = the lines of the save = ``rows`` (the hand count); ``charge_later``; the sum of the lines = ``impact.charged_delta`` of
-    the probe = of the save = the charge of the account after - the charge before = ``delta``; ``period_begins`` of every line (Б11.43) = ``begins`` (default: null in every line)."""
-    before = led(world, s, g, today).charged
+    the probe = of the save = the charge of the account after - the charge before = ``delta``; ``period_begins`` of every line (Б11.43) = ``begins`` (default: null in every line); ``deferred`` / ``period_label`` of every line (Б11.45) = ``extras`` (default: null, null); the sum of the lines
+    is ``Σ amount + Σ deferred``; ``debts`` = (the debt before, the debt after) of the account.  Lesson 168: the line whole, the probe = the save = the account."""
+    before_ledger = led(world, s, g, today)
+    before = before_ledger.charged
     probe, saved = call(True), call(False)
     assert probe.status_code in (200, 201) and saved.status_code in (200, 201), (probe.text[:300], saved.text[:300])
     p, a = probe.json(), saved.json()
     if name:
         dump(name, p)                                                   # the REAL answer of the probe for the screens (``$ANSWERS_DIR``; nothing is written without it)
-    after = led(world, s, g, today).charged
+    after_ledger = led(world, s, g, today)
+    after = after_ledger.charged
     assert lines(p) == lines(a) == rows, ("GOT probe / save", lines(p), lines(a))
     assert begins_of(p) == begins_of(a) == (begins if begins is not None else [None] * len(rows)), ("GOT period_begins", begins_of(p), begins_of(a))
+    assert extras_of(p) == extras_of(a) == (extras if extras is not None else [(None, None)] * len(rows)), ("GOT deferred / period_label", extras_of(p), extras_of(a))
+    if debts is not None:
+        assert (before_ledger.debt, after_ledger.debt) == debts, ("GOT debt before / after", before_ledger.debt, after_ledger.debt)
     assert later_of(p) == later_of(a) == later, (later_of(p), later_of(a))
     assert p["impact"]["charged_delta"] == a["impact"]["charged_delta"] == after - before == delta, (p["impact"]["charged_delta"], a["impact"]["charged_delta"], after - before)
     if rows:
-        assert sum(r[6] for r in rows) == delta
+        assert sum(r[6] for r in rows) + sum(x[0] or 0 for x in extras_of(a)) == delta
     return a
 
 
@@ -96,16 +107,31 @@ def test_c2_two_months_december_is_an_advance_no_false_line_of_december_or_janua
     act(world, s, g, D(2026, 11, 24), make(world, s, g, "2026-11-24", "2026-12-03"), [("24.11–30.11", "2026-11-24", "2026-11-30", 7, 3, None, -150_000)], ("01.12–03.12", "2026-12-01", "2026-12-03"), -150_000)
 
 
-def test_c3_working_date_02_12_the_period_that_the_pause_moves_to_the_future_gives_its_whole_charge_back(world, fixed_today):
-    # The working date 02.12, the pause 24.11 - 03.12 put back in time (on 24, 26, 27.11 and 01.12 the student has no mark «был»).  THE TZ SAYS (Б11.40 С6') December = 600 000 - 514 000 = -86 000; the CODE: the
-    # first billable day of December after the pause is 04.12, LATER than the working date, so the period has not begun in the account after (``begun`` = the first billable day <= today) and charges nothing:
-    # before 600 000 (begun 01.12), after 0.  So the line of December is -600 000 (2 lessons, 3 days) and the change of the charge is -150 000 - 600 000 = -750 000 (the same in the probe, the save, the account).
-    # November: 24 26 27 leave -> 9 of 12 -> 450 000: -150 000, 3 lessons, 7 days.  The sum -750 000 = the change of the charge (the insurance of С4' holds).
+def test_c3_working_date_02_12_the_period_that_the_pause_moves_to_the_future_two_facts_the_price_and_the_deferred(world, fixed_today):
+    # Б11.45 С, world 1.  Hand count BEFORE the run.  Working date 02.12, the pause 24.11 - 03.12 (24, 26, 27.11 and 01.12, 03.12 lose their lessons).  Debt before: November 600 000 + December 600 000
+    # (begun 01.12) = 1 200 000.  November: 9 of 12 -> 450 000: «24.11–30.11», 7 days, 3 lessons, -150 000, no deferred.  December after the pause: 12 of 14 -> 600 000 x 12 / 14 = 514 285.7 -> 514 000; its
+    # first paid day is 04.12 > 02.12, so the period has not begun: the line is the PRICE change 514 000 - 600 000 = -86 000 (3 days 01-03.12, 2 lessons), ``deferred`` = -514 000 (leaves the account today),
+    # ``period_label`` «Декабрь» (the word of the account lines), ``period_begins`` 04.12.  Σ -236 000 - 514 000 = -750 000 = the change of the charge.  Debt after: 450 000 (November only).
     g, s = om_at(world, fixed_today, D(2026, 11, 1))
     fixed_today(D(2026, 12, 2))
     act(world, s, g, D(2026, 12, 2), make(world, s, g, "2026-11-24", "2026-12-03"),
-        [("24.11–30.11", "2026-11-24", "2026-11-30", 7, 3, None, -150_000), ("01.12–03.12", "2026-12-01", "2026-12-03", 3, 2, None, -600_000)], None, -750_000, name="pause_probe_create_two_months_begun_0212",
-        begins=[None, "2026-12-04"])         # Б11.43 п. 1, world 1: the first paid day of December after the pause is 04.12 (> 02.12): December is carried out of the price; November began on both sides
+        [("24.11–30.11", "2026-11-24", "2026-11-30", 7, 3, None, -150_000), ("01.12–03.12", "2026-12-01", "2026-12-03", 3, 2, None, -86_000)], None, -750_000, name="pause_probe_create_two_months_begun_0212",
+        begins=[None, "2026-12-04"], extras=[(None, None), (-514_000, "Декабрь")], debts=(1_200_000, 450_000))
+
+
+def test_c3_the_promise_comes_true_on_the_date_period_begins_december_is_charged_by_the_deferred_sum(world, fixed_today):
+    # Б11.45 С, «обещание сбывается», world 1.  Hand count BEFORE the run.  The pause of the world 1 is saved on 02.12 (deferred -514 000, ``period_begins`` 04.12).  On 04.12 (the first paid day) December has
+    # begun: it charges 514 000 = |deferred|: the charge 450 000 -> 964 000, the debt 450 000 -> 964 000; November does not move; 03.12 (a Thursday with no lesson - on pause): the day before the charge is still 450 000.
+    g, s = om_at(world, fixed_today, D(2026, 11, 1))
+    fixed_today(D(2026, 12, 2))
+    saved = act(world, s, g, D(2026, 12, 2), make(world, s, g, "2026-11-24", "2026-12-03"),
+                [("24.11–30.11", "2026-11-24", "2026-11-30", 7, 3, None, -150_000), ("01.12–03.12", "2026-12-01", "2026-12-03", 3, 2, None, -86_000)], None, -750_000,
+                begins=[None, "2026-12-04"], extras=[(None, None), (-514_000, "Декабрь")], debts=(1_200_000, 450_000))
+    row = saved["charge_rows"][1]
+    on_the_day = led(world, s, g, D.fromisoformat(row["period_begins"]))
+    day_before = led(world, s, g, D(2026, 12, 3))
+    assert (day_before.charged, on_the_day.charged) == (450_000, 450_000 + abs(row["deferred"])) == (450_000, 964_000)
+    assert (day_before.debt, on_the_day.debt) == (450_000, 964_000)
 
 
 def test_c3_working_date_04_12_both_months_begun_two_lines_december_by_the_rounding_of_the_product(world, fixed_today):
@@ -295,15 +321,18 @@ def test_c14_the_list_of_the_pauses_of_a_participation_running_scheduled_and_two
 
 
 def test_c15_working_date_02_12_the_pause_taken_off_whole_gives_the_period_back_that_has_begun_with_its_own_first_day(world, fixed_today):
-    # Б11.43 п. 1, world 2.  Hand count BEFORE the run.  The pause 24.11 - 03.12 is put on 02.12 (as in the world 1): the charge is 450 000 (November 9 of 12; December has not begun in the account: 0).  Taken off the same
-    # day: November 600 000 (+150 000, 3 lessons 24 26 27, all three have passed, 7 days, begun on both sides: ``period_begins`` null); December begins on 01.12 <= 02.12: it comes back WHOLE, 600 000, the days 01 - 03.12
-    # (3), the lessons 01.12 and 03.12 (2), of them passed 1 (01.12), ``period_begins`` = 2026-12-01 (the first paid day of the account after).  The sum +750 000 = the change of the charge.
+    # Б11.45 С, world 2 (was Б11.43 п. 1).  Hand count BEFORE the run.  The pause 24.11 - 03.12 is put on 02.12 (the charge 450 000, the debt 450 000: December has not begun).  Taken off the same day:
+    # November 600 000: «24.11–30.11», 7 days, 3 lessons (all three passed), +150 000, begun on both sides.  December: the price 514 000 -> 600 000 = +86 000 (the days 01-03.12, 2 lessons, passed 1 - 01.12),
+    # ``deferred`` +514 000 (comes back into the account today), ``period_label`` «Декабрь», ``period_begins`` 01.12 (<= 02.12: it has begun).  Σ 236 000 + 514 000 = +750 000 = the change of the charge;
+    # the debt 450 000 -> 1 200 000.  The promise: the period began on 01.12, so the account on 01.12 already holds it: the charge 1 200 000 on 01.12 and on 02.12.
     g, s = om_at(world, fixed_today, D(2026, 11, 1))
     fixed_today(D(2026, 12, 2))
     pause_id = pause_on(world, s, g, "2026-11-24", "2026-12-03")
-    act(world, s, g, D(2026, 12, 2), void(world, pause_id),
-        [("24.11–30.11", "2026-11-24", "2026-11-30", 7, 3, 3, 150_000), ("01.12–03.12", "2026-12-01", "2026-12-03", 3, 2, 1, 600_000)], None, 750_000,
-        name="pause_probe_void_two_months_0212", begins=[None, "2026-12-01"])
+    saved = act(world, s, g, D(2026, 12, 2), void(world, pause_id),
+                [("24.11–30.11", "2026-11-24", "2026-11-30", 7, 3, 3, 150_000), ("01.12–03.12", "2026-12-01", "2026-12-03", 3, 2, 1, 86_000)], None, 750_000,
+                name="pause_probe_void_two_months_0212", begins=[None, "2026-12-01"], extras=[(None, None), (514_000, "Декабрь")], debts=(450_000, 1_200_000))
+    begins = D.fromisoformat(saved["charge_rows"][1]["period_begins"])
+    assert led(world, s, g, begins).charged == led(world, s, g, D(2026, 12, 2)).charged == 1_200_000
 
 
 def test_c16_working_date_04_12_both_months_begun_no_line_is_carried(world, fixed_today):
@@ -317,13 +346,43 @@ def test_c16_working_date_04_12_both_months_begun_no_line_is_carried(world, fixe
 
 
 def test_c17_a_pause_put_back_in_time_from_the_first_of_the_month_the_whole_period_leaves_with_its_first_paid_day(world, fixed_today):
-    # Б11.43 п. 1, world 4.  Hand count BEFORE the run.  02.12; the pause 01.12 - 10.12 (the child is ill from the 1st).  The lessons of December in 01 - 10: 01 03 04 08 10 = 5 (of 14); the days 10.  The period
-    # began on 01.12 in the account before (600 000); after the pause its first paid day is 11.12 > 02.12: it has not begun, it charges 0.  One line "01.12–10.12", 10 days, 5 lessons, -600 000,
-    # ``period_begins`` = 2026-12-11.  November has no changed day: no line.  The change of the charge -600 000 = the sum; the whole period is begun in the account before, so no ``charge_later``.
+    # Б11.45 С, world 3 (was Б11.43 п. 1, world 4).  Hand count BEFORE the run.  02.12; the pause 01.12 - 10.12.  The lessons of December in 01 - 10: 01 03 04 08 10 = 5 (of 14): 9 of 14 x 600 000 =
+    # 385 714.3 -> 386 000 (whole thousands).  The period began on 01.12 in the account before (600 000); after the pause its first paid day is 11.12 > 02.12: not begun.  One line «01.12–10.12», 10 days,
+    # 5 lessons, ``amount`` 386 000 - 600 000 = -214 000, ``deferred`` -386 000, «Декабрь», ``period_begins`` 11.12.  Σ -214 000 - 386 000 = -600 000 = the change of the charge; the debt 1 200 000 - 600 000
+    # (November 600 000 + December 600 000) -> 600 000 (November).  The promise: on 11.12 December charges 386 000: the charge 600 000 -> 986 000.
     g, s = om_at(world, fixed_today, D(2026, 11, 1))
     fixed_today(D(2026, 12, 2))
-    act(world, s, g, D(2026, 12, 2), make(world, s, g, "2026-12-01", "2026-12-10"), [("01.12–10.12", "2026-12-01", "2026-12-10", 10, 5, None, -600_000)], None, -600_000,
-        name="pause_probe_create_backdated_month_start", begins=["2026-12-11"])
+    saved = act(world, s, g, D(2026, 12, 2), make(world, s, g, "2026-12-01", "2026-12-10"), [("01.12–10.12", "2026-12-01", "2026-12-10", 10, 5, None, -214_000)], None, -600_000,
+                name="pause_probe_create_backdated_month_start", begins=["2026-12-11"], extras=[(-386_000, "Декабрь")], debts=(1_200_000, 600_000))
+    begins = D.fromisoformat(saved["charge_rows"][0]["begins"] if "begins" in saved["charge_rows"][0] else saved["charge_rows"][0]["period_begins"])
+    assert (led(world, s, g, D(2026, 12, 10)).charged, led(world, s, g, begins).charged) == (600_000, 600_000 + 386_000)
+
+
+def test_c20_a_pause_on_a_day_with_no_lesson_that_moves_the_first_paid_day_is_a_line_with_no_amount_only_the_deferred(world, fixed_today):
+    # Б11.45 С, world 4.  Hand count BEFORE the run.  The student joined on 01.11.2026 and the clock stands on 01.02.2027 (a Monday: no lesson - the days are Tue / Thu / Fri).  Four months are charged
+    # (Nov 600 000, Dec 600 000, Jan 600 000, Feb 600 000 - a cell of the grid is the whole price, the first paid day of February is the 1st = today): the debt 2 400 000.  A pause on the one day 01.02 takes
+    # no lesson (February 2027 has 12 of them: Tue 2 9 16 23, Thu 4 11 18 25, Fri 5 12 19 26): the price stays 600 000, ``amount`` 0; but the first paid day of February moves to 02.02 > 01.02: the period
+    # has not begun, the account loses 600 000 today.  The line «01.02», 1 day, 0 lessons, 0, ``deferred`` -600 000, «Февраль», ``period_begins`` 02.02.  Σ 0 - 600 000 = -600 000 = the change of the
+    # charge; the debt 2 400 000 -> 1 800 000.  The same pause taken off: the line returns with ``deferred`` +600 000 (``period_begins`` 01.02), the debt 1 800 000 -> 2 400 000.  NOT matched by the hand count of the first run: I wrote «passed 0», the code gives null (``lessons_passed`` is given only when
+    # ``amount`` > 0, the written contract of the field); the line has 0 lessons, so there is nothing to pass - the contract is kept, the expectation here follows it.
+    g, s = om_at(world, fixed_today, D(2026, 11, 1))
+    fixed_today(D(2027, 2, 1))
+    saved = act(world, s, g, D(2027, 2, 1), make(world, s, g, "2027-02-01", "2027-02-01"), [("01.02", "2027-02-01", "2027-02-01", 1, 0, None, 0)], None, -600_000,
+                begins=["2027-02-02"], extras=[(-600_000, "Февраль")], debts=(2_400_000, 1_800_000))
+    act(world, s, g, D(2027, 2, 1), void(world, saved["pause"]["id"]), [("01.02", "2027-02-01", "2027-02-01", 1, 0, None, 0)], None, 600_000,
+        begins=["2027-02-01"], extras=[(600_000, "Февраль")], debts=(1_800_000, 2_400_000))
+
+
+def test_c21_a_role_without_money_the_carried_line_has_no_sums_but_keeps_the_label_and_the_date(world, fixed_today):
+    # Б11.45 С п.2.  By hand: the world 1 (02.12, the pause 24.11 - 03.12) for a role without the right to money: ``impact`` null; the lines are the same two (7 days 3 lessons; 3 days 2 lessons), ``amount`` and
+    # ``deferred`` null in both; the carried line keeps ``period_label`` «Декабрь» and ``period_begins`` 04.12 (the screen writes «начнётся 04.12» with no sum), the first line has null in both.
+    g, s = om_at(world, fixed_today, D(2026, 11, 1))
+    fixed_today(D(2026, 12, 2))
+    m = membership(world, s, g)
+    probe = PauseService(world.db).create(str(world.org.id), m.id, str(world.owner.id), PauseCreate(first_day=D(2026, 11, 24), last_day=D(2026, 12, 3)), dry_run=True, money=False, actor_role="owner")
+    assert probe.impact is None
+    assert [(r.label, r.days, r.lessons, r.amount, r.deferred, r.period_label, r.period_begins) for r in probe.charge_rows] == [
+        ("24.11–30.11", 7, 3, None, None, None, None), ("01.12–03.12", 3, 2, None, None, "Декабрь", D(2026, 12, 4))]
 
 
 def test_c18_the_centre_cancelled_lesson_inside_the_pause_the_account_after_has_no_deduction_and_the_debt_is_the_whole_charge(world, fixed_today):
