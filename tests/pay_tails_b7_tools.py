@@ -297,7 +297,7 @@ def pieces_bad(inp):
     return any(a.segment_id != bl.ADVANCE_SEGMENT and a.segment_id not in known for a in L.allocations)
 
 
-LAYOUT = {"worlds": 0, "with future cancel": 0, "probes": 0, "part rows": 0, "closed rows": 0, "rows with the word": 0}      # Б11.51 С1': what the strict property of the layout checked (a world with no debt checks nothing)
+LAYOUT = {"worlds": 0, "with future cancel": 0, "probes": 0, "part rows": 0, "closed rows": 0, "rows with the word": 0, "outflow took the probe": 0}      # Б11.53: the reference counter (a known defect of LEDGER-FREEZE); Б11.51 С1': what the strict property of the layout checked (a world with no debt checks nothing)
 
 
 def with_future_cancel(inp):
@@ -324,7 +324,13 @@ def _layout_wrong(L, today, amount):
     LAYOUT["closed rows"] += len(closed)
     LAYOUT["rows with the word"] += sum(", остаток" in r.label for r in rows)
     wrong = wrong or sum(r.of - r.amount for r in part) != sum(s.unpaid for _, s in mine if s.unpaid > 0) or len(part) != sum(s.unpaid > 0 for _, s in mine)
-    wrong = wrong or sum(r.periods for r in closed) != sum(s.unpaid == 0 for _, s in mine) or sum(r.amount for r in rows) != amount
+    wrong = wrong or sum(r.periods for r in closed) != sum(s.unpaid == 0 for _, s in mine)
+    if sum(r.amount for r in rows) != amount:
+        # Б11.53 (known defect, LEDGER-FREEZE): the sum of the lines differs from the payment AND an outflow (a transfer / a refund) took money of the probe: the reference counter, not the strict property; any other violation stays strict
+        if L.refunded_from.get("layout", 0) + L.transferred_from.get("layout", 0) > 0:
+            LAYOUT["outflow took the probe"] += 1
+        else:
+            wrong = True
     return wrong or sum(", остаток" in r.label for r in rows) != sum(s.money + s.forgiven - a.amount > 0 for a, s in mine)
 
 

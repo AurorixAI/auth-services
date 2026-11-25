@@ -137,7 +137,7 @@ def test_the_generator_property_of_the_layout_is_true_and_counts_what_it_checked
     start = dict(tools.LAYOUT)
     assert tools.layout_bad(_input()) is False
     got = {k: tools.LAYOUT[k] - start[k] for k in tools.LAYOUT}
-    assert got == {"worlds": 2, "with future cancel": 1, "probes": 4, "part rows": 2, "closed rows": 2, "rows with the word": 0}, got
+    assert got == {"worlds": 2, "with future cancel": 1, "probes": 4, "part rows": 2, "closed rows": 2, "rows with the word": 0, "outflow took the probe": 0}, got
 
 
 def test_the_generator_property_of_the_layout_has_teeth_the_old_formula_is_red(monkeypatch):
@@ -158,6 +158,49 @@ def test_the_generator_property_of_the_layout_has_teeth_the_old_formula_is_red(m
 
     monkeypatch.setattr(bl, "run_ledger", old)
     assert tools.layout_bad(_input()) is True
+
+
+def _sum_off(monkeypatch, took, formula_old=False):
+    """B11.53: the world of the property (the same two worlds A and B as above) where the lines of every probe sum to 10 000 more than the payment; ``took``: a transfer took 10 000 of the probe (the known class)."""
+    from tests import pay_tails_b7_tools as tools
+
+    real, real_rows = bl.run_ledger, pv.money_rows
+
+    def ledger(inp):
+        L = real(inp)
+        if formula_old:
+            ahead = {}
+            for line in L.recalcs:
+                if line.day > inp.today:
+                    ahead[line.segment_id] = ahead.get(line.segment_id, 0) + line.amount
+            pieces = tuple(replace(a, remaining_after=a.remaining_after + ahead.get(a.segment_id, 0), closes=a.remaining_after + ahead.get(a.segment_id, 0) == 0) if a.credit_id == "layout" else a for a in L.allocations)
+            L = replace(L, allocations=pieces)
+        return replace(L, transferred_from={**L.transferred_from, "layout": 10_000}) if took else L
+
+    def rows(L, credit_id, today):
+        r = real_rows(L, credit_id, today)
+        return [*r, r[-1].model_copy(update={"state": "advance", "label": "Аванс", "amount": 10_000, "periods": 0})] if r else r
+
+    monkeypatch.setattr(bl, "run_ledger", ledger)
+    monkeypatch.setattr(pv, "money_rows", rows)
+    start = dict(tools.LAYOUT)
+    bad = tools.layout_bad(_input())
+    return bad, tools.LAYOUT["outflow took the probe"] - start["outflow took the probe"]
+
+
+def test_the_known_class_sum_off_because_an_outflow_took_the_probe_is_counted_not_red(monkeypatch):
+    # By hand: the worlds A and B give 2 probes each (half the debt and the whole debt) = 4 probes; in every one the lines sum to +10 000 and a transfer took 10 000 of the probe -> the reference counter 4, the strict property False.
+    assert _sum_off(monkeypatch, took=True) == (False, 4)
+
+
+def test_the_same_sum_off_with_no_outflow_on_the_probe_stays_red_and_counts_nothing(monkeypatch):
+    assert _sum_off(monkeypatch, took=False) == (True, 0)
+
+
+def test_the_known_class_does_not_hide_the_old_formula_it_stays_red(monkeypatch):
+    # The outflow took the probe AND the old «remaining_after» formula: the sum is the exempt class, the shape of the pieces is not -> red; the counter still counts the sum.
+    bad, counted = _sum_off(monkeypatch, took=True, formula_old=True)
+    assert bad is True and counted == 4
 
 
 def _paused(forgiven=False):
