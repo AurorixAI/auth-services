@@ -435,3 +435,24 @@ def test_c19_the_insurance_error_is_written_once_per_action_the_lines_are_counte
         once(lambda: edit(world, pid, "2026-11-24", "2026-11-25")(False))
         once(lambda: void(world, pid)(True))
         once(lambda: void(world, pid)(False))
+
+
+def test_c22_the_save_under_the_lock_builds_no_answer_it_throws_away_the_number_of_queries(world, fixed_today):
+    # Б11.46 п. 5.  The real save of a pause and of its edit built the whole answer (``_saved``: the marks of the lessons, the payroll, the row) UNDER the lock and threw it away, then built it again after the commit;
+    # the first call is gone: only the probe (``dry_run``) builds the answer under the lock.  The number of SQL statements of a call of the route (the account of the world: 2 months, one group):
+    # measured on the head 6ee236c BEFORE the change (the run printed it): create_probe / create_save / edit_probe / edit_save = 66 / 108 / 87 / 129; after the change 66 / 87 / 87 / 108: the probe is
+    # the same, each real save is 21 statements lower (one build of the answer, not two).  The test holds the new numbers as the ceiling (no more than now), so a second build under the lock turns it red.
+    from tests.pg_world import count_queries
+
+    g, s = om_at(world, fixed_today, D(2026, 11, 1))
+    fixed_today(D(2026, 11, 24))
+    mk = make(world, s, g, "2026-11-24", "2026-11-30")
+    n = {}
+    n["create_probe"], r = count_queries(world, lambda: mk(True))
+    assert r.status_code == 201 or r.status_code == 200, r.text[:200]
+    n["create_save"], r = count_queries(world, lambda: mk(False))
+    assert r.status_code in (200, 201), r.text[:200]
+    pid = r.json()["pause"]["id"]
+    n["edit_probe"], r = count_queries(world, lambda: edit(world, pid, "2026-11-24", "2026-11-25")(True))
+    n["edit_save"], r = count_queries(world, lambda: edit(world, pid, "2026-11-24", "2026-11-25")(False))
+    assert n["create_probe"] <= 66 and n["create_save"] <= 87 and n["edit_probe"] <= 87 and n["edit_save"] <= 108, n
