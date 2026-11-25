@@ -2280,6 +2280,7 @@ class AuthService:
             lvl = level_fields(r) if r else level_fields(None)
             students_out.append({
                 "id": str(s.id),
+                "membership_id": str(m.id),  # B11.48: the participation of THIS group (the screen puts the pause on it)
                 "first_name": s.first_name,
                 "last_name": s.last_name,
                 "full_name": student_full_name(s),

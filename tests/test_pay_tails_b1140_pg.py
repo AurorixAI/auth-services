@@ -456,3 +456,34 @@ def test_c22_the_save_under_the_lock_builds_no_answer_it_throws_away_the_number_
     n["edit_probe"], r = count_queries(world, lambda: edit(world, pid, "2026-11-24", "2026-11-25")(True))
     n["edit_save"], r = count_queries(world, lambda: edit(world, pid, "2026-11-24", "2026-11-25")(False))
     assert n["create_probe"] <= 66 and n["create_save"] <= 87 and n["edit_probe"] <= 87 and n["edit_save"] <= 108, n
+
+
+def test_c16_the_list_of_a_group_carries_the_id_of_the_participation_of_each_student_in_this_group(world, fixed_today):
+    # Б11.48 С (step 8.14.14): ``GET /org/groups/{id}`` gives each student ``membership_id`` = the id of HIS participation in THIS group (the screen puts a pause on it).  A student of two groups
+    # has two different ids in the two lists.  A student on a running pause and one without: the answer for the screens (``group_detail_with_pause``).  The number of statements does not grow.
+    from tests.money1b_helpers import add, fresh_student
+    from tests.pg_world import capture_queries, ensure_billing, give_group_price, make_group
+    g, s = om_at(world, fixed_today, D(2026, 11, 1))
+    fixed_today(D(2026, 11, 24))
+    other = fresh_student(world, "Ученик без паузы")
+    add(world, other, group=g, mode="add")
+    g2 = make_group(world.db, world.org, world.teacher, "Вторая")
+    give_group_price(world.db, g2, 600_000)
+    ensure_billing(world, g2, price=None)
+    add(world, s, group=g2, mode="add")
+    pause_on(world, s, g, "2026-11-24", "2026-11-30")
+    statements, r = capture_queries(world.db, lambda: owner(world).get(f"{API}/org/groups/{g.id}"))
+    assert r.status_code == 200, r.text
+    print("GROUP_DETAIL_STATEMENTS", len(statements))
+    by_id = {x["id"]: x for x in r.json()["students"]}
+    assert by_id[str(s.id)]["membership_id"] == str(membership(world, s, g).id)
+    assert by_id[str(other.id)]["membership_id"] == str(membership(world, other, g).id)
+    assert (by_id[str(s.id)]["on_pause"], by_id[str(s.id)]["paused_until"]) == (True, "2026-11-30")
+    assert (by_id[str(other.id)]["on_pause"], by_id[str(other.id)]["paused_until"]) == (False, None)
+    second = {x["id"]: x for x in owner(world).get(f"{API}/org/groups/{g2.id}").json()["students"]}
+    assert second[str(s.id)]["membership_id"] == str(membership(world, s, g2).id) != by_id[str(s.id)]["membership_id"]
+    assert len(statements) <= QUERIES_GROUP_DETAIL, len(statements)
+    dump("group_detail_with_pause", r.json())
+
+
+QUERIES_GROUP_DETAIL = 10
