@@ -1043,6 +1043,7 @@ class AuthService:
         for m in memberships:
             group_history.append({
                 "group_id": str(m.group_id),
+                "membership_id": str(m.id),
                 "group_name": m.group.name if m.group else "—",
                 "class_level": m.group.class_level if m.group else None,
                 "is_active": m.is_active,
