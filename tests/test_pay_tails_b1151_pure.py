@@ -122,3 +122,39 @@ def test_the_statement_says_the_month_is_paid_where_the_period_is_closed_and_how
     assert _statement_line(world("W1", today), today) == ["за ноябрь — 200\xa0000 (ноябрь оплачен)"]      # the old layout said «(осталось 40 000)» on 25.11
     assert _statement_line(world("W1b", today), today) == ["за ноябрь — 150\xa0000 (осталось 50\xa0000)"]
     assert _statement_line(world("W2", today), today) == ["за ноябрь — 15\xa0000 (осталось 25\xa0000)"]
+
+
+def _input(today=D(2026, 11, 25)):
+    inp = make(today=today, stays=[bl.Stay(D(2026, 11, 1))], price_at=flat(360_000), regimes=[FIXED1], start=D(2026, 10, 1), lesson_days=MT)
+    return replace(inp, centre_cancels=tuple(bl.CentreCancel(d, "l") for d in CANCELLED), recalc_versions=ON)
+
+
+def test_the_generator_property_of_the_layout_is_true_and_counts_what_it_checked():
+    # By hand (Геометрия 8 on 25.11, nothing paid): the world A: debt 200 000 (360 000 - 4 x 40 000, the 26.11 counted at once) -> probes 100 000 (part) and 200 000 (closed); the world B = A + the lesson 30.11 cancelled
+    # (ahead, entered today): debt 160 000 -> probes 80 000 (part), 160 000 (closed).  Counters: 2 worlds, 1 with a future cancel, 4 probes, 2 part rows, 2 closed rows, 0 rows with the word (nothing lay in before).
+    from tests import pay_tails_b7_tools as tools
+
+    start = dict(tools.LAYOUT)
+    assert tools.layout_bad(_input()) is False
+    got = {k: tools.LAYOUT[k] - start[k] for k in tools.LAYOUT}
+    assert got == {"worlds": 2, "with future cancel": 1, "probes": 4, "part rows": 2, "closed rows": 2, "rows with the word": 0}, got
+
+
+def test_the_generator_property_of_the_layout_has_teeth_the_old_formula_is_red(monkeypatch):
+    # By hand: the OLD formula counted only the deductions dated up to the payment: the piece of the payment today 25.11 kept the deductions of 26.11 (and of 30.11 in the world B) in «what is left»: remaining_after + 40 000
+    # (+ 80 000 in B).  The shape is right, the sums of the lines too: only the strict property sees it: red in both worlds.
+    from tests import pay_tails_b7_tools as tools
+
+    real = bl.run_ledger
+
+    def old(inp):
+        L = real(inp)
+        ahead = {}
+        for line in L.recalcs:
+            if line.day > inp.today:
+                ahead[line.segment_id] = ahead.get(line.segment_id, 0) + line.amount
+        pieces = tuple(replace(a, remaining_after=a.remaining_after + ahead.get(a.segment_id, 0), closes=a.remaining_after + ahead.get(a.segment_id, 0) == 0) if a.credit_id == "layout" else a for a in L.allocations)
+        return replace(L, allocations=pieces)
+
+    monkeypatch.setattr(bl, "run_ledger", old)
+    assert tools.layout_bad(_input()) is True

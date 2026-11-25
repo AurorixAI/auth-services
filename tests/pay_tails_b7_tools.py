@@ -42,7 +42,7 @@ EARLIEST = D(2026, 9, 15)                # the earliest date the generator gives
 PROPERTIES = ("P1c debt", "P1c advance", "P1c used", "P3u advance>=", "P3u advance<=freed", "P3u advance<=money", "P3u debt", "P3u used", "P3u transfer", "P6 same", "P6 amount", "P6b restore", "P7 undo", "P7 relapse", "P7 ordinary return",
               "P1 debt", "P1 used", "P1 advance", "P1 advance<=money", "P1 identity", "P2 debt", "P2 advance<=money", "P2 advance today", "P2 advance back",
               "P3 used", "P3 debt", "P3 advance", "P3 advance<=money", "P3k used", "P3k debt", "P3k advance", "P3k advance<=money", "P3e used", "P3e debt", "P3e advance", "P3e advance<=money", "P3c advance", "P3ec advance", "P4 early", "P4 today", "P5 probe",
-              "C1 chain", "C1 chain days", "C2 shorten-back", "C2 shorten-back days", "C3 reenter", "C3 reenter days", "C3 split", "C3 split days", "C4 leave free", "C4 leave free days", "C5 void", "C5 void days", "C5 tail void", "C5 tail void days", "C5 tail shorten", "C5 tail shorten days", "C7 void cancel", "C7 void cancel days", "C6 empty stay", "W now", "M3 piece", "Lines sum")
+              "C1 chain", "C1 chain days", "C2 shorten-back", "C2 shorten-back days", "C3 reenter", "C3 reenter days", "C3 split", "C3 split days", "C4 leave free", "C4 leave free days", "C5 void", "C5 void days", "C5 tail void", "C5 tail void days", "C5 tail shorten", "C5 tail shorten days", "C7 void cancel", "C7 void cancel days", "C6 empty stay", "W now", "M3 piece", "Lines sum", "Layout")
 
 
 @dataclass(frozen=True)
@@ -280,6 +280,53 @@ def pieces_bad(inp):
     L = bl.run_ledger(inp)
     known = {s.id for s in L.segments}
     return any(a.segment_id != bl.ADVANCE_SEGMENT and a.segment_id not in known for a in L.allocations)
+
+
+LAYOUT = {"worlds": 0, "with future cancel": 0, "probes": 0, "part rows": 0, "closed rows": 0, "rows with the word": 0}      # Б11.51 С1': what the strict property of the layout checked (a world with no debt checks nothing)
+
+
+def with_future_cancel(inp):
+    """Б11.51 С1': the world plus ONE lesson cancelled by the centre that is still AHEAD (the first lesson of the group after the working day, within two weeks), entered before the working day: the account counts its deduction the day the period begins, the layout of a payment must count it too.  ``None`` for a world with packages (no deductions) or with no such lesson."""
+    if any(r.mode == bl.LESSONS for r in inp.regimes):
+        return None
+    ahead = [d for d in inp.lesson_days(inp.today + timedelta(days=1), inp.today + timedelta(days=14)) if d not in {c.day for c in inp.centre_cancels}]
+    if not ahead:
+        return None
+    versions = inp.recalc_versions or (mk_version(date.min, True, datetime.min),)
+    return replace(inp, centre_cancels=(*inp.centre_cancels, mk_cancel(ahead[0], f"ahead{ahead[0]}", at(inp.today, 5))), recalc_versions=versions)
+
+
+def _layout_wrong(L, today, amount):
+    """The STRICT property of the layout of a payment (Б11.51 С1'), the payment being the LAST credit of the account: for every begun period it touched, ``remaining_after`` of its piece is the unpaid of the period (the charge - ALL deductions - money - used forgiveness, the account's own number) and ``closes`` is the same as «unpaid is 0»; of the lines: a ``part`` line has ``of - amount`` = the unpaid of its period after the payment, the closed lines are the periods with no unpaid, the sum of the lines is the payment, and the word «остаток» is in exactly as many lines as there are periods where money or a used forgiveness lay before this payment."""
+    from src.auth import payments_views as pv
+
+    by_id = {s.id: s for s in L.segments}
+    mine = [(a, by_id[a.segment_id]) for a in L.allocations if a.credit_id == "layout" and a.amount > 0 and a.segment_id in by_id and by_id[a.segment_id].begun]
+    wrong = any(a.remaining_after != s.unpaid or a.closes != (s.unpaid == 0) for a, s in mine)
+    rows = pv.money_rows(L, "layout", today)
+    part, closed = [r for r in rows if r.state == "part"], [r for r in rows if r.state == "closed"]
+    LAYOUT["part rows"] += len(part)
+    LAYOUT["closed rows"] += len(closed)
+    LAYOUT["rows with the word"] += sum(", остаток" in r.label for r in rows)
+    wrong = wrong or sum(r.of - r.amount for r in part) != sum(s.unpaid for _, s in mine if s.unpaid > 0) or len(part) != sum(s.unpaid > 0 for _, s in mine)
+    wrong = wrong or sum(r.periods for r in closed) != sum(s.unpaid == 0 for _, s in mine) or sum(r.amount for r in rows) != amount
+    return wrong or sum(", остаток" in r.label for r in rows) != sum(s.money + s.forgiven - a.amount > 0 for a, s in mine)
+
+
+def layout_bad(inp):
+    """Б11.51 С1': the strict property of the layout on the world and on the same world with a cancelled lesson that is ahead: a payment of half the debt and of the whole debt, dated today (the window's own probe)."""
+    bad = False
+    for world in (inp, with_future_cancel(inp)):
+        if world is None:
+            continue
+        LAYOUT["worlds"] += 1
+        LAYOUT["with future cancel"] += world is not inp
+        debt = bl.run_ledger(world).debt
+        for amount in sorted({debt // 2, debt} - {0}):
+            LAYOUT["probes"] += 1
+            L = bl.run_ledger(replace(world, credits=(*world.credits, bl.Credit("layout", bl.PAYMENT, world.today, bl.PROBE_MOMENT, amount))))
+            bad = _layout_wrong(L, world.today, amount) or bad
+    return bad
 
 
 def core_known(inp, moment):
@@ -1504,6 +1551,8 @@ def violations(inp, x):
         bad.append("W now")
     if pieces_bad(new):
         bad.append("M3 piece")
+    if layout_bad(new):
+        bad.append("Layout")
     if isinstance(x, (bl.Pause, PauseEdit, VoidPause, Chain, ShortenBack, Reenter, Split, TailChange, VoidCancel)) and lines_bad(inp, new):      # the events of a PAUSE only: a leaving cuts the stay too (the lines are for the routes of a pause)
         bad.append("Lines sum")
     return bad
@@ -1764,6 +1813,7 @@ def run_counts(seed, n, cfg=Cfg()):
     C1S_MAX[:] = [0, ""]
     CHECKED.clear()
     LINES.update({k: 0 for k in LINES})
+    LAYOUT.update({k: 0 for k in LAYOUT})
     TOLERANCE[:] = [0, 0]
     TOLERANCE_KINDS.clear()
     NO_CANCEL_WORLDS.clear()
@@ -1807,6 +1857,7 @@ def run_counts(seed, n, cfg=Cfg()):
     counts["_tolerance events/nonzero"] = tuple(TOLERANCE)
     counts.update({f"_checked {k}": v for k, v in CHECKED.items()})
     counts.update({f"_lines {k}": v for k, v in LINES.items()})
+    counts.update({f"_layout {k}": v for k, v in LAYOUT.items()})
     return counts, found, (worlds, pays, forgs)
 
 
