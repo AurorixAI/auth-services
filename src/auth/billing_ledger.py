@@ -1681,6 +1681,9 @@ def _run_ledger(inp: LedgerInput, horizon_extra: int) -> Ledger:
     # ---- allocations
     allocations: List[Allocation] = []
     running: Dict[str, int] = {s.id: 0 for s in segments}
+    # PAY-TAILS Б11.51 С1': «what is still unpaid of the period right after this piece» is the PLACE of the period (the charge minus ALL its deductions, the future ones too: the account counts them the day the period begins) minus what lay into it so far from money and forgiveness; the deductions are credits with the date of the lesson, so the order of the pieces must not take them into the count
+    deduction_ids = {line.id for line in recalcs}
+    laid: Dict[str, int] = {s.id: 0 for s in segments}
     prefix_all = _prefix(lesson_costs_all)
     held_count = sum(len(s.days) for s in segments if s.kind == "package")
     base_offset = 0  # what the calendar charges before the first package absorb
@@ -1700,6 +1703,8 @@ def _run_ledger(inp: LedgerInput, horizon_extra: int) -> Ledger:
             # lessons that cost nothing (a price of a few sum per package) are covered by the first piece
             before = _cover(s, running[s.id], seg_costs.get(s.id)) if running[s.id] else 0
             running[s.id] += part
+            if c.id not in deduction_ids:
+                laid[s.id] += part
             after = _cover(s, running[s.id], seg_costs.get(s.id))
             on = c.on
             if s.kind == "opening":
@@ -1709,7 +1714,8 @@ def _run_ledger(inp: LedgerInput, horizon_extra: int) -> Ledger:
                     CURRENT if s.period_start <= on else ADVANCE)
             else:
                 bucket = PAST_DEBT if s.period_end < on else (CURRENT if s.period_start <= on else ADVANCE)
-            closes = running[s.id] >= s.amount
+            remaining_after = max(0, s.amount - s.recalculated - laid[s.id])
+            closes = remaining_after == 0
             allocations.append(Allocation(
                 credit_id=c.id, segment_id=s.id, amount=part, days=after - before, bucket=bucket, closes=closes,
                 price=s.price.amount,
@@ -1717,7 +1723,7 @@ def _run_ledger(inp: LedgerInput, horizon_extra: int) -> Ledger:
                        tx.allocation_label(bucket=bucket, closes=closes, start=s.period_start, end=s.period_end,
                                            package_no=s.package_no)),
                 period_start=s.period_start, period_end=s.period_end,
-                remaining_after=max(0, s.amount - running[s.id])))
+                remaining_after=remaining_after))
         left = left_of.get(c.id, 0)
         if left > 0:        # money only: a forgiveness that no charge needed is thrown away (it has no allocation into the advance)
             extra = 0

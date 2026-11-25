@@ -601,7 +601,7 @@ def money_rows(ledger: bl.Ledger, credit_id: str, today: date) -> List[MoneyRow]
             continue
         left = remaining if remaining is not None else seg.unpaid
         of = left + amount                                      # what was unpaid of the period before this payment
-        rest = seg.amount - of > 0                              # it was paid in part before: «, остаток»
+        rest = seg.amount - seg.recalculated - of > 0           # money or a used forgiveness lay into it before this payment: «, остаток» (a deduction for a cancelled lesson is no «остаток»: Б11.51 С1')
         label = period_label(seg, today) + (", остаток" if rest else "")
         closed = left <= 0
         rows.append((seg.period_start, MoneyRow(label=label, amount=amount, of=None if closed else of, state="closed" if closed else "part"), rest, seg))
