@@ -683,7 +683,7 @@ def pause_charge_rows(before: bl.Ledger, after: bl.Ledger, today: date, changed:
             continue
         carried = a is not None and b is not None and b_begun != a_begun
         amount = (a.amount - b.amount) if carried else (a.amount if a_begun else 0) - (b.amount if b_begun else 0)
-        deferred = (-a.amount if b_begun else b.amount) if carried else None
+        deferred = ((-a.amount if b_begun else b.amount) if carried else 0) or None        # a carry that moves no money (the period costs nothing on one side) says no deferred
         if (amount != 0 or deferred) and any(x is not None and x.lesson_dates is None for x in (a, b)):
             explained = False
             continue

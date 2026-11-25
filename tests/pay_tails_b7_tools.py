@@ -193,7 +193,7 @@ def now_world_bad(inp):
     return shown != live
 
 
-LINES = {"events": 0, "with lines": 0, "later": 0, "insurance": 0, "lost": 0, "with period_begins": 0}      # Б11.43: the last = events whose lines have a line with ``period_begins`` (a reference counter, expected > 0).  Б11.40 С4': the lines of a pause (``payments_views.pause_charge_rows``): events checked / with lines / with ``charge_later`` / the insurance fired / reference: a change of the charge and no line
+LINES = {"events": 0, "with lines": 0, "later": 0, "insurance": 0, "lost": 0, "with period_begins": 0, "with deferred": 0}      # Б11.43: the last = events whose lines have a line with ``period_begins`` (a reference counter, expected > 0).  Б11.40 С4': the lines of a pause (``payments_views.pause_charge_rows``): events checked / with lines / with ``charge_later`` / the insurance fired / reference: a change of the charge and no line
 
 
 def _with_insurance_count(call):
@@ -238,9 +238,13 @@ def lines_bad(inp, new):
     LINES["with lines"] += bool(rows)
     LINES["later"] += later is not None
     LINES["with period_begins"] += any(getattr(r, "period_begins", None) is not None for r in rows)
+    LINES["with deferred"] += any(r.deferred is not None for r in rows)       # Б11.45: a reference counter (events whose lines have a carried period)
     delta = after.charged - before.charged
     LINES["lost"] += bool(delta and not rows and any(sg.slot is not None and sg.slot[0] == "c" for sg in (*before.segments, *after.segments)))
-    return fired > 0 or (bool(rows) and sum(r.amount for r in rows) != delta)      # Б11.44 М2: the insurance that fired IS the violation (the function itself empties the lines when the sum is wrong)
+    # Б11.44 М2: the insurance that fired IS the violation (the function itself empties the lines when the sum is wrong).  Б11.45 С: the sum is Σ amount + Σ deferred; a line with ``deferred`` has the label of its period
+    # and the day it begins, a line with no ``deferred`` has neither the label nor a ``deferred``; a line is given only with a changed price or a ``deferred``.
+    shape = any((r.deferred is None) != (r.period_label is None) or (r.deferred is not None and r.period_begins is None) or (r.amount == 0 and r.deferred is None) for r in rows)
+    return fired > 0 or shape or (bool(rows) and sum(r.amount + (r.deferred or 0) for r in rows) != delta)
 
 
 def pieces_bad(inp):
