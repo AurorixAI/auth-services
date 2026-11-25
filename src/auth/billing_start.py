@@ -175,7 +175,7 @@ def returned_text(before: Dict[str, Any], after: Dict[str, Any]) -> Optional[str
     was = {start for start, _, _ in before["periods"]}
     for start, end, label in after["periods"]:
         if start < first <= end and start in was:
-            return f"Возврат без перерыва: {label} уже в счёте и заново не считается."
+            return f"Возврат в том же периоде: {label} уже в счёте и заново не считается."
     return None
 
 

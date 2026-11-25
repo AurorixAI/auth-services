@@ -13,7 +13,7 @@ from tests.test_pay_tails_money_pg import TTF, forgive, leave, led, lp
 
 pytestmark = needs_pg
 
-NEW = "Возврат без перерыва: ноябрь уже в счёте и заново не считается."
+NEW = "Возврат в том же периоде: ноябрь уже в счёте и заново не считается."
 FIRST = "Оплата считается с 26.11.2026 — с первого занятия группы"
 
 
@@ -81,7 +81,7 @@ def test_c2_a_personal_period_returned_inside_the_counted_period_says_it(world, 
     leave(world, g, s)
     fixed_today(D(2026, 11, 26))
     probe, imm, record, done, whole = both(world, s, g)
-    assert probe == record == "Возврат без перерыва: 02.11–01.12 уже в счёте и заново не считается."
+    assert probe == record == "Возврат в том же периоде: 02.11–01.12 уже в счёте и заново не считается."
 
 
 def test_c2_a_package_account_keeps_the_old_text(world, fixed_today):
@@ -101,3 +101,16 @@ def test_c2_a_package_account_keeps_the_old_text(world, fixed_today):
     fixed_today(D(2026, 11, 26))
     probe, imm, record, done, whole = both(world, s, g)
     assert probe == record == FIRST
+
+
+def test_c2_the_common_month_left_on_10_returned_on_20_with_a_gap_says_the_same_period_and_charges_both_stays(world, fixed_today):
+    # The group Tue/Thu/Fri, 600 000 / 12 lessons = 50 000 a lesson.  Joined 02.11 (first lesson Tue 03.11), left Tue 10.11: the stay lessons 3, 5, 6 and 10 = 4 lessons = 200 000 (the day of leaving counts: the student leaves in the evening, the same rule as the left-on-25 world where the last lesson 24.11 is counted).
+    # Back Fri 20.11 (the first lesson 20.11, no «Оплата с»): the new stay lessons 20, 24, 26, 27 = 4 lessons = 200 000; the gap (12, 13, 17, 19) = 4 lessons is not charged.  Charged = 8 lessons = 400 000 in the SAME November that is already in the account.
+    g, s = om_at(world, fixed_today, D(2026, 11, 2))
+    fixed_today(D(2026, 11, 10))
+    leave(world, g, s)
+    assert led(world, s, g, D(2026, 11, 10)).charged == 200_000
+    fixed_today(D(2026, 11, 20))
+    probe, imm, record, done, whole = both(world, s, g)
+    assert probe == record == "Возврат в том же периоде: ноябрь уже в счёте и заново не считается." and done["pay_from"] == "2026-11-20"
+    assert led(world, s, g, D(2026, 11, 20)).charged == 400_000
