@@ -646,18 +646,29 @@ def _cell_periods(ledger: bl.Ledger) -> dict:
 
 
 def _later_days(before: bl.Ledger, after: bl.Ledger, changed: Iterable[date], regimes: Sequence[bl.Regime]) -> List[date]:
-    """Б11.44 п.1 + Б11.45 С п.5: the changed days that lie after every begun unit of both accounts (a cell of the common month, a personal period, a package), and only when the common month decides
-    the price on the FIRST of them: the version of the settings in force that day (``regime_at`` - what the core itself picks the mode of a day by, not the segments) is a calendar one with a fixed billing day."""
+    """Б11.44 п.1 + Б11.45 С п.5 + Б11.46 п.3-4: the changed days that lie after every begun unit of both accounts (a cell of the common month, a personal period, a package), and of them only the RUN from the first
+    one while the common month decides the price of the day: the day is in no ``lessons_windows`` of the two accounts (what the core itself says of a day, deferred versions included: a package that is not finished
+    keeps its days) and the version of the settings in force that day (``regime_at``) is a calendar one with a fixed billing day.  The run ends on the first day that is not such (a personal period from 01.01 cuts
+    a pause that goes on into January: «01.12–31.12»)."""
     days = sorted(set(changed))
     if not days:
         return []
     units = [[s for s in led.segments if s.kind != "opening" and s.begun] for led in (after, before)]
     begun_end = max((s.period_end for u in units for s in u), default=None)
     later = [d for d in days if begun_end is None or d > begun_end]
-    if not later:
-        return []
-    regime = bl.regime_at(regimes, later[0])
-    return later if regime.mode == ps.CALENDAR and regime.anchor == ps.FIXED_DAY else []
+    packages = [w for led in (before, after) for w in led.lessons_windows]
+    run: List[date] = []
+    for d in later:
+        regime = bl.regime_at(regimes, d)
+        if any(lo <= d and (hi is None or d <= hi) for lo, hi in packages) or regime.mode != ps.CALENDAR or regime.anchor != ps.FIXED_DAY:
+            break
+        run.append(d)
+    return run
+
+
+def _outside_cells(ledger: bl.Ledger) -> int:
+    """The charge of the begun units that are NOT a cell of the common month (a personal period, a package): the lines of a pause do not explain it."""
+    return sum(s.amount for s in ledger.segments if s.kind != "opening" and s.begun and not (s.slot is not None and s.slot[0] == "c"))
 
 
 def pause_charge_rows(before: bl.Ledger, after: bl.Ledger, today: date, changed: Iterable[date], *, money: bool, membership_id: object = None, regimes: Sequence[bl.Regime]) -> Tuple[List[PauseChargeRow], Optional[PauseChargeLater]]:
@@ -675,7 +686,8 @@ def pause_charge_rows(before: bl.Ledger, after: bl.Ledger, today: date, changed:
         return [], None
     year = today.year
     rows: List[PauseChargeRow] = []
-    explained = True                                     # Б11.44 п.7: False = a changed period is counted by days (no lesson dates): the lines would not sum, lawfully
+    explained = _outside_cells(before) == _outside_cells(after)       # Б11.46 п.1: a personal period / a package of a mixed account moved by the pause: the lines cannot explain it (no lines, no error)
+    # Б11.44 п.7: ``explained`` goes False also when a changed period is counted by days (no lesson dates), and (Б11.46 п.2) when a carried period is priced by two prices: the lines would not sum, lawfully
     for slot in sorted(set(old) | set(new)):
         b, a = old.get(slot), new.get(slot)
         b_begun, a_begun = b is not None and b.begun, a is not None and a.begun
@@ -685,6 +697,9 @@ def pause_charge_rows(before: bl.Ledger, after: bl.Ledger, today: date, changed:
         amount = (a.amount - b.amount) if carried else (a.amount if a_begun else 0) - (b.amount if b_begun else 0)
         deferred = ((-a.amount if b_begun else b.amount) if carried else 0) or None        # a carry that moves no money (the period costs nothing on one side) says no deferred
         if (amount != 0 or deferred) and any(x is not None and x.lesson_dates is None for x in (a, b)):
+            explained = False
+            continue
+        if carried and a.price.amount != b.price.amount:                 # Б11.46 п.2: the carry changed the day the price is taken on across a change of the price: «after - before» is two prices, not lessons
             explained = False
             continue
         if amount == 0 and not deferred:

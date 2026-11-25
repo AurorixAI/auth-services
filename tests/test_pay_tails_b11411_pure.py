@@ -92,8 +92,8 @@ def test_the_common_month_alone_is_as_before_line_and_later():
     assert shown(rows) == [("24.11–30.11", 3, -150_000)] and delta == -150_000 and later.label == "01.12–03.12"
 
 
-def _ledger(*segments):
-    return SimpleNamespace(segments=segments)
+def _ledger(*segments, lessons_windows=()):
+    return SimpleNamespace(segments=segments, lessons_windows=lessons_windows)
 
 
 def _seg(start, end, slot, begun=False, kind="period"):
@@ -113,7 +113,8 @@ def test_later_days_the_regime_of_the_first_later_day_decides():
     nov_days = [D(2026, 12, 1), *days]
     assert pv._later_days(_ledger(nov), _ledger(nov), nov_days, (FIX,)) == nov_days
     assert pv._later_days(_ledger(nov), _ledger(nov), nov_days, (FIX, bl.Regime(effective_from=D(2026, 12, 1)))) == []
-    assert pv._later_days(_ledger(nov), _ledger(nov), nov_days, (FIX, bl.Regime(effective_from=D(2026, 12, 2)))) == nov_days
+    # Б11.46 п.3: the run stops on the first day that is not the common month: a change of the mode on 02.12 keeps 01.12 only (it was: all three days, the clause went on into the personal period)
+    assert pv._later_days(_ledger(nov), _ledger(nov), nov_days, (FIX, bl.Regime(effective_from=D(2026, 12, 2)))) == [D(2026, 12, 1)]
     assert pv._later_days(_ledger(), _ledger(nov), nov_days, (FIX,)) == nov_days       # nothing begun after: the account before decides the end of the begun
 
 
