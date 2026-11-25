@@ -572,7 +572,7 @@ def regime_at(regimes: Sequence[Regime], day: date) -> Regime:
 
 
 def apply_outflows(credits: Sequence[Credit], outflows: Sequence[Outflow]):
-    """Every outflow takes money off the NEWEST money credits that existed at its moment - an earlier date, or the same date entered not after it (LIFO); write-offs and recalculations never come back."""
+    """Every outflow takes money off the NEWEST money credits dated on or before it (LIFO); write-offs and recalculations never come back."""
     net = {c.id: c.amount for c in credits}
     refunded_from: Dict[str, int] = {c.id: 0 for c in credits}
     transferred_from: Dict[str, int] = {c.id: 0 for c in credits}
@@ -581,7 +581,7 @@ def apply_outflows(credits: Sequence[Credit], outflows: Sequence[Outflow]):
     for out in sorted(outflows, key=_credit_key):
         need = out.amount
         cut = refunded_from if out.kind == REFUND else transferred_from
-        for c in reversed([c for c in money if c.on < out.on or (c.on == out.on and entered_at(c) <= entered_at(out))]):
+        for c in reversed([c for c in money if c.on <= out.on]):
             take = min(need, net[c.id])
             net[c.id] -= take
             cut[c.id] += take
