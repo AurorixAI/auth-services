@@ -114,3 +114,22 @@ def test_c2_the_common_month_left_on_10_returned_on_20_with_a_gap_says_the_same_
     probe, imm, record, done, whole = both(world, s, g)
     assert probe == record == "Возврат в том же периоде: ноябрь уже в счёте и заново не считается." and done["pay_from"] == "2026-11-20"
     assert led(world, s, g, D(2026, 11, 20)).charged == 400_000
+
+
+def test_c2_a_failure_of_the_sign_does_not_fail_the_return_the_old_text_stays_and_the_error_is_logged(world, fixed_today, monkeypatch, caplog):
+    # By hand: the sign throws -> the probe and the record are 200, the text is the old «Оплата считается с 26.11.2026 — с первого занятия группы», the day 26.11 and the sums (100 000 = 2 lessons) are the account's, and one error with a traceback is in the log.
+    from src.auth import billing_start
+
+    g, s = left_on_25(world, fixed_today)
+    fixed_today(D(2026, 11, 26))
+
+    def boom(entry):
+        raise RuntimeError("the sign broke")
+
+    monkeypatch.setattr(billing_start, "_period_view", boom)
+    with caplog.at_level("ERROR"):
+        probe, imm, record, done, whole = both(world, s, g)
+    assert probe == record == FIRST and done["pay_from"] == "2026-11-26"
+    assert (imm["amount"], imm["lessons"]) == (100_000, 2)
+    assert any("the sign broke" in (r.exc_text or "") for r in caplog.records)
+    assert led(world, s, g, D(2026, 11, 26)).charged == 600_000

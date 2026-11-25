@@ -12,6 +12,7 @@ The ledger reads it as the first day of the stay (``ledger_service``): ``Stay.fi
 attendance and the teacher's lessons still follow ``joined_at``)."""
 from __future__ import annotations
 
+import logging
 from datetime import date, timedelta
 from typing import Any, Dict, Optional
 
@@ -23,6 +24,8 @@ from . import ops_rules
 from . import pay_due
 from . import payment_status as ps
 from . import payments_texts as tx
+
+logger = logging.getLogger(__name__)
 
 PAY_FROM_MAX_AHEAD_DAYS = 62          # the first lesson of a group that opens in two months is a normal thing; later than that is a slip of the finger
 LOOK_AHEAD_DAYS = PAY_FROM_MAX_AHEAD_DAYS      # R3 code №8: the schedule is searched exactly as far as a chosen day is allowed - the server never suggests a day that it then refuses
@@ -143,7 +146,7 @@ def immediate_charge(db: Session, org_id: Any, membership_id: Any, today: date, 
     loader = PaymentService(db)._loader(str(org_id), today)
     (entry,) = loader.run([membership_id])
     if view is not None:      # the same account, read once: ``period_view`` for the text of a return (no second run of the ledger)
-        view.update(_period_view(entry))
+        view.update(_safe_period_view(entry))
     due = pay_due.classify(entry.ledger, today, loader.settings.pay_due_days, loader.settings.pay_due_lessons, True)
     return immediate_from_ledger(entry.ledger, entry.inp.lesson_days, due, before)
 
@@ -156,14 +159,28 @@ def _period_view(entry: Any) -> Dict[str, Any]:
             "first": max((st.first for st in entry.inp.stays), default=None)}
 
 
+def _safe_period_view(entry: Any) -> Dict[str, Any]:
+    """PAY-TAILS 8.14.16 М2: the sign for the text of a return is a courtesy of the words - a failure of its maths is logged and the view stays empty (the text stays what it was); the return itself goes on."""
+    try:
+        return _period_view(entry)
+    except Exception:
+        logger.exception("the period view of a return failed: the old text of the window stays")
+        return {}
+
+
 def period_view(db: Session, org_id: Any, membership_id: Any, today: date) -> Dict[str, Any]:
     """``_period_view`` of the account of the membership as it is now (a read of its own: for a caller that does not read the immediate charge)."""
     from .payments_service import PaymentService  # lazy: pulls in the status maths
 
     db.flush()
-    loader = PaymentService(db)._loader(str(org_id), today)
-    (entry,) = loader.run([membership_id])
-    return _period_view(entry)
+    try:
+        with db.begin_nested():      # a failed read of the ledger does not poison the transaction of the return
+            loader = PaymentService(db)._loader(str(org_id), today)
+            (entry,) = loader.run([membership_id])
+    except Exception:
+        logger.exception("the ledger of a return could not be read for its text: the old text of the window stays")
+        return {}
+    return _safe_period_view(entry)
 
 
 def returned_text(before: Dict[str, Any], after: Dict[str, Any]) -> Optional[str]:
