@@ -26,29 +26,30 @@ def left_on_25(w, fixed_today, joined=D(2026, 11, 2)):
 
 def both(w, s, g, **kw):
     """(the text of the probe, the immediate of the probe, the text of the record)."""
-    probe = add(w, s, group=g, mode="add", dry_run=True, **kw)["billing"]
+    whole = add(w, s, group=g, mode="add", dry_run=True, **kw)
+    probe = whole["billing"]
     done = add(w, s, group=g, mode="add", **kw)["billing"]
-    return probe["text"], probe.get("immediate"), done["text"], done
+    return probe["text"], probe.get("immediate"), done["text"], done, whole
 
 
 def test_c2_the_next_day_without_pay_from_says_the_period_is_in_the_account_and_the_sums_are_the_same(world, fixed_today):
     g, s = left_on_25(world, fixed_today)
     assert led(world, s, g, D(2026, 11, 25)).charged == 500_000
     fixed_today(D(2026, 11, 26))
-    probe, imm, record, done = both(world, s, g)
+    probe, imm, record, done, whole = both(world, s, g)
     assert probe == record == NEW
     assert (imm["amount"], imm["lessons"]) == (100_000, 2) and done["pay_from"] == "2026-11-26"      # the day «Оплата с» is the first lesson as before
     assert led(world, s, g, D(2026, 11, 26)).charged == 600_000
-    dump("return_preview_no_break", {"billing": {"text": probe, "immediate": imm}})
+    dump("return_preview_no_break", whole)
 
 
 def test_c2_an_explicit_pay_from_keeps_the_old_text_and_loses_the_lesson_of_the_gap(world, fixed_today):
     g, s = left_on_25(world, fixed_today)
     fixed_today(D(2026, 11, 26))
-    probe, imm, record, done = both(world, s, g, pay_from="2026-11-27")
+    probe, imm, record, done, whole = both(world, s, g, pay_from="2026-11-27")
     assert probe == record == "Оплата считается с 27.11.2026: так выбрал сотрудник" and done["pay_from"] == "2026-11-27"
     assert led(world, s, g, D(2026, 11, 26)).charged == 550_000
-    dump("return_preview_pay_from", {"billing": {"text": probe, "immediate": imm}})
+    dump("return_preview_pay_from", whole)
 
 
 def test_c2_left_on_31_10_back_on_01_11_is_a_new_month_the_text_stays(world, fixed_today):
@@ -56,7 +57,7 @@ def test_c2_left_on_31_10_back_on_01_11_is_a_new_month_the_text_stays(world, fix
     fixed_today(D(2026, 10, 31))
     leave(world, g, s)
     fixed_today(D(2026, 11, 1))
-    probe, imm, record, done = both(world, s, g)
+    probe, imm, record, done, whole = both(world, s, g)
     assert probe == record == "Оплата считается с 03.11.2026 — с первого занятия группы"       # November was not in the account before: it begins with the new stay
 
 
@@ -65,7 +66,7 @@ def test_c2_the_same_day_return_after_a_forgiveness_is_an_ordinary_return_and_sa
     # the debt = 600 000 - 50 000 = 550 000.
     g, s = left_on_25(world, fixed_today)
     forgive(world, s, g, 50_000)
-    probe, imm, record, done = both(world, s, g)
+    probe, imm, record, done, whole = both(world, s, g)
     assert probe == record == NEW and done["pay_from"] == "2026-11-26"
     after = led(world, s, g, D(2026, 11, 25))
     assert (after.charged, after.debt) == (600_000, 550_000)
@@ -79,7 +80,7 @@ def test_c2_a_personal_period_returned_inside_the_counted_period_says_it(world, 
     fixed_today(D(2026, 11, 25))
     leave(world, g, s)
     fixed_today(D(2026, 11, 26))
-    probe, imm, record, done = both(world, s, g)
+    probe, imm, record, done, whole = both(world, s, g)
     assert probe == record == "Возврат без перерыва: 02.11–01.12 уже в счёте и заново не считается."
 
 
@@ -98,5 +99,5 @@ def test_c2_a_package_account_keeps_the_old_text(world, fixed_today):
     fixed_today(D(2026, 11, 25))
     leave(world, g, s)
     fixed_today(D(2026, 11, 26))
-    probe, imm, record, done = both(world, s, g)
+    probe, imm, record, done, whole = both(world, s, g)
     assert probe == record == FIRST
