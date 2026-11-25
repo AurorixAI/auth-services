@@ -58,6 +58,14 @@ def extras_of(body):
     return [(r["deferred"], r["period_label"]) for r in body["charge_rows"]]
 
 
+def identity(impact, before_ledger, after_ledger):
+    """Б11.51 С3': the identity of EVERY answer of a pause: (debt - advance) after - (debt - advance) before = ``charged_delta`` - ``recalc_delta`` - ``forgiven_delta``; the two new fields are the ledger's own changes of the deductions
+    and of the used forgiveness (the same two accounts, no run of its own)."""
+    net = (after_ledger.debt - after_ledger.advance) - (before_ledger.debt - before_ledger.advance)
+    assert (impact["recalc_delta"], impact["forgiven_delta"]) == (after_ledger.recalculated - before_ledger.recalculated, after_ledger.written_off - before_ledger.written_off), impact
+    assert net == impact["charged_delta"] - impact["recalc_delta"] - impact["forgiven_delta"], (net, impact)
+
+
 def act(world, s, g, today, call, rows, later, delta, name=None, begins=None, extras=None, debts=None):
     """The probe and the save of one action and the FOUR numbers: the lines of the probe = the lines of the save = ``rows`` (the hand count); ``charge_later``; the sum of the lines = ``impact.charged_delta`` of
     the probe = of the save = the charge of the account after - the charge before = ``delta``; ``period_begins`` of every line (Б11.43) = ``begins`` (default: null in every line); ``deferred`` / ``period_label`` of every line (Б11.45) = ``extras`` (default: null, null); the sum of the lines
@@ -78,6 +86,8 @@ def act(world, s, g, today, call, rows, later, delta, name=None, begins=None, ex
         assert (before_ledger.debt, after_ledger.debt) == debts, ("GOT debt before / after", before_ledger.debt, after_ledger.debt)
     assert later_of(p) == later_of(a) == later, (later_of(p), later_of(a))
     assert p["impact"]["charged_delta"] == a["impact"]["charged_delta"] == after - before == delta, (p["impact"]["charged_delta"], a["impact"]["charged_delta"], after - before)
+    identity(p["impact"], before_ledger, after_ledger)
+    identity(a["impact"], before_ledger, after_ledger)
     if rows:
         assert sum(r[6] for r in rows) + sum(x[0] or 0 for x in extras_of(a)) == delta
     return a
@@ -222,7 +232,8 @@ def test_c9_a_personal_period_has_no_lines(world, fixed_today):
         if first == "2026-11-24":
             dump("pause_probe_create_personal", probe.json())
         assert probe.json()["charge_rows"] == saved.json()["charge_rows"] == [] and probe.json()["charge_later"] is None and saved.json()["charge_later"] is None
-        assert probe.json()["impact"]["charged_delta"] == saved.json()["impact"]["charged_delta"] == led(world, s, g, D(2026, 11, 24)).charged - before
+        after_ledger = led(world, s, g, D(2026, 11, 24))
+        assert probe.json()["impact"]["charged_delta"] == saved.json()["impact"]["charged_delta"] == after_ledger.charged - before
         pid = saved.json()["pause"]["id"]
         gone = void(world, pid)(False)
         assert gone.status_code == 200 and gone.json()["charge_rows"] == [] and gone.json()["charge_later"] is None
@@ -487,3 +498,54 @@ def test_c16_the_list_of_a_group_carries_the_id_of_the_participation_of_each_stu
 
 
 QUERIES_GROUP_DETAIL = 10
+
+
+def geometry_8(world, fixed_today, today):
+    """«Геометрия 8»: Mon/Thu, 360 000 a month = 9 lessons of 40 000 (Mon 2 9 16 23 30; Thu 5 12 19 26), the common month, a student of 01.11 (charged from the first lesson 02.11); the centre cancelled 9, 12, 23 and 26.11 (entered 10.11,
+    the setting «отменённые центром уроки» is on); the working date ``today``."""
+    from tests.money1b_helpers import add, fresh_student, set_schedule, slot
+    from tests.pg_world import ensure_billing, give_group_price, make_group
+    from tests.test_pay2_api_pg import settings_block
+
+    fixed_today(D(2026, 11, 1))
+    settings_block(world, accounting_start_date="2026-09-01", billing_anchor="fixed_day", billing_day=1)
+    g = make_group(world.db, world.org, world.teacher, "Геометрия 8")
+    give_group_price(world.db, g, 360_000)
+    set_schedule(world, [slot("s1", 1, "2026-01-01", "14:00", "15:00"), slot("s4", 4, "2026-01-01", "14:00", "15:00")], g)
+    ensure_billing(world, g, price=None)
+    s = fresh_student(world, "Ученик Г8")
+    add(world, s, group=g, mode="add")
+    assert owner(world).put(f"{API}/org/settings/payments", json={"centre_cancel_recalc": True}).status_code == 200
+    fixed_today(D(2026, 11, 10))
+    for day, lesson in (("2026-11-09", "s1"), ("2026-11-12", "s4"), ("2026-11-23", "s1"), ("2026-11-26", "s4")):
+        r = owner(world).post(f"{API}/org/groups/{g.id}/attendance", json={"lessonDate": day, "lessonId": lesson, "status": "cancelled", "records": {}, "cancellationReason": "Преподаватель заболел", "cancellationKind": "centre"})
+        assert r.status_code == 200, r.text
+    fixed_today(today)
+    return g, s
+
+
+def test_c23_a_pause_over_a_lesson_the_centre_cancelled_the_deduction_goes_away_and_the_identity_holds(world, fixed_today):
+    # By hand («Геометрия 8», working date 25.11, nobody paid): the charge 9 x 40 000 = 360 000, the deductions for the 4 cancelled lessons 160 000 (the 26.11 counts at once: the account counts it the day the period begins) -> the debt 200 000.
+    # The pause 26 - 30.11 takes the lessons 26.11 and 30.11 out of the charge: 7 x 40 000 = 280 000 (``charged_delta`` -80 000, the one line of 2 lessons); the cancelled 26.11 is on the pause now, its deduction goes away:
+    # the deductions 3 x 40 000 = 120 000 (``recalc_delta`` -40 000); the debt 280 000 - 120 000 = 160 000.  The identity: 160 000 - 200 000 = -80 000 - (-40 000) - 0.
+    g, s = geometry_8(world, fixed_today, D(2026, 11, 25))
+    before = led(world, s, g, D(2026, 11, 25))
+    assert (before.charged, before.recalculated, before.debt) == (360_000, 160_000, 200_000)
+    body = act(world, s, g, D(2026, 11, 25), make(world, s, g, "2026-11-26", "2026-11-30"), [("26.11–30.11", "2026-11-26", "2026-11-30", 5, 2, None, -80_000)], None, -80_000, name="pause_probe_create_with_centre_cancel", debts=(200_000, 160_000))
+    assert (body["impact"]["recalc_delta"], body["impact"]["forgiven_delta"]) == (-40_000, 0)
+    after = led(world, s, g, D(2026, 11, 25))
+    assert (after.charged, after.recalculated) == (280_000, 120_000)
+
+
+def test_c24_a_pause_over_a_cancelled_lesson_with_a_forgiveness_the_debt_stays_0_the_forgiveness_covers_less(world, fixed_today):
+    # The same world, the whole debt 200 000 forgiven first (the used forgiveness 200 000, the debt 0).  After the pause the debt to cover is 280 000 - 120 000 = 160 000: the forgiveness used is 160 000 (``forgiven_delta`` -40 000),
+    # the debt 0 -> 0.  The identity: 0 - 0 = -80 000 - (-40 000) - (-40 000).
+    from tests.test_pay_tails_money_pg import forgive
+
+    g, s = geometry_8(world, fixed_today, D(2026, 11, 25))
+    forgive(world, s, g, None)
+    before = led(world, s, g, D(2026, 11, 25))
+    assert (before.debt, before.written_off) == (0, 200_000)
+    body = act(world, s, g, D(2026, 11, 25), make(world, s, g, "2026-11-26", "2026-11-30"), [("26.11–30.11", "2026-11-26", "2026-11-30", 5, 2, None, -80_000)], None, -80_000, name="pause_probe_create_with_forgiveness_cut", debts=(0, 0))
+    assert (body["impact"]["recalc_delta"], body["impact"]["forgiven_delta"]) == (-40_000, -40_000)
+    assert led(world, s, g, D(2026, 11, 25)).written_off == 160_000

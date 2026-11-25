@@ -42,7 +42,7 @@ EARLIEST = D(2026, 9, 15)                # the earliest date the generator gives
 PROPERTIES = ("P1c debt", "P1c advance", "P1c used", "P3u advance>=", "P3u advance<=freed", "P3u advance<=money", "P3u debt", "P3u used", "P3u transfer", "P6 same", "P6 amount", "P6b restore", "P7 undo", "P7 relapse", "P7 ordinary return",
               "P1 debt", "P1 used", "P1 advance", "P1 advance<=money", "P1 identity", "P2 debt", "P2 advance<=money", "P2 advance today", "P2 advance back",
               "P3 used", "P3 debt", "P3 advance", "P3 advance<=money", "P3k used", "P3k debt", "P3k advance", "P3k advance<=money", "P3e used", "P3e debt", "P3e advance", "P3e advance<=money", "P3c advance", "P3ec advance", "P4 early", "P4 today", "P5 probe",
-              "C1 chain", "C1 chain days", "C2 shorten-back", "C2 shorten-back days", "C3 reenter", "C3 reenter days", "C3 split", "C3 split days", "C4 leave free", "C4 leave free days", "C5 void", "C5 void days", "C5 tail void", "C5 tail void days", "C5 tail shorten", "C5 tail shorten days", "C7 void cancel", "C7 void cancel days", "C6 empty stay", "W now", "M3 piece", "Lines sum", "Layout")
+              "C1 chain", "C1 chain days", "C2 shorten-back", "C2 shorten-back days", "C3 reenter", "C3 reenter days", "C3 split", "C3 split days", "C4 leave free", "C4 leave free days", "C5 void", "C5 void days", "C5 tail void", "C5 tail void days", "C5 tail shorten", "C5 tail shorten days", "C7 void cancel", "C7 void cancel days", "C6 empty stay", "W now", "M3 piece", "Lines sum", "Layout", "Impact identity")
 
 
 @dataclass(frozen=True)
@@ -219,6 +219,21 @@ def _with_insurance_count(call):
 
 def _live_days(inp):
     return set().union(*[_span(p.first, p.last) for p in inp.pauses]) if inp.pauses else set()
+
+
+IMPACT = {"events": 0, "recalc nonzero": 0, "forgiven nonzero": 0}      # Б11.51 С3': what the strict identity of ``ImpactMoney`` checked (events, of them with a changed deduction / a changed used forgiveness)
+
+
+def impact_bad(inp, new):
+    """Б11.51 С3', the STRICT identity of the answer of a pause (``impact_of`` of the two accounts the route reads): (debt - advance) after - (debt - advance) before = ``charged_delta`` - ``recalc_delta`` - ``forgiven_delta``."""
+    from src.auth.logica_service import impact_of
+
+    before, after = bl.run_ledger(inp), bl.run_ledger(new)
+    imp = impact_of(before, after)
+    IMPACT["events"] += 1
+    IMPACT["recalc nonzero"] += imp.recalc_delta != 0
+    IMPACT["forgiven nonzero"] += imp.forgiven_delta != 0
+    return (after.debt - after.advance) - (before.debt - before.advance) != imp.charged_delta - imp.recalc_delta - imp.forgiven_delta
 
 
 def lines_bad(inp, new):
@@ -1553,6 +1568,8 @@ def violations(inp, x):
         bad.append("M3 piece")
     if layout_bad(new):
         bad.append("Layout")
+    if isinstance(x, (bl.Pause, PauseEdit, VoidPause)) and impact_bad(inp, new):      # the answers of a pause
+        bad.append("Impact identity")
     if isinstance(x, (bl.Pause, PauseEdit, VoidPause, Chain, ShortenBack, Reenter, Split, TailChange, VoidCancel)) and lines_bad(inp, new):      # the events of a PAUSE only: a leaving cuts the stay too (the lines are for the routes of a pause)
         bad.append("Lines sum")
     return bad
@@ -1814,6 +1831,7 @@ def run_counts(seed, n, cfg=Cfg()):
     CHECKED.clear()
     LINES.update({k: 0 for k in LINES})
     LAYOUT.update({k: 0 for k in LAYOUT})
+    IMPACT.update({k: 0 for k in IMPACT})
     TOLERANCE[:] = [0, 0]
     TOLERANCE_KINDS.clear()
     NO_CANCEL_WORLDS.clear()
@@ -1858,6 +1876,7 @@ def run_counts(seed, n, cfg=Cfg()):
     counts.update({f"_checked {k}": v for k, v in CHECKED.items()})
     counts.update({f"_lines {k}": v for k, v in LINES.items()})
     counts.update({f"_layout {k}": v for k, v in LAYOUT.items()})
+    counts.update({f"_impact {k}": v for k, v in IMPACT.items()})
     return counts, found, (worlds, pays, forgs)
 
 

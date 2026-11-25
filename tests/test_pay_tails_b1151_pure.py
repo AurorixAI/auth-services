@@ -158,3 +158,34 @@ def test_the_generator_property_of_the_layout_has_teeth_the_old_formula_is_red(m
 
     monkeypatch.setattr(bl, "run_ledger", old)
     assert tools.layout_bad(_input()) is True
+
+
+def _paused(forgiven=False):
+    from tests.pay2_ledger_helpers import pause
+
+    today = D(2026, 11, 25)
+    inp = _input(today)
+    if forgiven:
+        inp = replace(inp, credits=(credit("w", D(2026, 11, 20), 200_000, bl.WRITEOFF, minutes=1),))
+    return inp, replace(inp, pauses=(pause(D(2026, 11, 26), D(2026, 11, 30), today),))
+
+
+def test_the_generator_identity_of_the_answer_of_a_pause_is_true_and_counts_what_it_checked():
+    # By hand («Геометрия 8» on 25.11, the pause 26-30.11): debt 200 000 -> 160 000, charged_delta -80 000, recalc_delta -40 000, forgiven_delta 0: -40 000 = -80 000 + 40 000.  With the debt forgiven (200 000): 0 -> 0,
+    # forgiven_delta -40 000: 0 = -80 000 + 40 000 + 40 000.  Counters: 2 events, 2 with a changed deduction, 1 with a changed used forgiveness.
+    from tests import pay_tails_b7_tools as tools
+
+    start = dict(tools.IMPACT)
+    for forgiven in (False, True):
+        assert tools.impact_bad(*_paused(forgiven)) is False
+    assert {k: tools.IMPACT[k] - start[k] for k in tools.IMPACT} == {"events": 2, "recalc nonzero": 2, "forgiven nonzero": 1}
+
+
+def test_the_generator_identity_of_the_answer_of_a_pause_has_teeth_an_answer_without_the_two_fields_is_red(monkeypatch):
+    # By hand: the answer of the head f6784a3 had neither field (0 and 0): -40 000 is not -80 000 - 0 - 0: red in both worlds.
+    from src.auth import logica_service as lg
+    from tests import pay_tails_b7_tools as tools
+
+    real = lg.impact_of
+    monkeypatch.setattr(lg, "impact_of", lambda before, after: real(before, after).model_copy(update={"recalc_delta": 0, "forgiven_delta": 0}))
+    assert [tools.impact_bad(*_paused(f)) for f in (False, True)] == [True, True]

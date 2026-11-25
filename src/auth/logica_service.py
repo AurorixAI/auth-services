@@ -139,7 +139,7 @@ def impact_of(before: bl.Ledger, after: bl.Ledger) -> ImpactMoney:
     return ImpactMoney(
         debt_before=before.debt, debt_after=after.debt, advance_before=before.advance, advance_after=after.advance,
         paid_until_before=before.covered_through, paid_until_after=after.covered_through,
-        charged_delta=after.charged - before.charged, refundable_before=before.refundable, refundable_after=after.refundable,
+        charged_delta=after.charged - before.charged, recalc_delta=after.recalculated - before.recalculated, forgiven_delta=after.written_off - before.written_off, refundable_before=before.refundable, refundable_after=after.refundable,
     )
 
 

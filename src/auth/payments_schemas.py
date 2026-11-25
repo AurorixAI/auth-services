@@ -1465,6 +1465,8 @@ class ImpactMoney(PayModel):
     paid_until_before: Optional[date_type] = None
     paid_until_after: Optional[date_type] = None
     charged_delta: int = 0
+    recalc_delta: int = Field(0, description="Б11.51 С3': вычеты за отменённые центром уроки: «после» − «до»")
+    forgiven_delta: int = Field(0, description="Б11.51 С3': использованное прощение: «после» − «до»")
     refundable_before: int = Field(0, description="Устарело: равно advance; экраны читают advance", json_schema_extra={"deprecated": True})
     refundable_after: int = Field(0, description="Устарело: равно advance; экраны читают advance", json_schema_extra={"deprecated": True})
 
