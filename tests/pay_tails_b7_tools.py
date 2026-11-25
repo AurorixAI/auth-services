@@ -232,7 +232,7 @@ def lines_bad(inp, new):
     from src.auth import payments_views as pv
 
     before, after = bl.run_ledger(inp), bl.run_ledger(new)
-    (rows, later), fired = _with_insurance_count(lambda: pv.pause_charge_rows(before, after, inp.today, changed, money=True, membership_id="gen"))
+    (rows, later), fired = _with_insurance_count(lambda: pv.pause_charge_rows(before, after, inp.today, changed, money=True, membership_id="gen", regimes=inp.regimes))
     LINES["insurance"] += fired
     LINES["events"] += 1
     LINES["with lines"] += bool(rows)

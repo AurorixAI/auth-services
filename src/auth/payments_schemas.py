@@ -1596,8 +1596,10 @@ class PauseChargeRow(PayModel):
     days: int                                   # how many days of the period changed
     lessons: int                                # how many lessons of the period left the price (or came back)
     lessons_passed: Optional[int] = None        # of them dated BEFORE the working date; only for a line whose days come BACK (``amount`` > 0), else null
-    amount: Optional[int] = None                # the change of the period's charge, signed; null without access to money
+    amount: Optional[int] = None                # the change of the PRICE of the period, signed (a carried period: price after - price before, whether it began or not); null without access to money
     period_begins: Optional[date_type] = None   # Б11.43: only for a period the action CARRIES across the working date (begun in one account, not in the other): its first paid day in the account «after»; else null
+    deferred: Optional[int] = None              # Б11.45 С: only for a period the action CARRIES (present in both accounts): the sum the carry takes out of the account today (begun -> not begun: -price after) or returns (+price before); else null; null without access to money
+    period_label: Optional[str] = None          # Б11.45 С: the name of that period in the words of the account lines (``Декабрь`` / ``15.11–14.12``); filled only together with ``deferred``
 
 
 class PauseChargeLater(PayModel):

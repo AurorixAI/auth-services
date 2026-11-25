@@ -11,7 +11,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
-from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 from uuid import UUID, uuid4
 
 from sqlalchemy import func
@@ -544,9 +544,9 @@ class PauseService(_Base):
         return moved, text
 
     def _saved(self, org_id, membership, row, before, after, *, money: bool, owner: bool, dry_run: bool, today: date,
-               first: date, last: date, others: Optional[Tuple["_Moved", str]] = None, changed: Iterable[date] = (), lines: bool = True) -> PauseSaved:
+               first: date, last: date, regimes: Sequence[bl.Regime], others: Optional[Tuple["_Moved", str]] = None, changed: Iterable[date] = (), lines: bool = True) -> PauseSaved:
         excluded, attended = self._lessons(membership, first, last)
-        rows, later = pv.pause_charge_rows(before, after, today, changed, money=money, membership_id=membership.id) if lines else ([], None)      # Б11.44 п.6: the call under the lock of a real write throws its result away: no lines there (counted once, after the commit); Б11.40: the lines are THE two accounts the route counted (the probe and the save read the same)
+        rows, later = pv.pause_charge_rows(before, after, today, changed, money=money, membership_id=membership.id, regimes=regimes) if lines else ([], None)      # Б11.44 п.6: the call under the lock of a real write throws its result away: no lines there (counted once, after the commit); Б11.40: the lines are THE two accounts the route counted (the probe and the save read the same)
         moved, text = others if others and money else (None, None)
         return PauseSaved(
             new_debts=moved.new_debts if moved else [], advance_drops=moved.advance_drops if moved else [], other_gains=moved.gains if moved else [], other_groups_text=text or None,
@@ -576,9 +576,10 @@ class PauseService(_Base):
             live = self._live(membership_id)
             same = next((p for p in live if (p.first_day, p.last_day) == (body.first_day, body.last_day)), None)
             if same is not None:  # the same range again (a double click, a lost answer): nothing new - BEFORE the gates, which a lesson begun meanwhile would trip (R3 m3)
-                before = after = self.pay._entry_of(org_id, membership_id, today).ledger
+                entry = self.pay._entry_of(org_id, membership_id, today)
+                before = after = entry.ledger
                 out = self._saved(org_id, membership, same, before, after, money=money, owner=owner, dry_run=dry_run, today=today,
-                                  first=same.first_day, last=same.last_day)
+                                  first=same.first_day, last=same.last_day, regimes=entry.inp.regimes)
                 self.db.rollback()
                 return out
             self._assert_days_open(org_id, membership, _days(body.first_day, body.last_day), today)
@@ -608,7 +609,7 @@ class PauseService(_Base):
                     "reason": row.reason, "charged_before": before.charged, "charged_after": after.charged,
                     "advance_before": before.advance, "advance_after": after.advance, **self._other_facts(others[0])})
             out = self._saved(org_id, membership, row, before, after, money=money, owner=owner, dry_run=dry_run, today=today,
-                              first=row.first_day, last=row.last_day, others=others, changed=_days(row.first_day, row.last_day), lines=dry_run)
+                              first=row.first_day, last=row.last_day, regimes=was[membership.id].inp.regimes, others=others, changed=_days(row.first_day, row.last_day), lines=dry_run)
             if dry_run:
                 self.db.rollback()
                 return out
@@ -626,7 +627,7 @@ class PauseService(_Base):
         invalidate_summary(org_id)
         logger.info("pause created id=%s membership=%s actor=%s", row.id, membership_id, actor_id)
         return self._saved(org_id, membership, row, before, after, money=money, owner=owner, dry_run=False, today=today,
-                           first=row.first_day, last=row.last_day, others=others, changed=_days(row.first_day, row.last_day))
+                           first=row.first_day, last=row.last_day, regimes=was[membership.id].inp.regimes, others=others, changed=_days(row.first_day, row.last_day))
 
     @staticmethod
     def _other_facts(moved: "_Moved") -> Dict[str, Any]:
@@ -746,7 +747,7 @@ class PauseService(_Base):
                 change_reason = self.pay._check_reason(body.reason)
             line.snapshot = {**line.snapshot, "reason": change_reason or row.reason, "charged_before": before.charged, "charged_after": after.charged, **self._other_facts(others[0])}
             out = self._saved(org_id, membership, row, before, after, money=money, owner=owner, dry_run=dry_run, today=today,
-                              first=min(first, old[0]), last=max(last, old[1]), others=others, changed=_days(first, last) ^ _days(old[0], old[1]), lines=dry_run)
+                              first=min(first, old[0]), last=max(last, old[1]), regimes=was[membership.id].inp.regimes, others=others, changed=_days(first, last) ^ _days(old[0], old[1]), lines=dry_run)
             if dry_run:
                 self.db.rollback()
                 return out
@@ -756,7 +757,7 @@ class PauseService(_Base):
             raise
         invalidate_summary(org_id)
         return self._saved(org_id, membership, row, before, after, money=money, owner=owner, dry_run=False, today=today,
-                           first=min(first, old[0]), last=max(last, old[1]), others=others, changed=_days(first, last) ^ _days(old[0], old[1]))
+                           first=min(first, old[0]), last=max(last, old[1]), regimes=was[membership.id].inp.regimes, others=others, changed=_days(first, last) ^ _days(old[0], old[1]))
 
     @deadlock_guard
     def void(self, org_id: str, pause_id: UUID, actor_id: str, reason: str, *, money: bool, actor_role: str, dry_run: bool = False) -> PauseVoided:
@@ -775,7 +776,7 @@ class PauseService(_Base):
             moved, text = self._others(org_id, family, was, membership.id, done=not dry_run)
             after = self.pay._entry_of(org_id, row.membership_id, today).ledger
             self.pay._family_check(org_id, [row.membership_id])
-            rows, later = pv.pause_charge_rows(before, after, today, _days(row.first_day, row.last_day), money=money, membership_id=membership.id)
+            rows, later = pv.pause_charge_rows(before, after, today, _days(row.first_day, row.last_day), money=money, membership_id=membership.id, regimes=was[membership.id].inp.regimes)
             if dry_run:
                 out = PauseVoided(pause=self._out(row), impact=impact_of(before, after) if money else None, charge_rows=rows, charge_later=later, dry_run=True,
                                   new_debts=moved.new_debts if money else [], advance_drops=moved.advance_drops if money else [], other_gains=moved.gains if money else [], other_groups_text=(text or None) if money else None)

@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 from collections import Counter
 from datetime import date, timedelta
-from typing import Iterable, List, Optional, Tuple
+from typing import Iterable, List, Optional, Sequence, Tuple
 
 from . import billing_ledger as bl
 from . import pay_due
@@ -645,32 +645,31 @@ def _cell_periods(ledger: bl.Ledger) -> dict:
     return {s.slot: s for s in ledger.segments if s.kind == "period" and s.slot is not None and s.slot[0] == "c"}
 
 
-def _later_days(before: bl.Ledger, after: bl.Ledger, changed: Iterable[date]) -> List[date]:
-    """Б11.44 п.1: the changed days that lie after every begun unit of both accounts (a cell of the common month, a personal period, a package), and only when the common month decides the price there."""
+def _later_days(before: bl.Ledger, after: bl.Ledger, changed: Iterable[date], regimes: Sequence[bl.Regime]) -> List[date]:
+    """Б11.44 п.1 + Б11.45 С п.5: the changed days that lie after every begun unit of both accounts (a cell of the common month, a personal period, a package), and only when the common month decides
+    the price on the FIRST of them: the version of the settings in force that day (``regime_at`` - what the core itself picks the mode of a day by, not the segments) is a calendar one with a fixed billing day."""
     days = sorted(set(changed))
     if not days:
         return []
     units = [[s for s in led.segments if s.kind != "opening" and s.begun] for led in (after, before)]
     begun_end = max((s.period_end for u in units for s in u), default=None)
-    latest = next((max(u, key=lambda s: s.period_end) for u in units if u), None)       # the latest begun unit: the account after the change, else the one before
-    if latest is not None:
-        cell = latest.slot is not None and latest.slot[0] == "c"
-    else:                                                # nothing has begun: the unit that holds the first changed day (else the first one after it) says which regime the student is in
-        ahead = [s for led in (after, before) for s in led.segments if s.kind != "opening" and s.period_end >= days[0]]
-        first = min(ahead, key=lambda s: (s.period_start > days[0], s.period_start), default=None)
-        cell = first is not None and first.slot is not None and first.slot[0] == "c"
-    return [d for d in days if begun_end is None or d > begun_end] if cell else []
+    later = [d for d in days if begun_end is None or d > begun_end]
+    if not later:
+        return []
+    regime = bl.regime_at(regimes, later[0])
+    return later if regime.mode == ps.CALENDAR and regime.anchor == ps.FIXED_DAY else []
 
 
-def pause_charge_rows(before: bl.Ledger, after: bl.Ledger, today: date, changed: Iterable[date], *, money: bool, membership_id: object = None) -> Tuple[List[PauseChargeRow], Optional[PauseChargeLater]]:
+def pause_charge_rows(before: bl.Ledger, after: bl.Ledger, today: date, changed: Iterable[date], *, money: bool, membership_id: object = None, regimes: Sequence[bl.Regime]) -> Tuple[List[PauseChargeRow], Optional[PauseChargeLater]]:
     """Б11.40 С1'-С5': the lines «период · уроков → сумма» of a change of a pause (the window «Пауза ученика»).  Decides no money: reads the two accounts the route already counted.
 
     A line is made only where the pause takes lessons out of the price of a month: a period of the common month counted by lessons that BEGAN in at least one of the two accounts and whose charge
-    changed; ``lessons`` / ``lesson_dates`` come from the same set of dates the sum comes from (``Segment.lesson_dates``).  ``changed`` = the days whose state (paused or not) the action changed: the
-    days of them that lie after every begun period are ``charge_later`` (one record, no sum).  A personal period, a package, a period with no lesson in the changed days: no lines (the screen shows the old
-    one line).  Б11.44 п.1: ``charge_later`` only when the LATEST begun unit of the account (after; none - before) is a cell of the common month, or no unit has begun and the first changed day lies in a cell
-    (not in a personal period or a package: the pause moves the end of that one, the old one line stays).  Insurance (С4'): when the periods are all explained by lessons and the sum of the lines is not
-    ``charged_delta`` - no lines, no ``charge_later``, an error in the log; a period counted by days (no lessons to name) is a lawful world: no lines, no error (Б11.44 п.7)."""
+    changed; ``lessons`` / ``lesson_dates`` come from the same set of dates the sum comes from (``Segment.lesson_dates``).  Б11.45 С п.1: a period the action CARRIES across the working date (begun in
+    one account, not in the other, present in both) says two facts: ``amount`` = its price after - before (what the pause does to the price: «2 урока → -86 000»), ``deferred`` = the sum the carry
+    takes out of the account today (begun -> not begun: -after) or returns (+before), ``period_label`` = its name in the words of ``money_rows``; such a line is given even with ``amount = 0``
+    (a pause with no lesson that moves the first paid day).  ``changed`` = the days whose state (paused or not) the action changed: the days of them that lie after every begun period are
+    ``charge_later`` (one record, no sum), only when the common month decides the price on the first of them (Б11.45 С п.5, by ``regimes``).  Insurance (С4'): when the periods are all explained by
+    lessons and ``Σ amount + Σ deferred`` is not ``charged_delta`` - no lines, no ``charge_later``, an error in the log; a period counted by days (no lessons to name) is a lawful world: no lines, no error."""
     old, new = _cell_periods(before), _cell_periods(after)
     if not old and not new:
         return [], None
@@ -679,13 +678,16 @@ def pause_charge_rows(before: bl.Ledger, after: bl.Ledger, today: date, changed:
     explained = True                                     # Б11.44 п.7: False = a changed period is counted by days (no lesson dates): the lines would not sum, lawfully
     for slot in sorted(set(old) | set(new)):
         b, a = old.get(slot), new.get(slot)
-        if not ((b is not None and b.begun) or (a is not None and a.begun)):
+        b_begun, a_begun = b is not None and b.begun, a is not None and a.begun
+        if not (b_begun or a_begun):
             continue
-        amount = (a.amount if a is not None and a.begun else 0) - (b.amount if b is not None and b.begun else 0)
-        if amount != 0 and any(x is not None and x.lesson_dates is None for x in (a, b)):
+        carried = a is not None and b is not None and b_begun != a_begun
+        amount = (a.amount - b.amount) if carried else (a.amount if a_begun else 0) - (b.amount if b_begun else 0)
+        deferred = (-a.amount if b_begun else b.amount) if carried else None
+        if (amount != 0 or deferred) and any(x is not None and x.lesson_dates is None for x in (a, b)):
             explained = False
             continue
-        if amount == 0:
+        if amount == 0 and not deferred:
             continue
         days = set(a.days if a is not None else ()) ^ set(b.days if b is not None else ())
         was, now = Counter(b.lesson_dates if b is not None else ()), Counter(a.lesson_dates if a is not None else ())
@@ -696,16 +698,17 @@ def pause_charge_rows(before: bl.Ledger, after: bl.Ledger, today: date, changed:
         rows.append(PauseChargeRow(
             label=tx.range_text(first, last, year), first_day=first, last_day=last, days=len(days), lessons=sum(gone.values()) + sum(back.values()),
             lessons_passed=sum(n for d, n in back.items() if d < today) if amount > 0 else None, amount=amount,
-            period_begins=min(a.days) if a is not None and a.days and bool(b is not None and b.begun) != bool(a.begun) else None))     # Б11.43: the period is carried across the working date
-    total = sum(r.amount for r in rows)
+            deferred=deferred, period_label=period_label(a, today) if deferred else None,
+            period_begins=min(a.days) if a is not None and a.days and b_begun != a_begun else None))     # Б11.43: the period is carried across the working date
+    total = sum(r.amount + (r.deferred or 0) for r in rows)
     if not explained:
         rows = []
     elif rows and total != after.charged - before.charged:
         logger.error("pause_charge_rows: the lines of the pause sum to %s, the change of the charge is %s (membership %s): no lines", total, after.charged - before.charged, membership_id)
         return [], None
     if not money:                                                            # С5': the lines stay, the sums do not
-        rows = [r.model_copy(update={"amount": None}) for r in rows]
-    later = _later_days(before, after, changed)
+        rows = [r.model_copy(update={"amount": None, "deferred": None}) for r in rows]
+    later = _later_days(before, after, changed, regimes)
     if not later:
         return rows, None
     return rows, PauseChargeLater(label=tx.range_text(later[0], later[-1], year), first_day=later[0], last_day=later[-1])

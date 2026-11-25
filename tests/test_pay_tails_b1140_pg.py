@@ -259,18 +259,20 @@ def test_c13_the_insurance_sum_of_the_lines_not_the_change_of_the_charge_gives_n
     import dataclasses
     import logging
 
+    from src.auth import ledger_service as ls
     from src.auth import payments_views as pv
 
     g, s = om_at(world, fixed_today, D(2026, 11, 1))
     fixed_today(D(2026, 11, 24))
+    regimes = ls.load_settings(world.db, str(world.org.id)).regimes
     before = led(world, s, g, D(2026, 11, 24))
     assert make(world, s, g, "2026-11-24", "2026-11-30")(False).status_code == 201
     after = led(world, s, g, D(2026, 11, 24))
     days = [D(2026, 11, 24) + __import__("datetime").timedelta(days=k) for k in range(7)]
-    rows, later = pv.pause_charge_rows(before, after, D(2026, 11, 24), days, money=True)
+    rows, later = pv.pause_charge_rows(before, after, D(2026, 11, 24), days, money=True, regimes=regimes)
     assert [(r.label, r.lessons, r.amount) for r in rows] == [("24.11–30.11", 3, -150_000)] and later is None
     with caplog.at_level(logging.ERROR, logger="src.auth.payments_views"):
-        rows, later = pv.pause_charge_rows(before, dataclasses.replace(after, charged=after.charged + 1), D(2026, 11, 24), days, money=True, membership_id="m-1")
+        rows, later = pv.pause_charge_rows(before, dataclasses.replace(after, charged=after.charged + 1), D(2026, 11, 24), days, money=True, membership_id="m-1", regimes=regimes)
     assert rows == [] and later is None
     assert any("sum to -150000" in r.getMessage() and "m-1" in r.getMessage() for r in caplog.records)
 

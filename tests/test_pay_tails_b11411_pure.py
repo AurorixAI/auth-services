@@ -33,7 +33,7 @@ def run(inp, first, last, today=None):
     today = today or inp.today
     after_inp = replace(inp, pauses=(pause(first, last, today),))
     before, after = bl.run_ledger(inp), bl.run_ledger(after_inp)
-    return pv.pause_charge_rows(before, after, today, span(first, last), money=True, membership_id="w"), after.charged - before.charged
+    return pv.pause_charge_rows(before, after, today, span(first, last), money=True, membership_id="w", regimes=inp.regimes), after.charged - before.charged
 
 
 def shown(rows):
@@ -84,20 +84,21 @@ def _seg(start, end, slot, begun=False, kind="period"):
     return SimpleNamespace(kind=kind, period_start=start, period_end=end, slot=slot, begun=begun)
 
 
-def test_later_days_nothing_has_begun_the_regime_of_the_first_changed_day_decides():
-    # By hand (the ledger gives no unit before the first one begins, so the branch is pinned on the accounts made by hand): nothing has begun; the first changed day 02.12 lies in the cell of
-    # December -> all the changed days are later; the same day in a unit of a personal chain or in a package -> none.
+def test_later_days_the_regime_of_the_first_later_day_decides():
+    # By hand (Б11.45 С п.5: the mode of the first day of the clause comes from the regimes of the input, ``regime_at`` - not from the segments).  Nothing has begun: every changed day is later; the
+    # common month (a fixed billing day) on 02.12 -> all the days; a personal period (payment date) or packages from 01.12 -> none.  Begun cell of November (ends 30.11): the days after it (01.12 - 03.12)
+    # are later; the regime on 01.12 decides: common -> the days, personal / packages from 01.12 -> none; a change of the mode on 02.12 (not on the first later day 01.12) does not matter.
     days = [D(2026, 12, 2), D(2026, 12, 3)]
-    cell = _ledger(_seg(D(2026, 12, 1), D(2026, 12, 31), ("c", D(2026, 12, 1))))
-    personal = _ledger(_seg(D(2026, 12, 1), D(2027, 1, 1), ("p", D(2026, 12, 1), 0)))
-    package = _ledger(_seg(D(2026, 12, 1), D(2026, 12, 1), ("k", 0, 0), kind="package"))
-    assert pv._later_days(cell, cell, days) == days
-    assert pv._later_days(personal, personal, days) == [] and pv._later_days(package, package, days) == []
-    # begun: the latest begun unit of the account AFTER decides (the cell of November ends 30.11, a personal period that began later ends later and is not a cell)
+    nothing = _ledger()
+    for regimes, expected in (((FIX,), days), ((FIX, bl.Regime(effective_from=D(2026, 12, 1))), []), ((FIX, bl.Regime(effective_from=D(2026, 12, 1), mode=bl.LESSONS)), []),
+                              ((PERSONAL,), []), ((PERSONAL, bl.Regime(effective_from=D(2026, 12, 1), anchor=ps.FIXED_DAY, billing_day=1)), days)):
+        assert pv._later_days(nothing, nothing, days, regimes) == expected
     nov = _seg(D(2026, 11, 1), D(2026, 11, 30), ("c", D(2026, 11, 1)), True)
-    assert pv._later_days(_ledger(nov), _ledger(nov), days) == days
-    assert pv._later_days(_ledger(nov, _seg(D(2026, 11, 15), D(2026, 12, 14), ("p", D(2026, 11, 15), 0), True)), _ledger(nov), days) == []
-    assert pv._later_days(_ledger(), _ledger(nov), days) == days       # nothing begun after: the account before decides
+    nov_days = [D(2026, 12, 1), *days]
+    assert pv._later_days(_ledger(nov), _ledger(nov), nov_days, (FIX,)) == nov_days
+    assert pv._later_days(_ledger(nov), _ledger(nov), nov_days, (FIX, bl.Regime(effective_from=D(2026, 12, 1)))) == []
+    assert pv._later_days(_ledger(nov), _ledger(nov), nov_days, (FIX, bl.Regime(effective_from=D(2026, 12, 2)))) == nov_days
+    assert pv._later_days(_ledger(), _ledger(nov), nov_days, (FIX,)) == nov_days       # nothing begun after: the account before decides the end of the begun
 
 
 def _no_pattern_in_november(a, b):
