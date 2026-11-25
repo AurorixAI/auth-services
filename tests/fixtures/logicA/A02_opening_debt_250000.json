@@ -20,6 +20,8 @@
     "paid_until_before": "2026-10-20",
     "paid_until_after": null,
     "charged_delta": 250000,
+    "recalc_delta": 0,
+    "forgiven_delta": 0,
     "refundable_before": 0,
     "refundable_after": 0
   },

@@ -1587,6 +1587,12 @@
             "title": "Debt Before",
             "type": "integer"
           },
+          "forgiven_delta": {
+            "default": 0,
+            "description": "Б11.51 С3': использованное прощение: «после» − «до»",
+            "title": "Forgiven Delta",
+            "type": "integer"
+          },
           "paid_until_after": {
             "anyOf": [
               {
@@ -1611,6 +1617,12 @@
             ],
             "title": "Paid Until Before"
           },
+          "recalc_delta": {
+            "default": 0,
+            "description": "Б11.51 С3': вычеты за отменённые центром уроки: «после» − «до»",
+            "title": "Recalc Delta",
+            "type": "integer"
+          },
           "refundable_after": {
             "default": 0,
             "deprecated": true,
@@ -1634,6 +1646,8 @@
           "paid_until_before",
           "paid_until_after",
           "charged_delta",
+          "recalc_delta",
+          "forgiven_delta",
           "refundable_before",
           "refundable_after"
         ],
