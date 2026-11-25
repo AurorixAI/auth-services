@@ -336,3 +336,41 @@ def test_c18_the_centre_cancelled_lesson_inside_the_pause_the_account_after_has_
     act(world, s, g, D(2026, 11, 20), make(world, s, g, "2026-11-24", "2026-11-30"), [("24.11–30.11", "2026-11-24", "2026-11-30", 7, 3, None, -150_000)], None, -150_000)
     after = led(world, s, g, D(2026, 11, 20))
     assert (after.recalculated, after.charged, after.debt) == (0, 450_000, 450_000), (after.recalculated, after.charged, after.debt)
+
+
+def test_c19_the_insurance_error_is_written_once_per_action_the_lines_are_counted_once_after_the_commit(world, fixed_today, caplog, monkeypatch):
+    # Б11.44 п. 6.  The save of a pause, of its edit and of its void used to count the lines twice (under the lock, the result thrown away, and after the commit): the lines are counted ONCE per action
+    # now (the dry run: once, the real save: once after the commit).  With the insurance forced to fire (the account after claims one more in the change of the charge) the log has ONE error per action
+    # and the answer has no lines.  By hand: the probe 1 call / 1 error, the save 1 / 1, the probe of the edit 1 / 1, the edit 1 / 1, the probe of the void 1 / 1, the void 1 / 1: 6 calls, 6 errors.
+    import dataclasses
+    import logging
+
+    from src.auth import payments_views as pv
+
+    g, s = om_at(world, fixed_today, D(2026, 11, 1))
+    fixed_today(D(2026, 11, 24))
+    real, calls = pv.pause_charge_rows, []
+
+    def forced(before, after, *a, **k):
+        calls.append(1)
+        return real(before, dataclasses.replace(after, charged=after.charged + 1), *a, **k)
+
+    monkeypatch.setattr(pv, "pause_charge_rows", forced)
+
+    def once(call):
+        calls.clear()
+        caplog.clear()
+        r = call()
+        assert r.status_code in (200, 201), r.text[:200]
+        errors = [x for x in caplog.records if "pause_charge_rows" in x.getMessage()]
+        assert (len(calls), len(errors)) == (1, 1) and r.json()["charge_rows"] == [] and r.json()["charge_later"] is None, (len(calls), len(errors))
+        return r
+
+    with caplog.at_level(logging.ERROR, logger="src.auth.payments_views"):
+        make_ = make(world, s, g, "2026-11-24", "2026-12-03")
+        once(lambda: make_(True))
+        pid = once(lambda: make_(False)).json()["pause"]["id"]
+        once(lambda: edit(world, pid, "2026-11-24", "2026-11-25")(True))
+        once(lambda: edit(world, pid, "2026-11-24", "2026-11-25")(False))
+        once(lambda: void(world, pid)(True))
+        once(lambda: void(world, pid)(False))

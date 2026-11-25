@@ -544,9 +544,9 @@ class PauseService(_Base):
         return moved, text
 
     def _saved(self, org_id, membership, row, before, after, *, money: bool, owner: bool, dry_run: bool, today: date,
-               first: date, last: date, others: Optional[Tuple["_Moved", str]] = None, changed: Iterable[date] = ()) -> PauseSaved:
+               first: date, last: date, others: Optional[Tuple["_Moved", str]] = None, changed: Iterable[date] = (), lines: bool = True) -> PauseSaved:
         excluded, attended = self._lessons(membership, first, last)
-        rows, later = pv.pause_charge_rows(before, after, today, changed, money=money, membership_id=membership.id)      # Б11.40: the lines are THE two accounts the route counted (the probe and the save read the same)
+        rows, later = pv.pause_charge_rows(before, after, today, changed, money=money, membership_id=membership.id) if lines else ([], None)      # Б11.44 п.6: the call under the lock of a real write throws its result away: no lines there (counted once, after the commit); Б11.40: the lines are THE two accounts the route counted (the probe and the save read the same)
         moved, text = others if others and money else (None, None)
         return PauseSaved(
             new_debts=moved.new_debts if moved else [], advance_drops=moved.advance_drops if moved else [], other_gains=moved.gains if moved else [], other_groups_text=text or None,
@@ -608,7 +608,7 @@ class PauseService(_Base):
                     "reason": row.reason, "charged_before": before.charged, "charged_after": after.charged,
                     "advance_before": before.advance, "advance_after": after.advance, **self._other_facts(others[0])})
             out = self._saved(org_id, membership, row, before, after, money=money, owner=owner, dry_run=dry_run, today=today,
-                              first=row.first_day, last=row.last_day, others=others, changed=_days(row.first_day, row.last_day))
+                              first=row.first_day, last=row.last_day, others=others, changed=_days(row.first_day, row.last_day), lines=dry_run)
             if dry_run:
                 self.db.rollback()
                 return out
@@ -746,7 +746,7 @@ class PauseService(_Base):
                 change_reason = self.pay._check_reason(body.reason)
             line.snapshot = {**line.snapshot, "reason": change_reason or row.reason, "charged_before": before.charged, "charged_after": after.charged, **self._other_facts(others[0])}
             out = self._saved(org_id, membership, row, before, after, money=money, owner=owner, dry_run=dry_run, today=today,
-                              first=min(first, old[0]), last=max(last, old[1]), others=others, changed=_days(first, last) ^ _days(old[0], old[1]))
+                              first=min(first, old[0]), last=max(last, old[1]), others=others, changed=_days(first, last) ^ _days(old[0], old[1]), lines=dry_run)
             if dry_run:
                 self.db.rollback()
                 return out
