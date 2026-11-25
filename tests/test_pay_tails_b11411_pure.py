@@ -54,6 +54,22 @@ def test_w2c_common_month_until_october_then_packages_no_rows_no_later():
     assert rows == [] and later is None
 
 
+def test_w2c_opus_probe_packages_from_01_11_no_lesson_of_the_package_yet_no_later():
+    # Б11.45 С п.5, the probe of Opus W2c as it was (paytails-r4/b1410/probe2.py, no held lessons).  By hand: the common month until 31.10, from 01.11 packages; no lesson of the package has been
+    # held, so no unit of the package is in the account: the latest begun unit is the cell of OCTOBER (ends 31.10) and by the segments the clause «24.11–30.11» was given.  By the regimes: on the first
+    # day of the clause (24.11) the version in force is the package one -> ``charge_later`` null; no lines (October has no changed day), the change of the charge 0.
+    (rows, later), delta = run(base(D(2026, 11, 24), (FIX, bl.Regime(effective_from=D(2026, 11, 1), mode=bl.LESSONS))), D(2026, 11, 24), D(2026, 11, 30))
+    assert rows == [] and later is None and delta == 0
+
+
+def test_w_common_now_a_personal_period_from_01_12_the_line_of_november_and_no_later():
+    # Б11.45 С п.5.  By hand: the common month now, from 01.12 (a FUTURE change of the mode) a personal period.  The pause 24.11 - 03.12 on 24.11: November (begun): 24 26 27 leave -> 9 of 12 ->
+    # 450 000, «24.11–30.11», 3 lessons, -150 000 (the change of the charge, the sum of the line).  The days after the begun cell, 01.12 - 03.12, lie where the personal period rules (the first day of
+    # the clause, 01.12, is in the personal version): ``charge_later`` null.
+    (rows, later), delta = run(base(D(2026, 11, 24), (FIX, bl.Regime(effective_from=D(2026, 12, 1)))), D(2026, 11, 24), D(2026, 12, 3))
+    assert shown(rows) == [("24.11–30.11", 3, -150_000)] and delta == -150_000 and later is None
+
+
 def test_w2_the_mode_changes_on_15_11_a_pause_24_11_to_03_12_no_later():
     # By hand: the cell 01.11 - 14.11 (cut by the change, begun, unchanged by the pause); from 15.11 a personal period 15.11 - 14.12 (begun).  The pause 24.11 - 03.12 lies in the personal period
     # (the latest begun unit): no lines, ``charge_later`` null (before the fix: «01.12–03.12»).
