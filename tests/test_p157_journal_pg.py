@@ -337,7 +337,8 @@ def test_a11_the_same_outcome_in_the_list_the_detail_mine_and_the_answer_of_the_
     restore(w, "admin", w.G3, "lesson-l4", DAY, reason="По ошибке")
     want = {pending["id"]: "substituted", second["id"]: "rescheduled", third["id"]: "lesson_restored"}                  # the cancellation was undone: its chip is «Урок возвращён»
     listed = {i["id"]: i["outcome"] for i in decided(w)}
-    assert {k: listed[k] for k in want} == want
+    assert {k: listed[k] for k in want if k != third["id"]} == {k: v for k, v in want.items() if k != third["id"]}
+    assert third["id"] not in listed and "lesson_restored" in listed.values()          # LESSON-RULES С11 п.17: a given-back lesson has ONE line in the history - the record of the return (outcome ``lesson_restored``); the cancellation record is read by its id (below)
     assert {i["id"]: i["outcome"] for i in client(w, "A").get(f"{SUB}/mine").json()["items"]}.items() >= {pending["id"]: "substituted", second["id"]: "rescheduled"}.items()
     for rid, code in want.items():
         assert client(w, "owner").get(f"{SUB}/{rid}").json()["item"]["outcome"] == code
