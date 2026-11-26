@@ -563,7 +563,7 @@ def test_the_month_page_lists_teachers_types_and_suggestions(world):
     row = teacher_row(ov, world.teacher)
     assert row["lesson_types"] == [{"lesson_type": "group", "groups": 1, "suggested_percent": None}]
     assert row["sheet"] is None
-    assert {k: v for k, v in row["warnings"].items() if k not in ("open_lessons", "open_lesson_items")} == {"pending_excused": 0, "no_fee": 0, "unpaid": 0, "unpaid_students": 0, "open_lessons_unknown": False}
+    assert {k: v for k, v in row["warnings"].items() if k not in ("open_lessons", "open_lesson_items")} == {"pending_excused": 0, "no_fee": 0, "unpaid": 0, "unpaid_students": 0, "open_lessons_unknown": False, "unconfirmed_cancellations": 0, "unconfirmed_items": []}
     save(world, m, percents=[pct(world, "55.5")])
     ov = overview(world, m)
     row = teacher_row(ov, world.teacher)
@@ -597,7 +597,7 @@ def test_unfinished_lessons_are_counted_per_teacher_in_the_month(world):
     # a teacher that only has an unfinished lesson is listed too: nothing to pay yet, but the owner sees what blocks
     only = teacher_row(ov, world.teacher2)
     assert only["lessons_count"] == 0 and only["sheet"] is None and only["lesson_types"] == []
-    assert {k: v for k, v in only["warnings"].items() if k != "open_lesson_items"} == {"open_lessons": 1, "open_lessons_unknown": False, "pending_excused": 0, "no_fee": 0, "unpaid": 0, "unpaid_students": 0}
+    assert {k: v for k, v in only["warnings"].items() if k != "open_lesson_items"} == {"open_lessons": 1, "open_lessons_unknown": False, "pending_excused": 0, "no_fee": 0, "unpaid": 0, "unpaid_students": 0, "unconfirmed_cancellations": 0, "unconfirmed_items": []}
     assert len(only["warnings"]["open_lesson_items"]) == 1                                  # Money-1 I-4: WHICH lesson is open, not only how many
     assert preview(world, m)["warnings"]["open_lessons"] == 1 + never_started
 

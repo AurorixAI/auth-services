@@ -59,7 +59,7 @@ from src.models.auth import (
 )
 
 from . import business_clock as bc
-from .closed_period import open_lesson_key
+from .closed_period import open_lesson_key, unconfirmed_cancellations
 from . import lesson_types
 from . import payment_status as ps
 from . import payments_texts
@@ -160,6 +160,13 @@ class RevisionConflict(PayrollError):
 
 
 _KEEP = object()        # «leave as it is» for a value that may be None
+
+
+class UnconfirmedCancellations(PayrollError):
+    """LESSON-RULES С8 (a gate until the pack PAYROLL-MONTH): a sheet that closes a month is refused while the teacher has cancellations in it that wait for the owner - they decide money of the students."""
+
+    status_code = 409
+    code = "UNCONFIRMED_CANCELLATIONS"
 
 
 class OpenLessonsConfirmRequired(PayrollError):
@@ -302,6 +309,7 @@ class MonthSeed:
     teachers: Dict[UUID, TeacherSeed] = field(default_factory=dict)
     lessons_without_teacher: int = 0
     open_unknown: bool = False          # Money-1 A6 (П7): the check of the unfinished lessons failed - «не удалось проверить», NOT «0»
+    unconfirmed: Dict[str, List[Dict[str, Any]]] = field(default_factory=dict)       # LESSON-RULES С8: the waiting cancellations of the month by teacher
     open_items: Dict[str, List[Dict[str, Any]]] = field(default_factory=dict)       # Money-1 I-4: the unfinished lessons of the month by teacher (the list the owner is warned with)
 
 
@@ -504,6 +512,8 @@ class PayrollService:
         found = self._open_lessons(org_id, first, last) if with_open else {}
         seed.open_unknown = found is None
         seed.open_items = {t: sorted(v, key=lambda x: (x["lessonDate"], x["groupId"])) for t, v in (found or {}).items()}
+        if with_open:
+            seed.unconfirmed = unconfirmed_cancellations(self.db, org_id, first, last)
         open_by_teacher = {t: len(v) for t, v in (found or {}).items()}
         if teacher_ids is not None:
             open_by_teacher = {t: n for t, n in open_by_teacher.items() if t in {str(i) for i in teacher_ids}}
@@ -889,6 +899,7 @@ class PayrollService:
         open_lessons: Optional[int] = None,
         payout: Optional[PayoutState] = None,
         open_lesson_items: Optional[List[Dict[str, Any]]] = None,
+        unconfirmed_items: Optional[List[Dict[str, Any]]] = None,
     ) -> SheetOut:
         counters = engine.sheet_counters(lines)
         return SheetOut(
@@ -916,6 +927,8 @@ class PayrollService:
             warnings=SheetWarnings(
                 open_lessons=open_lessons,
                 open_lesson_items=open_lesson_items or [],
+                unconfirmed_cancellations=len(unconfirmed_items or []),
+                unconfirmed_items=unconfirmed_items or [],
                 pending_excused=counters["pending_excused"],
                 no_fee=counters["no_fee"],
                 unpaid=counters["unpaid"],
@@ -1121,6 +1134,8 @@ class PayrollService:
                         open_lessons=None if seed.open_unknown else (teacher.open_lessons if teacher else 0),
                         open_lessons_unknown=seed.open_unknown,
                         open_lesson_items=seed.open_items.get(str(tid), []),
+                        unconfirmed_cancellations=len(seed.unconfirmed.get(str(tid), [])),
+                        unconfirmed_items=seed.unconfirmed.get(str(tid), []),
                         pending_excused=counters["pending_excused"] if counters else 0,
                         no_fee=counters["no_fee"] if counters else 0,
                         unpaid=counters["unpaid"] if counters else 0,
@@ -1233,6 +1248,7 @@ class PayrollService:
                     stale=None,
                     open_lessons=None if seed.open_unknown else teacher.open_lessons,
                     open_lesson_items=seed.open_items.get(str(tid), []),
+                    unconfirmed_items=seed.unconfirmed.get(str(tid), []),
                 )
             )
         return CalculateResponse(month=month_label(first), month_open=ps.business_today() <= last, sheets=sheets)
@@ -1259,6 +1275,11 @@ class PayrollService:
         last = date(first.year, first.month, calendar.monthrange(first.year, first.month)[1])
         if last >= bc.business_today():
             return _KEEP
+        waiting = unconfirmed_cancellations(self.db, org_id, first, last, teacher_id).get(str(teacher_id), [])
+        if waiting:             # LESSON-RULES С8: on the SERVER, whatever the client answered (a stale tab included), on the save and on the re-save
+            raise UnconfirmedCancellations(
+                f"Отмен уроков, которые ждут подтверждения владельца: {len(waiting)}. Решите их в «Замены → Ждут решения», затем сохраните зарплату",
+                count=len(waiting), items=waiting[:50], teacherId=str(teacher_id), month=first.strftime("%Y-%m"))
         found = self._open_lessons(org_id, first, last)
         if found is None:
             return _KEEP

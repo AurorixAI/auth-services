@@ -106,6 +106,9 @@ def give_rate(w, percent: str = "50"):
 
 def save_sheet(w, month: str = "2026-11", who: str = "owner", expect: int = 201, **extra):
     """``POST /org/payroll/sheets``: saving the sheet of the teacher A for ``month`` (after the end of the month it closes the month)."""
+    if "expected_fingerprint" not in extra:          # the screen saves what it looked at: the fingerprint of the calculation it showed
+        shown = client(w, who).post(f"{API}/org/payroll/months/{month}/calculate", json={"teacher_ids": [str(w.A.id)]}).json()["sheets"][0]
+        extra = {**extra, "expected_fingerprint": shown["source_fingerprint"]}
     r = client(w, who).post(f"{API}/org/payroll/sheets", json={"month": month, "teacher_id": str(w.A.id), **extra})
     assert r.status_code == expect, r.text
     return r

@@ -209,6 +209,8 @@ class GroupBlockOut(BaseModel):
 
 class SheetWarnings(BaseModel):
     open_lessons: Optional[int] = None  # unfinished lessons of the month; null when not looked up
+    unconfirmed_cancellations: int = 0  # LESSON-RULES С8: cancellations of the teacher's lessons of the month that wait for the owner (they hold the closing of the month)
+    unconfirmed_items: List[Dict[str, Any]] = Field(default_factory=list)  # ... which ones ({lessonDate, groupId, groupName, lessonId, teacherId, ageDays})
     open_lesson_items: List[Dict[str, Any]] = Field(default_factory=list)  # Money-1 I-4: WHICH ones ({lessonDate, groupId, groupName, lessonId, kind, teacherId}) - the list the owner is warned with before the month is closed
     pending_excused: int = 0
     no_fee: int = 0
@@ -292,6 +294,8 @@ class MonthWarnings(BaseModel):
     open_lessons: Optional[int] = 0           # null: the check failed (see ``open_lessons_unknown``) - the screen says «не удалось проверить незакрытые уроки», never 0
     open_lessons_unknown: bool = False
     open_lesson_items: List[Dict[str, Any]] = Field(default_factory=list)
+    unconfirmed_cancellations: int = 0          # LESSON-RULES С8
+    unconfirmed_items: List[Dict[str, Any]] = Field(default_factory=list)
     pending_excused: int = 0
     no_fee: int = 0
     unpaid: int = 0

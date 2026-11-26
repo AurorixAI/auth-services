@@ -243,6 +243,14 @@ def check_unresolved(org_id: UUID, teacher_id: Any, month: str, unresolved: Sequ
     return Found(org_id, "I-4", f"closed-open-lessons:{teacher_id}:{month}", str(teacher_id), month, 0, len(unresolved), {"lessons": sorted(unresolved)[:10]})
 
 
+def check_unconfirmed(org_id: UUID, teacher_id: Any, month: str, waiting: Sequence[Dict[str, Any]]) -> Optional[Found]:
+    """I-4 (LESSON-RULES С8): a CLOSED month of a teacher with cancellations that still wait for the owner (the gate of the save lets none through; the night finds what slipped past it)."""
+    if not waiting:
+        return None
+    lessons = sorted(f"{i['lessonDate']}|{i['groupId']}" for i in waiting)[:10]
+    return Found(org_id, "I-4", f"closed-unconfirmed:{teacher_id}:{month}", str(teacher_id), month, 0, len(waiting), {"what": "unconfirmed_cancellations", "lessons": lessons})
+
+
 # ====================================================================================================== the loader
 def _gap(gaps: Optional[Dict[str, int]], reason: str, count: int = 1) -> None:
     """Count what the night could NOT check, by reason (a quiet «nothing found» must not hide it, LESSONS 133)."""
@@ -458,6 +466,14 @@ def reconcile_org(db, org_id: Any, today: Optional[date] = None, *, snapshots: O
             by_month.setdefault((action.teacherId, month), []).append(f"{action.lessonDate}|{action.groupId}")
     for (teacher_id, month), items in sorted(by_month.items()):
         if (item := check_unresolved(org_uuid, teacher_id, month, items)) is not None:
+            found.append(item)
+    from .closed_period import unconfirmed_cancellations
+
+    for sheet in closed_sheets:                    # LESSON-RULES С8: and the waiting cancellations of a closed month (the same I-4: the month is closed over a decision that is still open)
+        first = sheet.period_month
+        last = date(first.year + (first.month == 12), first.month % 12 + 1, 1) - timedelta(days=1)
+        waiting = unconfirmed_cancellations(db, org_uuid, first, last, sheet.teacher_id).get(str(sheet.teacher_id), [])
+        if (item := check_unconfirmed(org_uuid, sheet.teacher_id, first.strftime("%Y-%m"), waiting)) is not None:
             found.append(item)
     return found
 

@@ -229,6 +229,28 @@ def group_teacher_ids(db, group, first: date, last: date) -> Set[UUID]:
     return ids
 
 
+def unconfirmed_cancellations(db, org_id: Any, first: date, last: date, teacher_id: Optional[Any] = None) -> Dict[str, List[Dict[str, Any]]]:
+    """LESSON-RULES С8: the cancellations that WAIT for the owner (``cancellation_kind = 'unconfirmed'``) of the lessons between two days, ``{teacher id: [item]}`` - the month of a lesson is the month of
+    ITS teacher (``lesson_teacher_ids``: the teacher frozen in the row, else the resolver's, like the closing of a month), so the sheet of that teacher is the one they hold.  An item is
+    ``{lessonDate, groupId, groupName, lessonId, teacherId, ageDays}``.  One query for the rows (+ the groups of the teacherless rows, which are rare)."""
+    from src.models.auth import Group, GroupAttendance
+
+    out: Dict[str, List[Dict[str, Any]]] = {}
+    today = bc.business_today()
+    rows = (db.query(GroupAttendance, Group.name).join(Group, Group.id == GroupAttendance.group_id)
+            .filter(GroupAttendance.org_id == org_id, GroupAttendance.status == "cancelled", GroupAttendance.cancellation_kind == "unconfirmed",
+                    GroupAttendance.lesson_date >= first.isoformat(), GroupAttendance.lesson_date <= last.isoformat())
+            .order_by(GroupAttendance.lesson_date, GroupAttendance.lesson_id).all())
+    for row, group_name in rows:
+        teachers = [row.teacher_id] if row.teacher_id is not None else lesson_teacher_ids(db, db.get(Group, row.group_id), row.lesson_id, row.lesson_date, row)
+        for tid in teachers:
+            if teacher_id is not None and str(tid) != str(teacher_id):
+                continue
+            out.setdefault(str(tid), []).append({"lessonDate": row.lesson_date, "groupId": str(row.group_id), "groupName": group_name, "lessonId": row.lesson_id, "teacherId": str(tid),
+                                                 "ageDays": (today - date.fromisoformat(row.lesson_date)).days})
+    return out
+
+
 def assert_lesson_open(db, group, row, what: str = "урок") -> None:
     """THE refusal for an action on the pay of a HELD lesson (``row`` = its journal row): 409 ``PERIOD_CLOSED`` with the same code, text and way out («Переоткрыть месяц») everywhere.  One call for the
     decision on an excuse and for the decision on an additional lesson and its undo (stage walk D-4: «Оплатить» in a closed month had no check of its own and the saved sheet drifted by +62 501)."""
