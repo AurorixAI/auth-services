@@ -29,9 +29,10 @@ def test_t16_the_centre_registered_by_the_owner_has_it_too_and_a_centre_without_
     from src.auth.schemas import OrgApplicationRequest
     from src.auth.service import AuthService
 
-    AuthService(cw.db).apply_organization(OrgApplicationRequest(org_name=f"Т16 регистрация {uuid4().hex[:6]}", org_type="center", email=f"t16-{uuid4().hex[:8]}@example.test",
+    name = f"Т16 регистрация {uuid4().hex[:6]}"
+    AuthService(cw.db).apply_organization(OrgApplicationRequest(org_name=name, org_type="center", email=f"t16-{uuid4().hex[:8]}@example.test",
                                                                password="secret-pass-123", first_name="Иван", last_name="Иванов"))
-    org = cw.db.query(Organization).order_by(Organization.created_at.desc()).first()
+    org = cw.db.query(Organization).filter_by(name=name).one()   # by the name, not "the newest": parallel workers create centres at the same time
     assert {k: (org.settings or {}).get("payments", {}).get(k) for k in EXPLICIT} == EXPLICIT
     # a centre created without the entry (every centre that exists before this change): the reading rule is the old one - the payment date, no common month
     old = Organization(name=f"Т16 старый {uuid4().hex[:6]}", org_type="center", status="active")
