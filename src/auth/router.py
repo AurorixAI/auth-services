@@ -1832,7 +1832,8 @@ def cancel_missed_group_attendance(
     try:
         if not dry_run and not manager:
             result = cancel()                           # a teacher cancels his own lesson as before: nothing about money is said to him
-            return {"ok": True, "cancelled": True, "version": result["version"], "warnings": result["warnings"]}
+            waiting = result.get("kind") == "unconfirmed"
+            return {"ok": True, "cancelled": True, "version": result["version"], "warnings": result["warnings"], **({"waiting": True, "consequence": me_waiting_text()} if waiting else {})}
         result, effects, added, consequence = _cancel_with_effects(db, user, group_id, cancel, owner=user.get("org_role") == "owner", money_right=money_right, dry_run=dry_run, action_month=request.lessonDate.strftime("%Y-%m"), manager=manager)
         out = {"ok": True, "cancelled": True, "version": result["version"], "warnings": result["warnings"], "dryRun": dry_run, "moneyEffects": effects, "consequence": consequence}
         if added is not None:
@@ -1879,6 +1880,12 @@ def lesson_cancel_consequence(
     return {"consequence": me.lesson_cancel_consequence(db, user["org_id"], group.id, cancel, manager=manager)}
 
 
+def me_waiting_text() -> str:
+    from . import money_effects as me
+
+    return me.WAITING_CONSEQUENCE
+
+
 def _cancel_with_effects(db: Session, user: dict, group_id: str, cancel, *, owner: bool, money_right: bool, dry_run: bool, action_month: str, manager: bool):
     """``(the answer of the cancellation, the money block, the recalculations or None, the consequence for the students in words)``: the cancellation runs once inside a transaction that is rolled back (the numbers; its refusals are the refusals
     of the real call, an exam-service call that writes - the release - is not made), then - unless ``dry_run`` - for real; the block of the first pass is what the answer says."""
@@ -1902,6 +1909,8 @@ def _cancel_with_effects(db: Session, user: dict, group_id: str, cancel, *, owne
     result, effects = me.run_with_effects(db, org_id, memberships, owner, action, dry_run=dry_run, action_month=action_month)
     added = seen.get("added")
     consequence = me.cancel_consequence_text(added, manager=manager) if added is not None else None
+    if isinstance(result, dict) and result.get("kind") == "unconfirmed":
+        consequence = me.WAITING_CONSEQUENCE                    # LESSON-RULES: the cancellation waits for the owner - the sentence says so (nothing is credited yet)
     if money_right and added is not None:
         effects = {**effects, "deductions": added, "text": "; ".join(x for x in (me.recalc_text(added, done=not dry_run), effects.get("text")) if x)}
     return result, effects, (added if money_right else None), consequence

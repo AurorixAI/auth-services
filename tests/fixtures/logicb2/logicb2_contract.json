@@ -68,7 +68,8 @@
               {
                 "enum": [
                   "centre",
-                  "holiday"
+                  "holiday",
+                  "unconfirmed"
                 ],
                 "type": "string"
               },
@@ -726,7 +727,8 @@
               {
                 "enum": [
                   "centre",
-                  "holiday"
+                  "holiday",
+                  "unconfirmed"
                 ],
                 "type": "string"
               },

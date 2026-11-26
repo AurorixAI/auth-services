@@ -88,7 +88,8 @@ class LessonCancelMixin:
         ref, occ = self._lesson_ref(group, lesson_id, day)
         warnings: List[Dict[str, str]] = []
         kind, day_off_id, converted = (None, None, None) if archive else self._kind_for(org_id, day, kind, day_off_id)
-        if kind != HOLIDAY and not archive and not money_right and ref.starts_at <= self.now() and CentrePolicy.of(self.db, org_id).past_cancel_needs_confirmation:
+        nobody = row is not None and not row.roster_snapshot and not row.records          # a started lesson with NOBODY in its roster (O6): no student, no money - nothing to confirm
+        if kind != HOLIDAY and not archive and not money_right and not nobody and ref.starts_at <= self.now() and CentrePolicy.of(self.db, org_id).past_cancel_needs_confirmation:
             kind = UNCONFIRMED                  # LESSON-RULES: whoever has no right to the money does not decide it for a lesson that has begun - the owner confirms («по вине центра» / «праздник») or gives the lesson back
         if converted is not None:
             warnings.append({"code": "CANCELLED_AS_HOLIDAY", "message": f"{_dm(day)} — выходной день центра ({converted}): урок отменён как «выходной», ученикам перерасчёта не будет"})
@@ -184,7 +185,8 @@ class LessonCancelMixin:
         return who or "преподаватель"
 
     # ------------------------------------------------------------------------------------------------ restore
-    def restore_lesson(self, org_id: Any, actor_id: Any, actor_role: str, group_id: Any, lesson_id: str, day: date, reason: str, *, money_right: bool = False, dry_run: bool = False) -> Dict[str, Any]:
+    def restore_lesson(self, org_id: Any, actor_id: Any, actor_role: str, group_id: Any, lesson_id: str, day: date, reason: str, *, money_right: bool = False, dry_run: bool = False,
+                       expected_kind: Optional[str] = None) -> Dict[str, Any]:
         """W1 S5: «Вернуть отменённый урок» (owner / admin, a lesson that has not started, with a reason).  Refused: a lesson that is not cancelled, a MOVED original (cancel the
         copy instead), a lesson that has started, a date that a live day off holds (cancel the day off), a lesson the schedule no longer has, a teacher who is busy meanwhile.
         What was cancelled is recorded (the group audit + the record of the journal «Замены») BEFORE the row is deleted; the deduction of the recalculation is gone with the row.
@@ -192,7 +194,7 @@ class LessonCancelMixin:
         in an open month of the lesson's teacher; the answer says ``returnedToReview`` and carries ``moneyEffects``."""
         actor = _uuid(actor_id)
         try:
-            out = self._restore_locked(org_id, actor, actor_role, group_id, lesson_id, day, reason, money_right, dry_run)
+            out = self._restore_locked(org_id, actor, actor_role, group_id, lesson_id, day, reason, money_right, dry_run, expected_kind)
             if dry_run:                                      # R3 #23: the confirmation before the return - everything above is thrown away, the answer says what it WOULD do
                 self.db.rollback()
                 out["dryRun"] = True
@@ -203,7 +205,8 @@ class LessonCancelMixin:
             self.db.rollback()
             raise
 
-    def _restore_locked(self, org_id: Any, actor: Any, actor_role: str, group_id: Any, lesson_id: str, day: date, reason: str, money_right: bool = False, dry_run: bool = False) -> Dict[str, Any]:
+    def _restore_locked(self, org_id: Any, actor: Any, actor_role: str, group_id: Any, lesson_id: str, day: date, reason: str, money_right: bool = False, dry_run: bool = False,
+                        expected_kind: Optional[str] = None) -> Dict[str, Any]:
         iso = day.isoformat()
         group = self._group_locked(org_id, _uuid(group_id))
         if group is None:
@@ -212,6 +215,10 @@ class LessonCancelMixin:
             raise group_archived()
         row = (self.db.query(GroupAttendance).filter(GroupAttendance.group_id == group.id, GroupAttendance.lesson_id == lesson_id, GroupAttendance.lesson_date == iso)
                .with_for_update().first())
+        if expected_kind is not None and (row is None or row.status != "cancelled" or row.cancellation_kind != expected_kind):
+            from .cancellation_kind import already_decided          # LESSON-RULES: two owners - the second sees what the first did instead of undoing it silently
+
+            raise already_decided(self.db, group, row, lesson_id, day)
         if row is None or row.status != "cancelled":
             raise conflict("RESTORE_NOT_CANCELLED", "Урок не отменён: возвращать нечего")
         if row.made_up_by:                                                            # #154: a make-up is appointed - the lesson would be held twice

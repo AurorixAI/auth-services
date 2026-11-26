@@ -266,7 +266,7 @@ def start_and_mark(w, marks=True):
 
 
 def test_s7_a_started_lesson_with_marks_is_not_cancelled_without_marks_it_is(w, clock):
-    """Д27: cancelling a started lesson would erase the marks and the reviewed excuses - refused until the marks are taken off; with none it is a cancellation."""
+    """Д27: cancelling a started lesson would erase the marks and the reviewed excuses - refused until the marks are taken off; with none it is a cancellation.  LESSON-RULES: the administrator has no money right here, the lesson has begun -> the kind is ``unconfirmed`` (it waits for the owner)."""
     clock.set("2026-10-26 10:30")
     start_and_mark(w)
     r = sheet(w, "admin", w.G1, "lesson-l1", "2026-10-26", expect=409)
@@ -280,7 +280,7 @@ def test_s7_a_started_lesson_with_marks_is_not_cancelled_without_marks_it_is(w, 
     ok = sheet(w, "admin", w.G1, "lesson-l1", "2026-10-26", reason="Урок не состоялся")
     assert ok.json()["version"] == 4
     row = row_of(w, w.G1, "lesson-l1", "2026-10-26")
-    assert (row.status, row.cancellation_kind, row.records, row.cancellation_reason, row.completed_at) == ("cancelled", "centre", {}, "Урок не состоялся", None)
+    assert (row.status, row.cancellation_kind, row.records, row.cancellation_reason, row.completed_at) == ("cancelled", "unconfirmed", {}, "Урок не состоялся", None)
     assert sorted(a.action for a in w.db.query(GroupAttendanceAudit).filter_by(attendance_id=row.id)) == ["cancelled", "started", "updated", "updated"]
     assert [x.status for x in requests_of(w)] == ["cancelled"]
 

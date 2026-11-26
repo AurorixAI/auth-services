@@ -560,6 +560,7 @@ class LessonRestoreRequest(BaseModel):
     lessonDate: date
     reason: str = Field(..., max_length=500)
     dryRun: bool = False                                   # R3 #23: only say what the return would do (nothing is written)
+    expectedKind: Optional[StoredCancellationKind] = None  # LESSON-RULES: the kind the screen saw; another one (or no cancellation any more) = 409 ``ALREADY_DECIDED`` (who, when, which kind)
 
 
 class LessonRestoreOut(BaseModel):

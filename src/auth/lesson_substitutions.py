@@ -87,11 +87,11 @@ SNAPSHOT_KEYS: Dict[str, Tuple[str, ...]] = {
     "requested": ("reasonCode", "trigger"), "substituted": ("teacherId", "via"), "rescheduled": ("reason", "via", "movedTo"), "cancelled": ("reason", "cancellationKind"),
     "rejected": ("reason",), "withdrawn": (), "closed": ("closedReason", "trigger", "dayOffId", "reason", "cancellationKind", "previous"), "reopened": ("cause", "dayOffId", "byDayOff"),
     "assignment_cleared": ("teacherId", "trigger", "dayOffId", "byDayOff"), "suggestion_unavailable": (), "lesson_restored": ("reason", "previous"),
-    "day_off_voided": ("dayOffId", "byDayOff", "reopened", "subject", "needsDecision"),
+    "confirmed": ("cancellationKind", "reason"), "day_off_voided": ("dayOffId", "byDayOff", "reopened", "subject", "needsDecision"),
 }
 SNAPSHOT_KEYS["closed"] = SNAPSHOT_KEYS["closed"] + ("byDayOff",)
 # ``dayOffId`` is the machinery for a teacher: he reads ``byDayOff: true`` instead (derived in ``clean_snapshot``, never stored); ``subject`` / ``needsDecision`` of ``day_off_voided`` are written with the event
-_MANAGER_ONLY: Dict[str, Tuple[str, ...]] = {"cancelled": ("cancellationKind",), "closed": ("reason", "cancellationKind", "previous", "dayOffId"), "lesson_restored": ("reason", "previous"),
+_MANAGER_ONLY: Dict[str, Tuple[str, ...]] = {"cancelled": ("cancellationKind",), "closed": ("reason", "cancellationKind", "previous", "dayOffId"), "lesson_restored": ("reason", "previous"), "confirmed": ("cancellationKind", "reason"),
                                               "reopened": ("dayOffId",), "assignment_cleared": ("dayOffId",), "day_off_voided": ("dayOffId",)}
 CLOSED_OUTCOME = {          # #157 A11: ``closed_reason`` -> the code of ``outcome`` (``LESSON_CANCELLED`` is told apart by the closing trigger: a day off)
     "LESSON_OUTSIDE_WINDOW": "not_resolved_in_time", "LESSON_STARTED": "lesson_started", "LESSON_REMOVED": "lesson_removed", "GROUP_ARCHIVED": "group_archived",

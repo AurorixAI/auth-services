@@ -322,10 +322,10 @@ def test_s24_one_failing_request_of_a_bulk_decision_is_its_own_refusal(w, monkey
     a, b = one(w, "A", "L1", "2026-11-02"), one(w, "A", "L1", "2026-11-09")
     real = Substitutions._cancel
 
-    def flaky(self, group, r, actor, body):
+    def flaky(self, group, r, actor, body, money_right):
         if r.lesson_date == "2026-11-02":
             raise RuntimeError("boom")
-        return real(self, group, r, actor, body)
+        return real(self, group, r, actor, body, money_right)
 
     monkeypatch.setattr(Substitutions, "_cancel", flaky)
     r = client(w, "admin").post(f"{SUB}/decide-bulk", json={"ids": [a["id"], b["id"]], "decision": "cancel", "reason": "Курсы"})

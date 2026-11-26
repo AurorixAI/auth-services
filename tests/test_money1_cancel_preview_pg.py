@@ -99,7 +99,9 @@ def test_the_rights_are_those_of_the_real_call_a_teacher_cannot_choose_the_holid
     assert [deducted(w, m) for m in ms] == [46_000] * 5
     real_mine = post(w, "A", url, WED)
     assert real_mine.status_code == 200 and "moneyEffects" not in real_mine.json() and "deductions" not in real_mine.json()          # as before the preview existed
-    assert [deducted(w, m) for m in ms] == [92_000] * 5
+    assert [deducted(w, m) for m in ms] == [46_000] * 5                  # LESSON-RULES: the lesson of 28.10 has begun, the teacher has no money right -> it WAITS for the owner: nothing is deducted yet
+    assert client(w, "owner").put(f"{API}/org/groups/{g.id}/attendance/cancellation-kind", json={"lessonDate": "2026-10-28", "lessonId": "lesson-wed", "cancellationKind": "centre", "expectedKind": "unconfirmed"}).status_code == 200
+    assert [deducted(w, m) for m in ms] == [92_000] * 5                  # the confirmation of the owner: the number the teacher's own cancellation used to give at once
 
 
 def test_an_administrator_without_the_money_right_previews_without_the_sums_of_the_students(pg_session, clock):

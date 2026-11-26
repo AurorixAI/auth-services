@@ -108,13 +108,13 @@ def test_s3_nothing_the_teacher_sends_gets_past_the_refusal_not_even_a_holiday_k
 
 
 def test_s3_lesson_was_not_held_stays_the_teachers_for_a_past_lesson_and_is_in_the_journal(w):
-    """«Урока не было» of a PAST lesson that never started: the teacher cancels it (always «по вине центра»), the record of the journal «Замены» says who."""
+    """«Урока не было» of a PAST lesson that never started: the teacher cancels it (it waits for the owner: ``unconfirmed``), the record of the journal «Замены» says who."""
     body = {"lessonDate": "2026-10-20", "lessonId": "lesson-l3", "cancellationReason": "Урока не было"}      # yesterday's Tuesday lesson of G2: no row, never started
     r = client(w, "A").post(f"{API}/org/groups/{w.G2.id}/attendance/reconcile/cancel", json=body)
     assert r.status_code == 200, r.text
     assert r.json()["cancelled"] is True and r.json()["warnings"] == []
     row = row_of(w, w.G2, "lesson-l3", "2026-10-20")
-    assert (row.status, row.cancellation_kind, row.marked_by) == ("cancelled", "centre", w.A.id)
+    assert (row.status, row.cancellation_kind, row.marked_by) == ("cancelled", "unconfirmed", w.A.id)      # LESSON-RULES: a past lesson cancelled by a teacher WAITS for the owner
     (rec,) = [x for x in requests_of(w) if x.group_id == w.G2.id]
     assert (rec.status, rec.origin, rec.requester_id, rec.decided_by, rec.decided_via) == ("cancelled", "system", w.A.id, w.A.id, "teacher_cancel")
     assert client(w, "admin").get(f"{SUB}", params={"status": "decided"}).json()["items"][0]["decision"]["via"] == "teacher_cancel"

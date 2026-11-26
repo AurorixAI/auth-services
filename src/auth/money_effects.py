@@ -559,6 +559,9 @@ def recalc_text(added: List[Dict[str, Any]], *, done: bool) -> str:
     return f"Ученикам — перерасчёт: неоплаченная сумма {'уменьшилась' if done else 'уменьшится'} сразу на {num(sum(a['amount'] for a in added))}{NBSP}сум ({count} {plural(count, 'ученик', 'ученика', 'учеников')})"
 
 
+WAITING_CONSEQUENCE = "Отмену подтвердит владелец или администратор с доступом к деньгам: до подтверждения ученикам ничего не меняется"
+
+
 def cancel_consequence_text(added: List[Dict[str, Any]], *, manager: bool) -> str:
     """Money-1 Г-16: what a cancellation «по вине центра» means for the students, in words, for WHOEVER cancels (the sums of the whole group stay with the money right): the centre credits each
     student, or - setting off, a package, a holiday - the payment is not touched.  G3M С7: ``manager`` (owner / administrator of the centre, said by the road) - a teacher gets the sentence without any sum."""
@@ -576,7 +579,9 @@ def lesson_cancel_consequence(db, org_id: Any, group_id: Any, cancel: Callable[[
     """Money-1 Р-4 (R3 В3): ``cancel_consequence_text`` of a cancellation «по вине центра» that has NOT happened - ``cancel()`` (THE cancellation of the lesson) runs to its last line inside a
     transaction that is rolled back: its refusals are the refusals of the real one, nothing is written, and what the students would be credited is read from the same ledger."""
     with writes_rolled_back(db):
-        _, added = measure_cancellation(db, org_id, group_id, cancel)
+        out, added = measure_cancellation(db, org_id, group_id, cancel)
+    if isinstance(out, dict) and out.get("kind") == "unconfirmed":
+        return WAITING_CONSEQUENCE
     return cancel_consequence_text(added, manager=manager)
 
 

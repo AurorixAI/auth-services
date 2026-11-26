@@ -54,8 +54,8 @@ def test_1_a_cancellation_without_a_kind_is_by_the_fault_of_the_centre_and_the_a
     assert sorted(a.details["cancellation_kind"] for a in audit) == ["centre", "centre"]
     client(w, "A").post(f"{API}/org/groups/{g.id}/attendance/reconcile/cancel", json={"lessonDate": "2026-10-19", "lessonId": "lesson-mon", "cancellationReason": "Заболел"})
     missed = w.db.query(GroupAttendance).filter_by(group_id=g.id, lesson_date="2026-10-19").one()
-    assert missed.cancellation_kind == "centre"
-    assert w.db.query(GroupAttendanceAudit).filter_by(attendance_id=missed.id).one().details == {"cancellation_kind": "centre"}
+    assert missed.cancellation_kind == "unconfirmed"          # LESSON-RULES: the teacher's «Урока не было» for a PAST lesson waits for the owner; the audit keeps the kind the same way
+    assert w.db.query(GroupAttendanceAudit).filter_by(attendance_id=missed.id).one().details == {"cancellation_kind": "unconfirmed"}
 
 
 def test_1_an_owner_or_admin_chooses_and_changes_the_kind_of_a_cancelled_lesson(pg_session, clock):

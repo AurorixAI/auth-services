@@ -52,14 +52,7 @@ def test_the_administrator_without_the_right_gets_unconfirmed_on_every_road_of_a
     assert accounts(w, members) == [(0, 0, 0)] * 9
 
 
-def test_the_teacher_who_started_the_lesson_and_cancels_it_empty_gets_unconfirmed_too(pg_session, clock):
-    """The road of the teacher's own empty started lesson (``_empty_started_lesson``): the lesson is past, the author has no right -> ``unconfirmed`` as everywhere (one rule, no exception)."""
-    w, g, people, members = world(pg_session, clock)
-    assert client(w, "A").post(f"{API}/org/groups/{g.id}/attendance/reconcile", json={"lessonDate": "2026-11-25", "lessonId": WED}).status_code == 200
-    r = client(w, "A").post(f"{API}/org/groups/{g.id}/attendance", json={"lessonDate": "2026-11-25", "lessonId": WED, "status": "cancelled", "records": {}, "cancellationReason": "Никого"})
-    assert r.status_code in (200, 403, 409), r.text                                       # a started lesson with a full roster: the older refusals decide (the roster is not empty)
-    if r.status_code == 200:
-        assert kind_in_db(w, g, "2026-11-25", WED) == ("cancelled", "unconfirmed")
+# the teacher's own started lesson with an EMPTY roster (no student, no money: it stays ``centre``) is anchored by ``test_w1b_pg.py::test_d1_...`` (kept green without a change)
 
 
 def test_the_money_right_chooses_the_kind_as_before(pg_session, clock):

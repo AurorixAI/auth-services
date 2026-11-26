@@ -5483,7 +5483,7 @@ class AuthService:
         self.db.commit()
         from . import exam_release, money_effects
         warnings = list(out["warnings"]) if money_effects.is_preview(self.db) else [*out["warnings"], *exam_release.release_pending(self, org_id, group_id)]   # Wave B P4 (SV-15 / LD-23): AFTER the commit, no lock held
-        return {"version": out["version"], "warnings": warnings}
+        return {"version": out["version"], "warnings": warnings, "kind": out["kind"]}
 
     def start_group_attendance(
         self,

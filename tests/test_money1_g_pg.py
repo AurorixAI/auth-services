@@ -10,6 +10,13 @@ from tests.ops_helpers import grant_money_right
 from tests.pg_world import make_client, needs_pg, pg_session, world  # noqa: F401  (fixtures)
 from tests.test_money1_attendance_pg import post_save
 
+
+def _no_confirmation(w) -> bool:
+    """LESSON-RULES: the owner switches the confirmation of a past cancellation OFF (the old behaviour: the kind is ``centre`` at once); True when the answer is 200."""
+    from tests.payf_helpers import API, client
+
+    return client(w, "owner").put(f"{API}/org/settings/lessons", json={"past_cancel_needs_confirmation": False}).status_code == 200
+
 pytestmark = needs_pg
 
 
@@ -336,8 +343,12 @@ def test_g16_without_the_right_the_cancellation_is_by_the_centre_and_the_preview
     grant_money_right(w, False)
     dry = cancel_post(w, "admin", url, WED, dry=True)
     assert dry.status_code == 200, dry.text
-    assert dry.json()["consequence"] == f"Ученикам зачтётся по 46{NBSP}000{NBSP}сум"
+    from src.auth.money_effects import WAITING_CONSEQUENCE
+
+    assert dry.json()["consequence"] == WAITING_CONSEQUENCE          # LESSON-RULES: the lesson has begun and the administrator has no money right: the cancellation WAITS for the owner
     assert "deductions" not in dry.json() and "46" not in str(dry.json()["moneyEffects"])      # the students' sums of the whole group stay with the money right
+    assert _no_confirmation(w)        # the centre does not want the confirmation: the old sentence is back
+    assert cancel_post(w, "admin", url, WED, dry=True).json()["consequence"] == f"Ученикам зачтётся по 46{NBSP}000{NBSP}сум"
     assert cancel_post(w, "admin", url, WED).status_code == 200
 
 
@@ -895,15 +906,21 @@ def test_r4_the_own_month_with_the_setting_on_says_what_each_student_gets_and_th
     assert changed_tables(before, db_fingerprint(w.db)) == []                 # nothing is written
     assert cancel_post(w, "owner", url, WED, dry=True).json()["consequence"] == sentence       # «Урока не было» says the same sentence (ONE function)
     grant_money_right(w, False)
-    assert _consequence(w, "admin", g) == {"consequence": sentence}           # without the right: the sentence only, the sums of the group are not in the answer
+    from src.auth.money_effects import WAITING_CONSEQUENCE
+
+    assert _consequence(w, "admin", g) == {"consequence": WAITING_CONSEQUENCE}           # without the right (LESSON-RULES): the cancellation waits for the owner - no sum of the group in the answer
+    assert _no_confirmation(w)
+    assert _consequence(w, "admin", g) == {"consequence": sentence}           # the centre without the confirmation: the old sentence only, the sums of the group are not in the answer
 
 
 def test_g3m_c7_a_teacher_gets_the_sentence_without_a_sum_on_every_road_of_his_own_lesson(pg_session, clock):
     import re
 
     w, g, students, ms, url = cancel_world(pg_session, clock)
-    word = "Ученикам будет перерасчёт за этот урок"
-    assert _consequence(w, "A", g) == {"consequence": word}                                  # before: «Ученикам зачтётся по 46 000 сум»
+    from src.auth.money_effects import WAITING_CONSEQUENCE
+
+    word = WAITING_CONSEQUENCE                                                               # LESSON-RULES: the lesson has begun: his cancellation waits for the owner (before: «Ученикам зачтётся по 46 000 сум», then «Ученикам будет перерасчёт за этот урок»)
+    assert _consequence(w, "A", g) == {"consequence": word}
     dry = cancel_post(w, "A", url, WED, dry=True)
     assert dry.status_code == 200, dry.text
     assert dry.json()["consequence"] == word and "deductions" not in dry.json()
@@ -915,6 +932,7 @@ def test_g3m_c7_a_teacher_gets_the_sentence_without_a_sum_on_every_road_of_his_o
     sentence = f"Ученикам зачтётся по 46{NBSP}000{NBSP}сум"
     assert _consequence(w2, "owner", g2) == {"consequence": sentence} and cancel_post(w2, "owner", url2, WED, dry=True).json()["consequence"] == sentence
     grant_money_right(w2, False)
+    assert _no_confirmation(w2)      # the centre without the confirmation keeps the old sentence for the administrator
     assert _consequence(w2, "admin", g2) == {"consequence": sentence} and cancel_post(w2, "admin", url2, WED, dry=True).json()["consequence"] == sentence
 
 

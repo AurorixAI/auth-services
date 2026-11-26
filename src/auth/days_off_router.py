@@ -66,6 +66,7 @@ def void_day_off(day_off_id: UUID, dry_run: bool = Query(False), user: dict = De
 
 
 @router.put("/org/groups/{group_id}/attendance/cancellation-kind")
-def put_cancellation_kind(group_id: UUID, request: ChangeCancellationKind, user: dict = Depends(require_payments_access), db: Session = Depends(get_db)):
+def put_cancellation_kind(group_id: UUID, request: ChangeCancellationKind, dry_run: bool = Query(False, description="1 — ничего не писать, вернуть последствия подтверждения / смены вида"),
+                          user: dict = Depends(require_payments_access), db: Session = Depends(get_db)):
     """«Изменить причину отмены»: the kind of a lesson that is already cancelled (``centre`` / ``holiday``), owner / admin, with a reason; the recalculation follows by itself."""
-    return change_cancellation_kind(db, user["org_id"], str(group_id), request, actor_id=user["user_id"])
+    return change_cancellation_kind(db, user["org_id"], str(group_id), request, actor_id=user["user_id"], dry_run=dry_run)

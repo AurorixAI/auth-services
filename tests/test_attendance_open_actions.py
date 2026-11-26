@@ -176,7 +176,7 @@ def test_open_actions_query_count_does_not_grow_with_group_count(world):
     big_items, big = _statements_for_open_actions(world)
     assert len(big_items) > len(small_items) > 0
     assert len(big) == len(small), (len(small), len(big))
-    assert len(big) <= 12  # +2 for LOGIC-B (the teacher history and the substitutions of ALL the groups, one query each); +2 Money-1 R3 #2 (the accounting start of the centre, the closed months: once)
+    assert len(big) <= 13  # +1 LESSON-RULES (the rule of the centre: the window of the teacher, ONE read per list, not per group); +2 for LOGIC-B (the teacher history and the substitutions of ALL the groups, one query each); +2 Money-1 R3 #2 (the accounting start of the centre, the closed months: once)
 
 
 def test_preloaded_schedule_gives_the_same_occurrences(world):
