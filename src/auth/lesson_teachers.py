@@ -26,6 +26,7 @@ from sqlalchemy import func
 
 from . import business_clock as bc
 from . import payroll_hooks
+from .centre_policy import CentrePolicy
 from .closed_period import ClosedPeriods
 from src.models.auth import PayrollRate
 
@@ -387,15 +388,15 @@ class LessonTeachers:
 
     # -------------------------------------------------------------------------------------- group access
     def can_read_group(self, group: Group, actor_id: Any) -> bool:
-        """A teacher reads the group when he is its teacher now, was one within the last 7 days, or has a substitution there
-        (``lesson_date >= today - 7``).  What he sees of it is narrowed by ``attendance_rules.restrict_journal`` (LOGIC-B2)."""
+        """A teacher reads the group when he is its teacher now, was one within the last ``access_days`` (7, or the window of the centre when longer), or has a substitution there
+        (``lesson_date >= today - access_days``).  What he sees of it is narrowed by ``attendance_rules.restrict_journal`` (LOGIC-B2)."""
         actor = _uuid(actor_id)
         if actor is None:
             return False
         if group.teacher_id == actor:
             return True
         today = bc.business_today()
-        window_from = teacher_lesson_window_start(today)
+        window_from = teacher_lesson_window_start(today, CentrePolicy.of(self.db, group.org_id).access_days)
         book = TeacherBook(self.db)
         if actor in book.teachers_in_window(group, bc.lesson_instant_utc(window_from, 0)):
             return True

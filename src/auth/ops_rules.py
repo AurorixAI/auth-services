@@ -104,7 +104,7 @@ ERROR_CATALOGUE: Dict[str, tuple[int, str]] = {
     "NO_STUDENTS_COMPLETE": (409, "В составе урока нет учеников — завершить нельзя. Отметьте «Урока не было»."),
     "ATTENDANCE_CONFLICT": (409, "Отметки уже изменил другой сотрудник"),
     "LESSON_HAS_LIVE_EXAM": (409, "У урока есть незавершённый экзамен"),
-    "LESSON_TOO_OLD": (403, "Урок старше 7 дней — отметить его может администратор или владелец"),
+    "LESSON_TOO_OLD": (403, "Урок старше срока, в который преподаватель сам отмечает уроки, — его закрывает администратор или владелец"),
     "LESSON_OUTSIDE_WINDOW": (422, "Урок вне окна уроков без отметки"),
     "PERIOD_CLOSED": (409, "Месяц закрыт (зарплата сохранена). Чтобы изменить урок, переоткройте месяц (это делает владелец или администратор с доступом к деньгам)"),
     "MONEY_RIGHT_REQUIRED": (403, "Это действие меняет деньги: его выполняет владелец или администратор с доступом к деньгам"),
@@ -149,20 +149,25 @@ ERROR_CATALOGUE: Dict[str, tuple[int, str]] = {
 
 # ---------------------------------------------------------------------------------------- window rule (decision 7)
 
-TEACHER_LESSON_WINDOW_DAYS = 7
+# LESSON-RULES С0: the number of days is the rule of the CENTRE (``centre_policy.LESSON_WINDOW_DAYS``), asked ONCE per request and handed here - there is no constant beside the code.
 
 
-def teacher_lesson_window_start(today: date) -> date:
-    """A teacher closes / reconciles lessons with ``lesson_date >= today - 7`` (SPEC decision 7)."""
-    return today - timedelta(days=TEACHER_LESSON_WINDOW_DAYS)
+def teacher_lesson_window_start(today: date, window_days: int) -> date:
+    """A teacher closes / reconciles / cancels lessons with ``lesson_date >= today - window_days`` (SPEC decision 7; the window is the rule of the centre)."""
+    return today - timedelta(days=window_days)
 
 
 def lesson_age_days(lesson_date: date, today: date) -> int:
     return (today - lesson_date).days
 
 
-def is_too_old_for_teacher(lesson_date: date, today: date) -> bool:
-    return lesson_date < teacher_lesson_window_start(today)
+def is_too_old_for_teacher(lesson_date: date, today: date, window_days: int) -> bool:
+    return lesson_date < teacher_lesson_window_start(today, window_days)
+
+
+def lesson_too_old_text(window_days: int) -> str:
+    """The refusal of a lesson older than the window - the number comes from the rule of the centre."""
+    return f"Урок старше {window_days} дн. — его закрывает администратор или владелец"
 
 
 # ------------------------------------------------------------------------------------------------- small helpers

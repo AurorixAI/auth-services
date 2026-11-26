@@ -28,6 +28,7 @@ from sqlalchemy.orm import Session, aliased
 from src.models.auth import OrgDayOff
 
 from . import business_clock as bc
+from .centre_policy import CentrePolicy
 from . import exam_bridge, exam_release, substitution_rules as R
 from .closed_period import ClosedPeriods, lesson_teacher_ids
 from .days_off import DaysOffService
@@ -2003,7 +2004,7 @@ def lesson_access(svc, org_id: Any, actor_id: Any, group_id: Any) -> Dict[str, A
     group = svc.db.query(Group).filter(Group.id == gid, Group.org_id == org_id).first() if gid else None
     if group is None:
         raise not_found("GROUP_NOT_FOUND", "Группа не найдена")
-    window_from = teacher_lesson_window_start(bc.business_today()).isoformat()
+    window_from = teacher_lesson_window_start(bc.business_today(), CentrePolicy.of(svc.db, org_id).access_days).isoformat()
     rows = (
         svc.db.query(LessonTeacherAssignment)
         .filter(LessonTeacherAssignment.group_id == group.id, LessonTeacherAssignment.teacher_id == actor, LessonTeacherAssignment.cancelled_at.is_(None),

@@ -3196,6 +3196,11 @@
               }
             ],
             "title": "Version"
+          },
+          "windowDays": {
+            "default": 7,
+            "title": "Windowdays",
+            "type": "integer"
           }
         },
         "required": [
@@ -7201,7 +7206,7 @@
       "status": 409
     },
     "LESSON_TOO_OLD": {
-      "message": "Урок старше 7 дней — отметить его может администратор или владелец",
+      "message": "Урок старше срока, в который преподаватель сам отмечает уроки, — его закрывает администратор или владелец",
       "model": "OpsErrorResponse",
       "status": 403
     },

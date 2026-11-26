@@ -20,5 +20,6 @@
   "teacherId": "917b0543-3c26-52c4-b849-5d99a8a9dd87",
   "teacherName": "Иван Иванов",
   "topic": null,
-  "version": null
+  "version": null,
+  "windowDays": 7
 }

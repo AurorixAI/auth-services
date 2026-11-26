@@ -5,4 +5,5 @@ PAYOUT_CREATED = "payroll_payout_created"
 PAYOUT_VOIDED = "payroll_payout_voided"
 ACCEPTED = "money_reconcile_accept"
 REBASELINED = "money_reconcile_rebaseline"
-TRACE_ACTIONS = (PAYOUT_CREATED, PAYOUT_VOIDED, ACCEPTED, REBASELINED)        # lines of ``org_money_audit`` that are not about the settings of the centre (the settings page does not show them)
+POLICY_CHANGED = "policy_changed"                 # LESSON-RULES С0: a rule of the centre (``centre_policy``) changed - the page of the lessons shows it, not the page of the payments
+TRACE_ACTIONS = (PAYOUT_CREATED, PAYOUT_VOIDED, ACCEPTED, REBASELINED, POLICY_CHANGED)        # lines of ``org_money_audit`` that are not about the settings of the centre (the settings page does not show them)

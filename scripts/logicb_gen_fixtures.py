@@ -319,7 +319,7 @@ put("c4_schedule_lesson_created.json", "ScheduleLessonResponseB", {
 })
 put("c4_reconcile_not_in_schedule.json", "-", {"status": 400, "body": {"detail": "Урок не принадлежит расписанию этой группы"}})
 put("c4_not_lesson_teacher.json", "-", error(403, "NOT_LESSON_TEACHER", f"Этот урок ведёт {short('A')}"))
-put("c4_lesson_too_old.json", "-", error(403, "LESSON_TOO_OLD", "Урок старше 7 дней — его закрывает администратор или владелец"))
+put("c4_lesson_too_old.json", "-", error(403, "LESSON_TOO_OLD", "Урок старше 7 дн. — его закрывает администратор или владелец"))
 assert date(2026, 10, 13) < TODAY - timedelta(days=7) and date(2026, 10, 14) >= TODAY - timedelta(days=7)
 
 # ================================================================================================ chain 5
@@ -387,7 +387,7 @@ put("x_open_action_requires_admin.json", "OpenAttendanceActionResponseB", {
     "actionType": "missed", "groupId": IDS["G2"], "groupName": "7-Б", "classLevel": 9, "lessonId": LESSON["L3"],
     "lessonDate": "2026-10-13", "subject": "Математика", "startTime": "10:00", "endTime": "11:00", "room": None,
     "format": "offline", "topic": None, "markedCount": 0, "rosterCount": 0, "remainingCount": 0, "teacherId": IDS["A"],
-    "teacherName": "Иван Иванов", "version": None, "requiresAdmin": True, "ageDays": 8, "isSubstitution": False, "periodClosed": False,
+    "teacherName": "Иван Иванов", "version": None, "requiresAdmin": True, "ageDays": 8, "windowDays": 7, "isSubstitution": False, "periodClosed": False,
 })
 put("x_occurrence_substitution.json", "ScheduleOccurrenceResponseB", {
     "id": LESSON["L1"], "groupId": IDS["G1"], "groupName": "9-А", "classLevel": 9, "subject": "Математика", "dayOfWeek": 1,

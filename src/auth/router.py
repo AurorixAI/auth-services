@@ -36,6 +36,7 @@ from .student_archive import (
 from . import business_clock as bc, import_limits, import_ops, import_service, xlsx_style
 from .ops_router import router as ops_router
 from .days_off_router import router as days_off_router
+from .centre_policy_router import router as centre_policy_router
 from .closed_period_router import router as closed_period_router
 from .lesson_return_router import router as lesson_return_router
 from .ops_rules import GroupArchivedForEnrolment, OpsError, forbidden
@@ -1908,5 +1909,6 @@ def _cancel_with_effects(db: Session, user: dict, group_id: str, cancel, *, owne
 # LOGIC-B: the new operations routes (lesson teacher, group archive, staff handover / restore).
 router.include_router(ops_router)
 router.include_router(days_off_router)  # PAY-F: «Выходной день центра»
+router.include_router(centre_policy_router)  # LESSON-RULES С0: the rules of the lessons of a centre
 router.include_router(closed_period_router)  # Money-1 A1: the closed month and its reopening
 router.include_router(lesson_return_router)  # Money-1 A2 / A3: the return of a held lesson, the impact of a correction

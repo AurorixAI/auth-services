@@ -111,7 +111,7 @@ NOT_MONEY = {
 }
 
 # the owner only (the money of the teachers: LESSONS 45) - stricter than the money right
-OWNER_ONLY_PREFIXES = (f"{P}/org/payroll/", f"{P}/org/settings/payments")
+OWNER_ONLY_PREFIXES = (f"{P}/org/payroll/", f"{P}/org/settings/payments", f"{P}/org/settings/lessons")
 
 # a handler that calls one of these moves money: the route must be in a list above (or be owner-only)
 MONEY_CALLS = re.compile(

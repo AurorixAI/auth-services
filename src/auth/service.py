@@ -118,7 +118,7 @@ from .ops_schemas import (  # noqa: E402
     StudentResponseB as StudentResponse,
     TeacherDashboardSummaryResponseB as TeacherDashboardSummaryResponse,
 )
-from . import attendance_rules, business_clock, exam_bridge, exam_release, invites, lesson_substitutions, lesson_teachers, ops_rules, schedule_rules  # noqa: E402
+from . import centre_policy, attendance_rules, business_clock, exam_bridge, exam_release, invites, lesson_substitutions, lesson_teachers, ops_rules, schedule_rules  # noqa: E402
 from . import lesson_return, leave_effects, leave_undo, password_rules, staff_lifecycle, student_views, transfer_rules  # noqa: E402
 from .roster_names import roster_payload, student_full_name  # noqa: E402
 from .sql_text import contains  # noqa: E402
@@ -4549,6 +4549,7 @@ class AuthService:
         """
         now = now or business_clock.business_now()
         today_date = now.date()
+        window_days = centre_policy.CentrePolicy.of(self.db, org_id).lesson_window_days          # the rule of the centre, read once for the whole list
         today = today_date.isoformat()
         query = (
             self.db.query(GroupAttendance, Group)
@@ -4679,8 +4680,9 @@ class AuthService:
                     rosterCount=roster_count,
                     remainingCount=max(roster_count - marked_count, 0),
                     version=attendance.version,
-                    requiresAdmin=(not is_org_admin) and ops_rules.is_too_old_for_teacher(lesson_date, today_date),
+                    requiresAdmin=(not is_org_admin) and ops_rules.is_too_old_for_teacher(lesson_date, today_date, window_days),
                     ageDays=ops_rules.lesson_age_days(lesson_date, today_date),
+                    windowDays=window_days,
                     isSubstitution=bool(row_teacher is not None and row_teacher != row_res.default_teacher_id),
                 )
             )
@@ -4766,8 +4768,9 @@ class AuthService:
                         remainingCount=0,
                         version=None,
                         requiresAdmin=(not is_org_admin)
-                        and ops_rules.is_too_old_for_teacher(date.fromisoformat(occurrence_date), today_date),
+                        and ops_rules.is_too_old_for_teacher(date.fromisoformat(occurrence_date), today_date, window_days),
                         ageDays=ops_rules.lesson_age_days(date.fromisoformat(occurrence_date), today_date),
+                        windowDays=window_days,
                         isSubstitution=missed_res.substitution,
                     )
                 )

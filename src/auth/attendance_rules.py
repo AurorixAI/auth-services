@@ -17,6 +17,7 @@ from uuid import UUID
 
 from . import business_clock as bc
 from . import exam_bridge
+from .centre_policy import TEACHER_ACCESS_DAYS, CentrePolicy
 from .closed_period import ClosedPeriods, lesson_teacher_ids
 from .lesson_teachers import LessonTeachers, TeacherBook, effective_teacher
 from .models import Group, GroupAttendance, GroupAttendanceAudit, User
@@ -26,6 +27,7 @@ from .ops_rules import (
     forbidden,
     hhmm_to_minutes,
     is_too_old_for_teacher,
+    lesson_too_old_text,
     short_name,
 )
 
@@ -61,8 +63,10 @@ class AttendanceRules:
             names = self.teachers.users_by_id([teacher]) if teacher else {}
             who = short_name(names.get(str(teacher))) if teacher else None
             raise forbidden("NOT_LESSON_TEACHER", (f"Этот урок ведёт {who}" + ("" if who.endswith(".") else ".")) if who else "Этот урок ведёт другой преподаватель.")
-        if check_age and is_too_old_for_teacher(lesson_date, bc.business_today()):
-            raise forbidden("LESSON_TOO_OLD", "Урок старше 7 дней — отметить его может администратор или владелец")
+        if check_age:
+            window = CentrePolicy.of(self.db, group.org_id).lesson_window_days
+            if is_too_old_for_teacher(lesson_date, bc.business_today(), window):
+                raise forbidden("LESSON_TOO_OLD", lesson_too_old_text(window), windowDays=window)
         return teacher
 
     def assert_period_open(self, group: Group, lesson_id: str, lesson_date: date, occurrence: Optional[Dict[str, Any]] = None,
@@ -225,15 +229,16 @@ class AttendanceRules:
 
     # ------------------------------------------------------------------------------------ restricted journal (LOGIC-B2, R3-5)
     @staticmethod
-    def teacher_sees_lesson(group: Group, actor_id: Any, lesson_teacher_id: Any, lesson_date: str) -> bool:
+    def teacher_sees_lesson(group: Group, actor_id: Any, lesson_teacher_id: Any, lesson_date: str, access_days: int = TEACHER_ACCESS_DAYS) -> bool:
         """THE criterion of what a teacher sees of a lesson in the journal of a group (``restrict_journal`` and the reason of a cancellation in the list of make-ups use it): the current teacher of the
-        group sees every lesson; any other teacher only a lesson that is HIS (the teacher of the lesson by the resolver / the row) from ``today - 7``."""
+        group sees every lesson; any other teacher only a lesson that is HIS (the teacher of the lesson by the resolver / the row) from ``today - access_days``
+        (``CentrePolicy.access_days``: 7, or the window of the centre when it is longer)."""
         from .ops_rules import teacher_lesson_window_start
 
         actor = str(actor_id)
         if group.teacher_id is not None and str(group.teacher_id) == actor:
             return True
-        return lesson_teacher_id is not None and str(lesson_teacher_id) == actor and lesson_date >= teacher_lesson_window_start(bc.business_today()).isoformat()
+        return lesson_teacher_id is not None and str(lesson_teacher_id) == actor and lesson_date >= teacher_lesson_window_start(bc.business_today(), access_days).isoformat()
 
     def restrict_journal(self, group: Group, resp, actor_id: Any):
         """The journal as a teacher who does NOT lead the group sees it: only the lessons that are HIS (the teacher of the lesson by the resolver / the row, from
@@ -243,9 +248,10 @@ class AttendanceRules:
         actor = str(actor_id)
         if group.teacher_id is not None and str(group.teacher_id) == actor:
             return resp
+        access_days = CentrePolicy.of(self.db, group.org_id).access_days
         allowed = {
             key for key, info in (resp.lessonTeachers or {}).items()
-            if self.teacher_sees_lesson(group, actor, info.get("teacherId") if isinstance(info, dict) else getattr(info, "teacherId", None), key.split("_", 1)[0])
+            if self.teacher_sees_lesson(group, actor, info.get("teacherId") if isinstance(info, dict) else getattr(info, "teacherId", None), key.split("_", 1)[0], access_days)
         }
         by_key = {lesson.get("instanceKey"): lesson for lesson in resp.lessons}
         roster_ids: Dict[str, List[str]] = {}

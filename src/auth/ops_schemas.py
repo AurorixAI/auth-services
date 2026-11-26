@@ -278,6 +278,7 @@ class OpenAttendanceActionResponseB(OpenAttendanceActionResponse):
     version: Optional[int] = None
     requiresAdmin: bool = False
     ageDays: int = 0
+    windowDays: int = 7              # LESSON-RULES: the window of the centre in days (the screen says «Урок старше N дн.» with this number, it keeps no copy of it)
     isSubstitution: bool = False
     periodClosed: bool = False       # R3 #2: only where the caller asked for closed months (the payroll sheet): the month of the teacher is saved, the lesson waits for the reopening
 
