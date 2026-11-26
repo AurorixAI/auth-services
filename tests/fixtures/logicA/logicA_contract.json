@@ -3343,6 +3343,19 @@
             "title": "Pending Excused",
             "type": "integer"
           },
+          "unconfirmed_cancellations": {
+            "default": 0,
+            "title": "Unconfirmed Cancellations",
+            "type": "integer"
+          },
+          "unconfirmed_items": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Unconfirmed Items",
+            "type": "array"
+          },
           "unpaid": {
             "default": 0,
             "title": "Unpaid",
@@ -9290,6 +9303,19 @@
             "default": 0,
             "title": "Pending Excused",
             "type": "integer"
+          },
+          "unconfirmed_cancellations": {
+            "default": 0,
+            "title": "Unconfirmed Cancellations",
+            "type": "integer"
+          },
+          "unconfirmed_items": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Unconfirmed Items",
+            "type": "array"
           },
           "unpaid": {
             "default": 0,
