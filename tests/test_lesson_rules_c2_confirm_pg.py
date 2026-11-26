@@ -280,10 +280,10 @@ def test_worlds_equal_the_recalculation_switched_off_and_on_between(pg_session, 
     _twin(pg_session, clock, lambda w, g, p, m: client(w, "owner").put(f"{API}/org/settings/payments", json={"centre_cancel_recalc": False}), NINE_X_50)
 
 
-@pytest.mark.parametrize("mode", [dict(period_mode="lessons", lessons_per_payment=8, billing_anchor="payment_date")], ids=["package-of-8"])
-def test_worlds_equal_in_the_package_mode_the_cancellation_is_neutral(pg_session, clock, mode):
-    """The package mode: a cancelled lesson is not counted for the package whoever cancelled it and when - ``unconfirmed`` is neutral like ``centre``: the two worlds are equal at every step and the
-    confirmation changes no account (hand: the recalculation of the centre is for the monthly modes, the package keeps its lessons)."""
+@pytest.mark.parametrize("mode", [dict(period_mode="lessons", lessons_per_payment=8, billing_anchor="payment_date"), dict(period_mode="calendar", billing_anchor="payment_date")], ids=["package-of-8", "personal-period"])
+def test_worlds_equal_in_the_package_and_personal_period_modes_the_cancellation_is_neutral_until_confirmed(pg_session, clock, mode):
+    """The package mode and the personal period: while the cancellation WAITS no account moves (checked), and after the confirmation the account of every student is the one of the world where the owner
+    cancelled ``centre`` at once (the oracle; the same function of the facts in every billing mode - LESSONS 156)."""
     seen = []
     for salt, how in (("a", "A"), ("b", "B")):
         w, g, people, members = world(pg_session, clock, **mode)
