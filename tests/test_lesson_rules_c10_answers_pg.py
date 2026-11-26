@@ -21,7 +21,7 @@ from pathlib import Path
 from src.models.auth import MembershipPriceOverride
 
 from tests.lesson_rules_helpers import MON, PAST_MON, WED, give_rate, marks_of, reconcile, save, save_sheet, set_kind, teacher_cancels, world, clock, pg_session, needs_pg, client, API  # noqa: F401
-from tests.ops_helpers import new_group, new_slot, new_student, seen_version
+from tests.ops_helpers import closed_sheet, grant_money_right, new_group, new_slot, new_student, seen_version
 
 pytestmark = needs_pg
 SUB = f"{API}/org/substitutions"
@@ -83,6 +83,35 @@ def test_export_of_the_real_answers_for_the_screens(pg_session, clock):
     body = {"groupId": str(g2.id), "dayOfWeek": 5, "startTime": "16:00", "endTime": "17:00", "validFrom": "2026-11-27"}
     assert client(w, "A").post(f"{API}/org/schedule/lessons", json=body).status_code in (200, 201)
 
+    # ---- (С11 п.18) the extra lessons of the main group that the owner has decided: one paid, one not (GET /org/one-off-decisions/decided)
+    for created, day, money, decision in (("2026-11-12 12:00", "2026-11-14", "wait", "pay"), ("2026-11-13 12:00", "2026-11-17", "wait", "skip")):
+        clock.set(created)
+        r = client(w, "A").post(f"{API}/org/schedule/occurrences", json={"groupId": str(g.id), "lessonDate": day, "startTime": "12:00", "endTime": "13:00", "purpose": "extra", "money": money})
+        assert r.status_code == 201, r.text
+        extra_id = r.json()["id"]
+        clock.set(f"{day} 15:00")
+        reconcile(w, g, day, extra_id)
+        save(w, g, people, day, extra_id, marks=marks_of(people, first_present=9))
+        clock.set("2026-11-26 12:00")
+        assert client(w, "owner").post(f"{API}/org/one-off-lessons/{extra_id}/money-decision", json={"decision": decision}).status_code == 200
+    decided = dump(out, "one_off_decided", client(w, "owner").get(f"{API}/org/one-off-decisions/decided"))
+    assert len(decided["items"]) == 2, decided
+
+    # ---- (С11 п.18) the refusal EXCUSE_DECIDED for a student of the MAIN group: the teacher holds Wed 04.11 in progress, the administrator... the owner confirms the excuse of the first student, the teacher rewrites it
+    clock.set("2026-11-26 12:00")
+    reconcile(w, g, "2026-11-04", WED)
+    marks9 = marks_of(people, mark="present")
+    marks9[str(people[0].id)] = "excused"
+    save(w, g, people, "2026-11-04", WED, status="in_progress", marks=marks9, excuseReasons={str(people[0].id): "Болел"})
+    from src.models.auth import AttendanceExcuse
+
+    w.db.expire_all()
+    main_excuse = w.db.query(AttendanceExcuse).filter_by(student_id=people[0].id).one()
+    assert client(w, "owner").post(f"{API}/org/attendance/excuses/{main_excuse.id}/review", json={"decision": "confirmed"}).status_code == 200
+    r = save(w, g, people, "2026-11-04", WED, status="in_progress", marks={**marks9, str(people[0].id): "absent"}, expect=409)
+    assert r.json()["detail"]["code"] == "EXCUSE_DECIDED" and r.json()["detail"]["studentName"] == "Абдуллаев Азиз", r.text
+    excuse_main = r.json()
+
     # ---- the teacher cancels seven lessons of «Математика 7» («Отключили свет»); the answer of the first is the sentence after «Урока не было»
     for day, lesson in (("2026-11-02", MON), ("2026-11-09", MON), ("2026-11-11", WED), ("2026-11-16", MON), ("2026-11-18", WED), ("2026-11-23", MON), ("2026-11-25", WED)):
         r = teacher_cancels(w, g, day, lesson, reason=REASON)
@@ -99,6 +128,14 @@ def test_export_of_the_real_answers_for_the_screens(pg_session, clock):
     from tests.lesson_rules_helpers import kind_in_db
 
     assert kind_in_db(w, g, "2026-11-02", MON)[0] == "completed", kind_in_db(w, g, "2026-11-02", MON)
+    marks_new = marks_of(people, first_present=5)
+    dump(out, "attendance_impact", client(w, "owner").post(f"{API}/org/groups/{g.id}/attendance/impact", json={"lessonDate": "2026-11-02", "lessonId": MON, "records": marks_new}))
+    stale = save(w, g, people, "2026-11-02", MON, who="owner", marks=marks_new, correctionReason="Ошибся", expectedVersion=1, expect=409)
+    assert stale.json()["detail"]["code"] == "ATTENDANCE_CONFLICT", stale.text
+    out["attendance_conflict_save"] = stale.json()
+    r = client(w, "owner").post(f"{API}/org/groups/{g.id}/attendance/return", json={"lessonDate": "2026-11-02", "lessonId": MON, "reason": "Завершили по ошибке", "expectedVersion": 1})
+    assert r.status_code == 409, r.text
+    out["attendance_conflict_return"] = r.json()
     save_sheet(w, expect=201)                                                       # a draft of November (the month is not over): the return of a held lesson then names the sheet
     put_window(w, 7)
 
@@ -118,7 +155,7 @@ def test_export_of_the_real_answers_for_the_screens(pg_session, clock):
     assert {d: i["outcome"] for d, i in by_day.items()} == {"2026-11-02": "included_in_payroll", "2026-11-09": "lesson_restored", "2026-11-11": "cancelled_centre", "2026-11-16": "cancelled_holiday",
                                                            "2026-11-18": "cancel_waiting", "2026-11-23": "cancel_waiting", "2026-11-25": "lesson_restored"}
     assert (by_day["2026-11-09"]["teacherCanMark"], by_day["2026-11-25"]["teacherCanMark"]) == (False, True)
-    assert (by_day["2026-11-18"]["canWithdraw"], by_day["2026-11-23"]["canWithdraw"]) == (False, True) and all(i["lesson"]["startTime"] == "10:00" and i["lesson"]["endTime"] == "11:30" for i in mine["items"])
+    assert (by_day["2026-11-18"]["canWithdraw"], by_day["2026-11-23"]["canWithdraw"]) == (False, True) and all(i["lesson"]["startTime"] == "10:00" and i["lesson"]["endTime"] == "11:30" for i in mine["items"] if i["lesson"]["lessonId"] in (MON, WED))
     confirmed_id = by_day["2026-11-11"]["id"]
     detail = dump(out, "detail_confirmed", client(w, "owner").get(f"{SUB}/{confirmed_id}"))
     assert detail["item"]["confirmedBy"]["name"] == "Валиев Р." and any(e["action"] == "confirmed" for e in detail["events"])
@@ -155,19 +192,7 @@ def test_export_of_the_real_answers_for_the_screens(pg_session, clock):
     r = save(w, g2, people2, "2026-11-19", THU, expect=409)
     assert r.json()["detail"]["code"] == "NOBODY_CAME_BACKDATED" and r.json()["detail"]["message"] == "Никто не пришёл? Такой урок задним числом оформляет администратор — он видит его в уроках без отметки."
     refusals["nobody_came_backdated"] = r.json()
-    reconcile(w, g2, "2026-11-24", TUE)
-    marks = marks_of(people2, mark="present")
-    marks[str(people2[0].id)] = "excused"
-    save(w, g2, people2, "2026-11-24", TUE, status="in_progress", marks=marks, excuseReasons={str(people2[0].id): "Болел"})
-    w.db.expire_all()
-    from src.models.auth import AttendanceExcuse
-
-    excuse = w.db.query(AttendanceExcuse).filter_by(student_id=people2[0].id).one()
-    assert client(w, "owner").post(f"{API}/org/attendance/excuses/{excuse.id}/review", json={"decision": "confirmed"}).status_code == 200
-    r = save(w, g2, people2, "2026-11-24", TUE, status="in_progress", marks={**marks, str(people2[0].id): "absent"}, expect=409)
-    d = r.json()["detail"]
-    assert d["code"] == "EXCUSE_DECIDED" and d["studentId"] == str(people2[0].id) and d["studentName"] == "Назаров Бекзод"
-    refusals["excuse_decided"] = r.json()
+    refusals["excuse_decided"] = excuse_main          # the student of the MAIN group (taken above)
     r = client(w, "A").post(f"{API}/org/groups/{g.id}/attendance", json={"lessonDate": "2026-11-04", "lessonId": WED, "status": "in_progress", "records": {}})
     assert r.status_code in (403, 409), r.text
     refusals["lesson_too_old_save"] = r.json()
@@ -202,6 +227,70 @@ def test_export_of_the_real_answers_for_the_screens(pg_session, clock):
     assert client(w4, "owner").post(f"{API}/org/groups/{g4.id}/archive", json={"missedLessonsAction": "cancel", "reason": "Группа закрыта"}).status_code == 200
     archived = dump(out, "dry_run_confirm_archived", set_kind(w4, g4, "centre", dry_run=True))
     assert archived["restore_allowed"] is False, archived
+
+    # ---- (С11 п.18 / п.14) the confirmation in a CLOSED month: 409 PERIOD_CLOSED
+    w5, g5, p5, m5 = agreed_world(pg_session, clock)
+    teacher_cancels(w5, g5, reason=REASON)
+    closed_sheet(w5, w5.A, date(2026, 11, 1), saved="2026-12-02 12:00")
+    r = set_kind(w5, g5, "centre", expect=409)
+    assert r.json()["detail"]["code"] == "PERIOD_CLOSED", r.text
+    out["confirm_period_closed_409"] = r.json()
+
+    # ---- the zero of the dry run: the three words of the server
+    wz, gz, pz, mz = agreed_world(pg_session, clock, period_mode="lessons", lessons_per_payment=8, billing_anchor="payment_date")
+    teacher_cancels(wz, gz, reason=REASON)
+    assert dump(out, "dry_run_zero_packages", set_kind(wz, gz, "centre", dry_run=True))["zero_reason"] == "packages"
+    wn, gn, pn, mn = agreed_world(pg_session, clock, students=0)
+    new_student(wn.db, wn.org, wn.ids, "late1", "Новичков", "Тимур", gn, joined=datetime(2026, 11, 24, 6, 0))
+    wn.db.commit()
+    teacher_cancels(wn, gn, reason=REASON)
+    assert dump(out, "dry_run_zero_nobody_charged", set_kind(wn, gn, "centre", dry_run=True))["zero_reason"] == "nobody_charged"
+    wo, go, po, mo = agreed_world(pg_session, clock)
+    clock.set("2026-11-24 12:00")
+    r = client(wo, "owner").post(f"{API}/org/schedule/occurrences", json={"groupId": str(go.id), "lessonDate": "2026-11-25", "startTime": "15:00", "endTime": "16:00", "purpose": "extra", "money": "paid"})
+    clock.set("2026-11-26 12:00")
+    teacher_cancels(wo, go, day="2026-11-25", lesson=r.json()["id"], reason=REASON)
+    assert dump(out, "dry_run_zero_one_off", set_kind(wo, go, "centre", day="2026-11-25", lesson=r.json()["id"], dry_run=True))["zero_reason"] == "one_off"
+
+    # ---- «Ждут решения» of the administrator who is the AUTHOR of a waiting cancellation: ``canWithdraw`` true for him
+    wa, ga, pa, ma = agreed_world(pg_session, clock)
+    clock.set("2026-11-22 12:00")
+    r = client(wa, "A").post(SUB, json={"lessons": [{"groupId": str(ga.id), "lessonId": MON, "lessonDate": PAST_MON}], "reasonCode": "sick"})
+    rid = r.json()["created"][0]["id"]
+    clock.set("2026-11-26 12:00")
+    assert client(wa, "admin").post(f"{SUB}/{rid}/decide", json={"decision": "cancel", "reason": "Заболел"}).status_code == 200
+    pend = dump(out, "pending_admin_author", client(wa, "admin").get(SUB, params={"status": "pending"}))
+    assert [i["canWithdraw"] for i in pend["items"] if i["source"] == "unconfirmed"] == [True]
+
+    # ---- the history: an evening lesson started in time and closed after midnight is NOT an entry
+    we, ge, pe, me = agreed_world(pg_session, clock)
+    gev = new_group(we.db, we.org, we.ids, "GV", "Вечерняя физика", we.A, [new_slot("lesson-eve", 3, "21:00", "22:00", "2026-01-01")])
+    sev = new_student(we.db, we.org, we.ids, "ev1", "Вечеров", "Артур", gev)
+    we.db.commit()
+    clock.set("2026-11-25 21:05")
+    assert client(we, "A").post(f"{API}/org/groups/{gev.id}/attendance/start", json={"lessonDate": "2026-11-25", "lessonId": "lesson-eve"}).status_code == 200
+    clock.set("2026-11-26 00:10")
+    save(we, gev, [sev], "2026-11-25", "lesson-eve", marks={str(sev.id): "present"})
+    clock.set("2026-11-26 12:00")
+    ev = dump(out, "history_evening_not_late", client(we, "owner").get(SUB, params={"status": "decided"}))
+    assert [i for i in ev["items"] if i.get("source") == "audit"] == []
+
+    # ---- the schedule with the waiting cancellations as the OWNER reads it
+    dump(out, "schedule_owner", client(w, "owner").get(f"{API}/org/schedule/occurrences", params={"date_from": "2026-11-01", "date_to": "2026-11-30"}))
+
+    # ---- a closed month in the journal and the schedule of the teacher (October of the teacher A is closed on 02.11)
+    closed_sheet(w, w.A, date(2026, 10, 1), saved="2026-11-02 12:00")
+    jm = dump(out, "journal_teacher_month_closed", client(w, "A").get(f"{API}/org/groups/{g.id}/attendance", params={"month": "2026-10"}))
+    assert any(l.get("monthClosed") is True for l in jm["lessons"]), "no lesson of the closed month in the journal"
+    sm = dump(out, "schedule_teacher_month_closed", client(w, "A").get(f"{API}/org/schedule/occurrences", params={"date_from": "2026-10-01", "date_to": "2026-10-31"}))
+    assert any(i.get("monthClosed") is True for i in sm)
+
+    # ---- the history entry of an administrator WITH the right of money (the owner gives the right at the end: every answer above is the administrator without it)
+    grant_money_right(w)
+    reconcile(w, g2, "2026-11-05", THU, who="admin")
+    save(w, g2, people2, "2026-11-05", THU, who="admin", marks=marks_of(people2, first_present=2))
+    hist = dump(out, "history_admin_with_right", client(w, "owner").get(SUB, params={"status": "decided"}))
+    assert [(i["by"]["role"], i["lateDays"]) for i in hist["items"] if i.get("source") == "audit" and i["lesson"]["date"] == "2026-11-05"] == [("admin", 21)]
 
     target = os.environ.get("LESSON_RULES_ANSWERS_DIR")
     if target:
