@@ -107,6 +107,7 @@ NOT_MONEY = {
     ("POST", f"{P}/org/substitutions"): "a request for a substitute for a FUTURE lesson",
     ("POST", f"{P}/org/substitutions/withdraw"): "the same",
     ("POST", f"{P}/org/substitutions/{{request_id}}/withdraw"): "the same",
+    ("POST", f"{P}/org/groups/{{group_id}}/lessons/withdraw-cancellation"): "LESSON-RULES С3: the teacher takes back HIS OWN waiting cancellation (``unconfirmed``, neutral for the money: no account moved yet) inside the window of the centre; the answer carries no money",
     ("PUT", f"{P}/org"): "the name and the contacts of the centre", ("PUT", f"{P}/me"): "the profile of the person",
 }
 

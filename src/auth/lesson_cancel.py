@@ -39,6 +39,7 @@ from .schemas import DEFAULT_CANCELLATION_KIND
 MANAGER_CANCEL = "manager_cancel"                # ``trigger`` of the record a cancellation by an owner / admin made
 TEACHER_CANCEL = "teacher_cancel"                # ... by a teacher («Урока не было» of a lesson that was never started)
 MANAGER_RESTORE = "manager_restore"              # ... a lesson given back
+TEACHER_WITHDRAW = "teacher_withdraw"            # ... a waiting cancellation taken back by the teacher who made it (LESSON-RULES С3)
 RESTORED = "LESSON_RESTORED"                     # ``closed_reason`` of the record of a restore
 KIND_CHANGED = "KIND_CHANGED"                    # ... of the record of a change of the kind of a cancellation (S17)
 MANAGER_REASON_CHANGE = "manager_reason_change"        # ``trigger`` of the event
@@ -186,7 +187,7 @@ class LessonCancelMixin:
 
     # ------------------------------------------------------------------------------------------------ restore
     def restore_lesson(self, org_id: Any, actor_id: Any, actor_role: str, group_id: Any, lesson_id: str, day: date, reason: str, *, money_right: bool = False, dry_run: bool = False,
-                       expected_kind: Optional[str] = None) -> Dict[str, Any]:
+                       expected_kind: Optional[str] = None, as_teacher: bool = False) -> Dict[str, Any]:
         """W1 S5: «Вернуть отменённый урок» (owner / admin, a lesson that has not started, with a reason).  Refused: a lesson that is not cancelled, a MOVED original (cancel the
         copy instead), a lesson that has started, a date that a live day off holds (cancel the day off), a lesson the schedule no longer has, a teacher who is busy meanwhile.
         What was cancelled is recorded (the group audit + the record of the journal «Замены») BEFORE the row is deleted; the deduction of the recalculation is gone with the row.
@@ -194,7 +195,7 @@ class LessonCancelMixin:
         in an open month of the lesson's teacher; the answer says ``returnedToReview`` and carries ``moneyEffects``."""
         actor = _uuid(actor_id)
         try:
-            out = self._restore_locked(org_id, actor, actor_role, group_id, lesson_id, day, reason, money_right, dry_run, expected_kind)
+            out = self._restore_locked(org_id, actor, actor_role, group_id, lesson_id, day, reason, money_right, dry_run, expected_kind, as_teacher)
             if dry_run:                                      # R3 #23: the confirmation before the return - everything above is thrown away, the answer says what it WOULD do
                 self.db.rollback()
                 out["dryRun"] = True
@@ -206,7 +207,7 @@ class LessonCancelMixin:
             raise
 
     def _restore_locked(self, org_id: Any, actor: Any, actor_role: str, group_id: Any, lesson_id: str, day: date, reason: str, money_right: bool = False, dry_run: bool = False,
-                        expected_kind: Optional[str] = None) -> Dict[str, Any]:
+                        expected_kind: Optional[str] = None, as_teacher: bool = False) -> Dict[str, Any]:
         iso = day.isoformat()
         group = self._group_locked(org_id, _uuid(group_id))
         if group is None:
@@ -233,7 +234,7 @@ class LessonCancelMixin:
         except OpsError as exc:                                   # the series was stopped / changed after the cancellation
             raise conflict("RESTORE_LESSON_GONE", "Этого урока уже нет в расписании группы: вернуть его нельзя") from exc
         past = ref.starts_at <= self.now()
-        if past and not money_right:
+        if past and not money_right and not as_teacher:
             raise conflict("RESTORE_PAST", "Урок уже должен был начаться, поэтому в расписание его не вернуть. Вернуть его на отметку («Вернуть на отметку») может владелец или администратор с доступом к деньгам")
         if past:        # Money-1 A2: a month the sheet of the teacher has closed is reopened first
             ClosedPeriods.of(self.db, group.org_id).assert_open(lesson_teacher_ids(self.db, group, lesson_id, iso, row), iso)
@@ -251,7 +252,7 @@ class LessonCancelMixin:
         names = {u.id: short_name(u) for u in self.db.query(User).filter(User.id.in_([i for i in (row.marked_by,) if i]))} if row.marked_by else {}
         trace = {"lessonId": lesson_id, "lessonDate": iso, "reason": reason, "cancellationKind": row.cancellation_kind, "cancellationReason": row.cancellation_reason,
                  "version": int(row.version or 1), "cancelledBy": names.get(row.marked_by), "cancelledAt": row.created_at.isoformat() if row.created_at else None}
-        self.db.add(GroupAudit(org_id=group.org_id, group_id=group.id, actor_id=actor, actor_role=actor_role if actor_role in ("owner", "admin") else "admin", action="lesson_restored",
+        self.db.add(GroupAudit(org_id=group.org_id, group_id=group.id, actor_id=actor, actor_role=actor_role if actor_role in ("owner", "admin", "teacher") else "admin", action="lesson_restored",
                                assigned_teacher_id=group.teacher_id, snapshot=trace, created_at=bc.utc_now()))
         main = TeacherBook(self.db).default_teacher(group, iso, hhmm_to_minutes(ref.end_time))
         reqs = self._lesson_requests(group, lesson_id, iso)
@@ -259,8 +260,9 @@ class LessonCancelMixin:
         if cancelled is not None and cancelled.status == "cancelled":
             self.event(cancelled, "lesson_restored", actor, {"reason": reason})
         if main is not None:
-            record = self._system_request(group, ref, main, reason, MANAGER_RESTORE, actor, reqs[0] if reqs else None)
-            self._close_restored(record, actor, trace)
+            trigger = TEACHER_WITHDRAW if as_teacher else MANAGER_RESTORE
+            record = self._system_request(group, ref, main, reason, trigger, actor, reqs[0] if reqs else None)
+            self._close_restored(record, actor, trace, trigger)
         self.db.flush()
         lost = DaysOffService(self.svc)._substitutes_not_restored([row], {group.id: group})          # the substitute the cancellation took off does not come back (R3 12)
         self.db.delete(row)
@@ -277,6 +279,36 @@ class LessonCancelMixin:
             if trace["cancellationKind"] == "centre" and (past or money_right):
                 out["moneyEffects"]["text"] = money_effects.deduction_text(gone, done=not dry_run, past=bool(past))
         return out
+
+    def withdraw_cancellation(self, org_id: Any, actor_id: Any, group_id: Any, lesson_id: str, day: date, expected_kind: Optional[str] = None) -> Dict[str, Any]:
+        """LESSON-RULES С3: the teacher gives back HIS OWN cancellation while it WAITS (``unconfirmed``) and the lesson is inside the window of the centre: the same return to the mark as the owner's
+        «Урок был» (the right is this one case only), written as the teacher's (the group audit says ``teacher``, the trigger is ``teacher_withdraw``).  After the decision, in an archived group, in a closed
+        month, for a cancellation of somebody else or of a lesson older than the window: a refusal.  The answer carries no money."""
+        from .cancellation_kind import already_decided
+        from .ops_rules import forbidden, is_too_old_for_teacher, lesson_too_old_text
+
+        actor = _uuid(actor_id)
+        try:
+            group = self._group_locked(org_id, _uuid(group_id))
+            if group is None:
+                raise not_found("GROUP_NOT_FOUND", "Группа не найдена")
+            if group.status != "active":
+                raise group_archived()
+            row = (self.db.query(GroupAttendance).filter(GroupAttendance.group_id == group.id, GroupAttendance.lesson_id == lesson_id, GroupAttendance.lesson_date == day.isoformat())
+                   .with_for_update().first())
+            if row is None or row.status != "cancelled" or row.cancellation_kind != "unconfirmed":
+                raise already_decided(self.db, group, row, lesson_id, day)
+            if row.marked_by != actor:
+                raise forbidden("NOT_YOUR_CANCELLATION", "Эту отмену оформили не вы: вернуть урок на отметку может владелец или администратор")
+            window = CentrePolicy.of(self.db, org_id).lesson_window_days
+            if is_too_old_for_teacher(day, bc.business_today(), window):
+                raise forbidden("LESSON_TOO_OLD", lesson_too_old_text(window), windowDays=window)
+            out = self._restore_locked(org_id, actor, "teacher", group_id, lesson_id, day, "Преподаватель отозвал отмену", False, False, expected_kind, True)
+            self.db.commit()
+            return {k: out[k] for k in ("ok", "restored", "lessonId", "lessonDate", "previousKind", "returnedToReview") if k in out}
+        except BaseException:
+            self.db.rollback()
+            raise
 
     def record_kind_change(self, group: Group, lesson_id: str, day: date, actor: Any, before: str, after: str, reason: str, trigger: str = MANAGER_REASON_CHANGE) -> None:
         """W1 S17 (Д10): «Изменить причину отмены» leaves a record in the journal «Замены» (``closed`` / ``KIND_CHANGED``, trigger ``manager_reason_change``: who, when, from what to what, why) -
@@ -296,12 +328,12 @@ class LessonCancelMixin:
             "closed", KIND_CHANGED, now, REASON_CHANGE_VIA, actor, None, now)
         self.event(record, "closed", actor, {"closedReason": KIND_CHANGED, "trigger": trigger, "reason": reason, "cancellationKind": {"from": before, "to": after}})
 
-    def _close_restored(self, record: Req, actor: Any, trace: Dict[str, Any]) -> None:
-        """The record of a restore: ``closed`` / ``LESSON_RESTORED`` decided by the administrator, one ``closed`` event that carries what was cancelled."""
+    def _close_restored(self, record: Req, actor: Any, trace: Dict[str, Any], trigger: str = MANAGER_RESTORE) -> None:
+        """The record of a restore: ``closed`` / ``LESSON_RESTORED`` decided by the administrator (or by the teacher who withdraws his own cancellation), one ``closed`` event that carries what was cancelled."""
         now = self.now()
         record.status, record.closed_reason, record.decided_at, record.decided_via, record.decided_by, record.decision_note, record.updated_at = (
-            "closed", RESTORED, now, MANAGER_RESTORE, actor, None, now)
-        self.event(record, "closed", actor, {"closedReason": RESTORED, "trigger": MANAGER_RESTORE, "reason": trace["reason"], "previous": {k: trace[k] for k in (
+            "closed", RESTORED, now, trigger, actor, None, now)
+        self.event(record, "closed", actor, {"closedReason": RESTORED, "trigger": trigger, "reason": trace["reason"], "previous": {k: trace[k] for k in (
             "cancellationKind", "cancellationReason", "version", "cancelledBy", "cancelledAt")}})
 
 

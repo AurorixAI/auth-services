@@ -563,6 +563,14 @@ class LessonRestoreRequest(BaseModel):
     expectedKind: Optional[StoredCancellationKind] = None  # LESSON-RULES: the kind the screen saw; another one (or no cancellation any more) = 409 ``ALREADY_DECIDED`` (who, when, which kind)
 
 
+class WithdrawCancellationRequest(BaseModel):
+    """``POST /org/groups/{id}/lessons/withdraw-cancellation``: the teacher takes back his own waiting cancellation."""
+
+    lessonId: str = Field(..., min_length=1, max_length=100)
+    lessonDate: date
+    expectedKind: Optional[StoredCancellationKind] = None
+
+
 class LessonRestoreOut(BaseModel):
     ok: bool = True
     restored: bool = True

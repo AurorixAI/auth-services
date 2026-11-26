@@ -32,6 +32,7 @@ from .substitution_schemas import (
     LessonMoveRequest,
     LessonRestoreOut,
     LessonRestoreRequest,
+    WithdrawCancellationRequest,
     MineOut,
     MoveCheckOut,
     MyLessonsOut,
@@ -236,6 +237,12 @@ def restore_cancelled_lesson(group_id: str, request: LessonRestoreRequest, user:
     reason = Substitutions._reason(request, 3, 500)
     return _subs(db).restore_lesson(user["org_id"], user["user_id"], user["org_role"], group_id, request.lessonId, request.lessonDate, reason,
                                       money_right=money_right, dry_run=request.dryRun, expected_kind=request.expectedKind)
+
+
+@router.post("/org/groups/{group_id}/lessons/withdraw-cancellation")
+def withdraw_own_cancellation(group_id: str, request: WithdrawCancellationRequest, user: dict = Depends(_member), db: Session = Depends(get_db)):
+    """LESSON-RULES С3: the teacher gives back HIS OWN waiting cancellation (``unconfirmed``) of a lesson inside the window of the centre - the lesson returns to «Уроки без отметки»."""
+    return _subs(db).withdraw_cancellation(user["org_id"], user["user_id"], group_id, request.lessonId, request.lessonDate, request.expectedKind)
 
 
 # ------------------------------------------------------------------------------------ exam-service (D-1)
