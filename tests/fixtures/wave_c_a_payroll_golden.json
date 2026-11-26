@@ -480,6 +480,8 @@
     "open_lesson_items": [],
     "open_lessons": null,
     "pending_excused": 0,
+    "unconfirmed_cancellations": 0,
+    "unconfirmed_items": [],
     "unpaid": 5,
     "unpaid_students": 1
    },
@@ -935,6 +937,8 @@
     "open_lesson_items": [],
     "open_lessons": null,
     "pending_excused": 0,
+    "unconfirmed_cancellations": 0,
+    "unconfirmed_items": [],
     "unpaid": 5,
     "unpaid_students": 1
    },
@@ -1336,6 +1340,8 @@
     "open_lesson_items": [],
     "open_lessons": null,
     "pending_excused": 0,
+    "unconfirmed_cancellations": 0,
+    "unconfirmed_items": [],
     "unpaid": 5,
     "unpaid_students": 1
    },
@@ -2017,6 +2023,8 @@
    "open_lesson_items": [],
    "open_lessons": null,
    "pending_excused": 0,
+   "unconfirmed_cancellations": 0,
+   "unconfirmed_items": [],
    "unpaid": 5,
    "unpaid_students": 1
   },
@@ -2426,6 +2434,8 @@
    "open_lesson_items": [],
    "open_lessons": null,
    "pending_excused": 0,
+   "unconfirmed_cancellations": 0,
+   "unconfirmed_items": [],
    "unpaid": 5,
    "unpaid_students": 1
   },
@@ -2848,6 +2858,8 @@
     "open_lesson_items": [],
     "open_lessons": null,
     "pending_excused": 0,
+    "unconfirmed_cancellations": 0,
+    "unconfirmed_items": [],
     "unpaid": 5,
     "unpaid_students": 1
    },
