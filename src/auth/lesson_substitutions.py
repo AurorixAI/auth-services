@@ -21,7 +21,7 @@ from datetime import date, datetime, timedelta
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 from uuid import UUID, uuid4
 
-from sqlalchemy import event, func, or_, select
+from sqlalchemy import event, func, literal, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, aliased
 
@@ -131,6 +131,9 @@ class Ctx:
         self.voided: Set[UUID] = set()                           # requests a day off that was cancelled left behind (``day_off_voided``, #157 A4)
         self.needs_decision: Dict[UUID, bool] = {}               # request id -> ``needsDecision`` of its LAST ``day_off_voided`` (same query as the rest of the events)
         self.last_event: Dict[UUID, datetime] = {}               # request id -> the time of its newest event of any kind (#157 A8)
+        self.rows: Dict[Tuple[UUID, str, str], Tuple[str, Optional[str]]] = {}   # (group, lesson id, date) -> (status, kind) of the journal row of a CANCELLED record's lesson (LESSON-RULES: one query per page)
+        self.confirmed: Dict[UUID, LessonSubstitutionEvent] = {}  # request id -> its ``confirmed`` event (the owner decided a waiting cancellation)
+        self.window_days: int = 7                                # the window of the centre (read only when a record of the page was given back)
 
 
 class SubstitutionsBase:
@@ -170,21 +173,34 @@ class SubstitutionsBase:
         return {str(uid): role for uid, role in rows}
 
     # ============================================================================================ item
-    def ctx_for(self, reqs: Sequence[Req], viewer: Any) -> Ctx:
+    def ctx_for(self, reqs: Sequence[Req], viewer: Any, extra: Sequence[Tuple[UUID, str]] = ()) -> Ctx:
+        """``extra``: ``(group id, lesson date)`` of the lessons of the page that are not records (the waiting cancellations of «Ждут решения»): their groups, counts and times are read WITH the page - no query of their own."""
         ctx = Ctx(viewer)
-        if not reqs:
+        if not reqs and not extra:
             return ctx
-        gids = {r.group_id for r in reqs}
+        gids = {r.group_id for r in reqs} | {g for g, _d in extra}
         ctx.groups = {g.id: g for g in self.db.query(Group).filter(Group.id.in_(gids)).all()}
         prev_ids = {r.previous_request_id for r in reqs if r.previous_request_id}
         if prev_ids:
             ctx.previous = {p.id: p for p in self.db.query(Req).filter(Req.id.in_(prev_ids)).all()}
-        self._load_events(ctx, reqs)
+        if reqs:
+            self._load_events(ctx, reqs)
+            cancelled = [r for r in reqs if r.status == "cancelled"]
+            if cancelled:                # LESSON-RULES: what became of the lesson of a cancelled record - the kind of its row (waiting / by the centre / a holiday), a held lesson - ONE query for the page
+                dates = {r.lesson_date for r in cancelled}
+                wanted = {(r.group_id, r.lesson_id, r.lesson_date) for r in cancelled}
+                ctx.rows = {(g, lid, d): (s, k) for g, lid, d, s, k in self.db.query(GroupAttendance.group_id, GroupAttendance.lesson_id, GroupAttendance.lesson_date, GroupAttendance.status,
+                                                                                     GroupAttendance.cancellation_kind)
+                            .filter(GroupAttendance.group_id.in_({r.group_id for r in cancelled}), GroupAttendance.lesson_date.in_(dates)) if (g, lid, d) in wanted}
+                if ctx.restored:
+                    ctx.window_days = CentrePolicy.of(self.db, cancelled[0].org_id).lesson_window_days
         user_ids: Set[Any] = set()
         for r in list(reqs) + list(ctx.previous.values()):
             user_ids.update({r.requester_id, r.suggested_teacher_id, r.decided_by, r.substitute_id})
         for e in ctx.cleared.values():
             user_ids.update({e.actor_id, _uuid(self._cleared_to(e))})
+        for e in ctx.confirmed.values():
+            user_ids.add(e.actor_id)
         ctx.users = self.teachers.users_by_id(u for u in user_ids if u)
         ctx.roles = self.roles_of({r.org_id for r in reqs}, user_ids)
         ctx.counts = dict(
@@ -203,6 +219,8 @@ class SubstitutionsBase:
         by_group: Dict[UUID, List[str]] = {}
         for r in reqs:
             by_group.setdefault(r.group_id, []).append(r.lesson_date)
+        for gid, day in extra:
+            by_group.setdefault(gid, []).append(day)
         every = [d for days in by_group.values() for d in days]
         preload = self.svc._preload_schedule_data(list(by_group), date_from=date.fromisoformat(min(every)), date_to=date.fromisoformat(max(every)))      # wave C DM-009: two queries for the page
         for gid, days in by_group.items():
@@ -224,7 +242,7 @@ class SubstitutionsBase:
         if not ids:
             return
         rows = (self.db.query(LessonSubstitutionEvent).filter(LessonSubstitutionEvent.request_id.in_(ids),
-                                                              LessonSubstitutionEvent.action.in_(("requested", "assignment_cleared", "closed", "lesson_restored", "day_off_voided")))
+                                                              LessonSubstitutionEvent.action.in_(("requested", "assignment_cleared", "closed", "lesson_restored", "day_off_voided", "confirmed")))
                 .order_by(LessonSubstitutionEvent.created_at, LessonSubstitutionEvent.id).all())
         for e in rows:
             if e.action == "assignment_cleared":
@@ -233,6 +251,8 @@ class SubstitutionsBase:
                 ctx.closed_trigger[e.request_id] = (e.snapshot or {}).get("trigger")
             elif e.action == "lesson_restored":
                 ctx.restored.add(e.request_id)
+            elif e.action == "confirmed":
+                ctx.confirmed[e.request_id] = e
             elif e.action == "day_off_voided":
                 ctx.voided.add(e.request_id)
                 ctx.needs_decision[e.request_id] = bool((e.snapshot or {}).get("needsDecision"))
@@ -272,9 +292,13 @@ class SubstitutionsBase:
                 return "lesson_later_moved"
             return "substitution_replaced" if SubstitutionsBase._cleared_to(e) else "substitution_cleared"
         if r.status == "cancelled":
+            state = ctx.rows.get((r.group_id, r.lesson_id, r.lesson_date))
             if r.id in ctx.restored:
-                return "lesson_restored"
-            return "lesson_not_held" if (ctx.triggers.get(r.id) == "teacher_cancel" or r.decided_via == "teacher_cancel") else "cancelled"
+                return "included_in_payroll" if state is not None and state[0] == "completed" else "lesson_restored"          # LESSON-RULES: the lesson was given back; held afterwards it is in the pay
+            if ctx.triggers.get(r.id) == "teacher_cancel" or r.decided_via == "teacher_cancel":
+                kind = state[1] if state is not None and state[0] == "cancelled" else None
+                return {"unconfirmed": "cancel_waiting", "centre": "cancelled_centre", "holiday": "cancelled_holiday"}.get(kind or "", "lesson_not_held")          # LESSON-RULES: the words of the teacher's block
+            return "cancelled"
         if r.status == "closed":
             if r.closed_reason == "LESSON_CANCELLED":
                 return "cancelled_by_day_off" if ctx.closed_trigger.get(r.id) == "day_off" else "lesson_already_cancelled"
@@ -327,7 +351,21 @@ class SubstitutionsBase:
             "decision": decision, "previous": prev, "trigger": ctx.triggers.get(r.id) if r.origin == "system" else None, **self._cleared(r, ctx),
             "outcome": self.outcome_of(r, ctx), "needsDecision": ctx.needs_decision.get(r.id, False), "closedTrigger": ctx.closed_trigger.get(r.id) if r.status == "closed" else None,
             "lastActivityAt": max(t for t in (r.decided_at or r.created_at, ctx.last_event.get(r.id)) if t is not None).isoformat(),
+            **self._lesson_rules_fields(r, ctx),
         }
+
+    def _lesson_rules_fields(self, r: Req, ctx: Ctx) -> Dict[str, Any]:
+        """LESSON-RULES: who confirmed a waiting cancellation and when (the manager's eyes), how long it has waited, whether the teacher could still mark a lesson that was given back (the window of the centre)."""
+        out: Dict[str, Any] = {"confirmedBy": None, "confirmedAt": None, "waitingDays": None, "teacherCanMark": None}
+        e = ctx.confirmed.get(r.id)
+        if e is not None and ctx.viewer == MANAGER:
+            out["confirmedBy"], out["confirmedAt"] = self._author(ctx, e.actor_id), e.created_at.isoformat()
+        state = ctx.rows.get((r.group_id, r.lesson_id, r.lesson_date))
+        if r.status == "cancelled" and state is not None and state[0] == "cancelled" and state[1] == "unconfirmed" and r.decided_at is not None:
+            out["waitingDays"] = max(0, (bc.business_today() - bc.utc_to_business_date(r.decided_at)).days)
+        if r.id in ctx.restored:
+            out["teacherCanMark"] = (bc.business_today() - date.fromisoformat(r.lesson_date)).days <= ctx.window_days
+        return out
 
     def items(self, reqs: Sequence[Req], viewer: Any) -> List[Dict[str, Any]]:
         """``viewer``: ``MANAGER`` or the user id of the teacher the answer is for - required, so that a new call site has to say whose eyes it is (#157 A1)."""
@@ -758,13 +796,15 @@ class SubstitutionsBase:
         if revalidate:      # (R3 13) one pass per request, bounded (the list does it itself over its page + the same set and asks the counts with ``revalidate=False``)
             self.revalidate(self._badge_batch(org_id, []))
         now, today = self.now(), bc.business_today()
-        base = self.db.query(Req).filter(Req.org_id == org_id, Req.status == PENDING)
-        pending = base.count()
-        urgent = base.filter(Req.starts_at > now, Req.starts_at < now + timedelta(minutes=R.URGENT_MINUTES)).count()
-        overdue = base.filter(Req.starts_at <= now).count()
+        pending, urgent, overdue = self.db.query(          # ONE query for the three counts (LESSON-RULES: the room for the count of the waiting cancellations)
+            func.count(Req.id), func.count(Req.id).filter(Req.starts_at > now, Req.starts_at < now + timedelta(minutes=R.URGENT_MINUTES)), func.count(Req.id).filter(Req.starts_at <= now),
+        ).filter(Req.org_id == org_id, Req.status == PENDING).one()
         expiring = 0
+        waiting_cancellations = self.db.query(func.count(GroupAttendance.id)).filter(GroupAttendance.org_id == org_id, GroupAttendance.status == "cancelled",
+                                                                                      GroupAttendance.cancellation_kind == "unconfirmed").scalar() or 0       # LESSON-RULES: counted for who may decide them, like the money rows of the one-off lessons
         one_off = OneOffPurpose(self.svc).pending_count(org_id)          # #154: the decisions of the money of additional lessons are in the same badge (the 1st-of-the-month window and «urgent» do not apply to them)
-        return {"pendingTotal": pending, "urgentTotal": urgent, "overdueTotal": overdue, "expiringTotal": expiring, "oneOffDecisionsTotal": one_off, "waitingTotal": pending + (one_off if money_right else 0)}
+        return {"pendingTotal": pending, "urgentTotal": urgent, "overdueTotal": overdue, "expiringTotal": expiring, "oneOffDecisionsTotal": one_off, "unconfirmedTotal": waiting_cancellations,
+                "waitingTotal": pending + ((one_off + waiting_cancellations) if money_right else 0)}
 
     def _badge_batch(self, org_id: Any, extra: Sequence[Req]) -> List[Req]:
         """The pending requests to revalidate before counting: the oldest ``SUMMARY_REVALIDATE_MAX`` of the centre + ``extra`` (the page of the list), each once."""
@@ -779,51 +819,116 @@ class SubstitutionsBase:
         return func.greatest(func.coalesce(Req.decided_at, Req.created_at), newest)
 
     def list(self, org_id: Any, *, status: str, group_id: Optional[str], teacher_id: Optional[str], date_from: Optional[date], date_to: Optional[date],
-             urgent: Optional[bool], search: Optional[str], limit: int, offset: int) -> Dict[str, Any]:
+             urgent: Optional[bool], search: Optional[str], limit: int, offset: int, backdated_only: bool = False, money_right: bool = True) -> Dict[str, Any]:
+        """The list of «Замены».  LESSON-RULES С7: ``pending`` = the waiting requests AND the cancellations that wait for the owner; ``decided`` = the decided requests AND the entries of the journal («оформлен
+        задним числом», «отметки исправлены», «добавил урок»), a waiting cancellation is NOT in it; each is ONE list (``substitution_lists``: ``UNION ALL``, one count, one page).  ``backdated_only``: only
+        the entries that look back.  ``money_right`` marks who may decide a waiting cancellation (the roles without it read the same rows: «решает владелец», no sums)."""
+        from . import substitution_lists as L
+
         now = self.now()
         q = self.db.query(Req).filter(Req.org_id == org_id)
         if status == "pending":
             q = q.filter(Req.status == PENDING)
         elif status == "decided":
             q = q.filter(Req.status != PENDING)
+            waiting = (select(GroupAttendance.id).where(GroupAttendance.group_id == Req.group_id, GroupAttendance.lesson_id == Req.lesson_id, GroupAttendance.lesson_date == Req.lesson_date,
+                                                         GroupAttendance.status == "cancelled", GroupAttendance.cancellation_kind == "unconfirmed").correlate(Req).exists())
+            q = q.filter(~waiting)                          # a cancellation that has no outcome yet is not history
         activity = self._activity()
+        since = None
         if status != "pending" and date_from is None and date_to is None:          # #157 A8: «за 30 дней» = what HAPPENED in the last 30 days (the time of the newest event), not the date of the lesson
             since = now - timedelta(days=LIST_DEFAULT_DAYS)
             q = q.filter(activity >= since) if status == "decided" else q.filter(or_(Req.status == PENDING, activity >= since))
-        if group_id and _uuid(group_id):
-            q = q.filter(Req.group_id == _uuid(group_id))
-        if teacher_id and _uuid(teacher_id):            # P1.2: both teachers of a record - the one who was replaced and the one who replaces
-            q = q.filter(or_(Req.requester_id == _uuid(teacher_id), Req.substitute_id == _uuid(teacher_id)))
+        gid, tid = (_uuid(group_id) if group_id else None), (_uuid(teacher_id) if teacher_id else None)
+        if gid:
+            q = q.filter(Req.group_id == gid)
+        if tid:            # P1.2: both teachers of a record - the one who was replaced and the one who replaces
+            q = q.filter(or_(Req.requester_id == tid, Req.substitute_id == tid))
         if date_from:
             q = q.filter(Req.lesson_date >= date_from.isoformat())
         if date_to:
             q = q.filter(Req.lesson_date <= date_to.isoformat())
         if urgent:
             q = q.filter(Req.status == PENDING, Req.starts_at > now, Req.starts_at < now + timedelta(minutes=R.URGENT_MINUTES))
+        like = None
         if search:
             like = contains(search)               # MN-09: `%` and `_` of the typed text are letters, not masks
             substitute = aliased(User)
             q = q.join(Group, Group.id == Req.group_id).join(User, User.id == Req.requester_id).outerjoin(substitute, substitute.id == Req.substitute_id).filter(
                 or_(Group.name.ilike(like, escape="\\"), User.last_name.ilike(like, escape="\\"), User.first_name.ilike(like, escape="\\"),
                     substitute.last_name.ilike(like, escape="\\"), substitute.first_name.ilike(like, escape="\\")))
-        total = q.count()
-        if status == "pending":
-            q = q.order_by((Req.starts_at <= now).desc(), Req.starts_at, Req.id)
-        elif status == "decided":
-            q = q.order_by(activity.desc(), Req.id)          # #157 A8: the newest event of the row, not only the decision - a substitution taken off just now lifts its row
-        else:
-            q = q.order_by((Req.status == PENDING).desc(), Req.starts_at, Req.id)
-        reqs = q.offset(offset).limit(limit).all()
+        union = status in ("pending", "decided") and not urgent
+
+        def read():
+            """``(total, the rows of the page)``: the records and (pending / decided, no ``urgent`` filter) the other sources of the list in one union."""
+            if not union:
+                total = q.count()
+                if status == "pending":
+                    ordered = q.order_by((Req.starts_at <= now).desc(), Req.starts_at, Req.id)
+                elif status == "decided":
+                    ordered = q.order_by(activity.desc(), Req.id)          # #157 A8: the newest event of the row, not only the decision - a substitution taken off just now lifts its row
+                else:
+                    ordered = q.order_by((Req.status == PENDING).desc(), Req.starts_at, Req.id)
+                return total, [SimpleNamespace(kind=L.REQUEST, req_id=r.id) for r in ordered.offset(offset).limit(limit).all()]
+            d_from, d_to = (date_from.isoformat() if date_from else None), (date_to.isoformat() if date_to else None)
+            branches = []
+            if status == "pending":
+                branches.append(L.request_branch(q, Req.starts_at, Req.starts_at <= now))
+                branches.append(L.unconfirmed_branch(org_id, group_id=gid, teacher_id=tid, date_from=d_from, date_to=d_to, like=like))
+            else:
+                if not backdated_only:
+                    branches.append(L.request_branch(q, activity, literal(True)))
+                    branches.append(L.lesson_added_branch(org_id, since=since, group_id=gid, teacher_id=tid, like=like))
+                branches.append(L.attendance_branch(org_id, since=since, group_id=gid, teacher_id=tid, date_from=d_from, date_to=d_to, like=like))
+            return L.page(self.db, branches, pending=status == "pending", limit=limit, offset=offset)
+
+        total, rows = read()
+
+        def requests_of(page_rows):
+            ids = [r.req_id for r in page_rows if r.req_id is not None]
+            found = {r.id: r for r in self.db.query(Req).filter(Req.id.in_(ids)).all()} if ids else {}
+            return [found[i] for i in ids if i in found]
+
+        reqs = requests_of(rows)
         # ONE lazy pass over what is being RETURNED plus the bounded set the badge counts (W1 R3 13): a stale request must not be listed nor counted; each request is looked at once
         if self.revalidate(self._badge_batch(org_id, [r for r in reqs if r.status == PENDING])):
             if status == "pending":
-                reqs = q.offset(offset).limit(limit).all()       # the page refills with the next ones
-                total = q.count()
+                total, rows = read()                      # the page refills with the next ones
+                reqs = requests_of(rows)
             else:
                 for r in reqs:
                     self.db.refresh(r)
-        counts = self.summary(org_id, revalidate=False)
-        return {"items": self.items(reqs, MANAGER), "total": total, "pendingTotal": counts["pendingTotal"], "urgentTotal": counts["urgentTotal"], "expiringTotal": counts["expiringTotal"]}
+        counts = self.summary(org_id, revalidate=False, money_right=money_right)
+        waiting_rows = [r for r in rows if r.kind == L.UNCONFIRMED]
+        ctx = self.ctx_for(reqs, MANAGER, extra=[(r.group_id, r.lesson_date) for r in waiting_rows])
+        now2 = self.now()
+        by_id = {r.id: self.item(r, ctx, now2) for r in reqs}
+        items: List[Dict[str, Any]] = []
+        for row in rows:
+            if row.kind == L.REQUEST:
+                if row.req_id in by_id:
+                    items.append(by_id[row.req_id])
+            elif row.kind == L.UNCONFIRMED:
+                items.append(self._waiting_item(row, ctx, money_right))
+            else:
+                items.append(L.audit_item(row))
+        return {"items": items, "total": total, "pendingTotal": counts["pendingTotal"], "urgentTotal": counts["urgentTotal"], "expiringTotal": counts["expiringTotal"],
+                "unconfirmedTotal": counts["unconfirmedTotal"]}
+
+    def _waiting_item(self, row: Any, ctx: Ctx, money_right: bool) -> Dict[str, Any]:
+        """A cancellation that waits for the owner as a row of «Ждут решения» (``source: unconfirmed``): the group, the lesson with its time, the teacher, WHO cancelled, the words of the cancelling person,
+        how long it has waited and how old the lesson is.  ``canDecide``: the money right - the others read it as «решает владелец» (no sum anywhere: the sums are the dry run of the decision)."""
+        from . import substitution_lists as L
+
+        group = ctx.groups.get(row.group_id)
+        occ = ctx.occ.get((row.group_id, row.lesson_id, row.lesson_date))
+        today = bc.business_today()
+        return {"source": "unconfirmed", "id": str(row.ref_id), "kind": "unconfirmed", "group": {"id": str(row.group_id), "name": group.name if group else (row.group_name or ""),
+                                                                                                 "studentCount": int(ctx.counts.get(row.group_id, 0))},
+                "lesson": {"lessonId": row.lesson_id, "date": row.lesson_date, "startTime": occ["startTime"] if occ else None, "endTime": occ["endTime"] if occ else None},
+                "teacher": L.person(row, "teacher", "teacher_id"), "cancelledBy": L.person(row, "actor", "actor_id"), "reason": row.reason,
+                "cancelledAt": row.at.isoformat(), "waitingDays": max(0, (today - bc.utc_to_business_date(row.at)).days), "ageDays": (today - date.fromisoformat(row.lesson_date)).days,
+                "canDecide": bool(money_right)}
 
     def detail(self, org_id: Any, actor_id: Any, is_manager: bool, request_id: Any) -> Dict[str, Any]:
         """The record with its WHOLE history (#157 A5): ``chain`` (before), ``next`` (after), ``events`` of all of them, each with ``requestId``.  A GET writes nothing (A6: no revalidate - the

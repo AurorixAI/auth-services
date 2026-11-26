@@ -79,7 +79,7 @@ class SubDecision(BaseModel):
     kind: DecisionKind
     by: Optional[PersonRef] = None
     at: str
-    via: Optional[Literal["request", "teacher_move", "lesson_teacher_put", "system", "withdraw", "teacher_cancel", "manager_restore", "reason_change"]] = None
+    via: Optional[Literal["request", "teacher_move", "lesson_teacher_put", "system", "withdraw", "teacher_cancel", "manager_restore", "reason_change", "teacher_withdraw"]] = None
     note: Optional[str] = None
     substitute: Optional[PersonRef] = None
     movedTo: Optional[MovedTo] = None
@@ -120,6 +120,10 @@ class SubstitutionItem(BaseModel):
     outcome: str = "pending"  # #157 A11: THE code of what became of the record (P157_API.md §2) - one function for the list, the detail and ``mine``; the texts are the front's
     lastActivityAt: Optional[str] = None  # #157 A8: the later of the decision and the newest event of the record; the «Решённые» are sorted by it
     needsDecision: bool = False  # #157: ``needsDecision`` of the newest ``day_off_voided`` of the record (an administrator has to decide something after a day off was cancelled); false when there is none
+    confirmedBy: Optional[PersonRef] = None  # LESSON-RULES: who confirmed a waiting cancellation (the manager's eyes only)
+    confirmedAt: Optional[str] = None
+    waitingDays: Optional[int] = None  # a cancellation that waits for the owner: the days it has waited
+    teacherCanMark: Optional[bool] = None  # a lesson that was given back: may its teacher still mark it (the window of the centre)? false = the administrator marks it
     closedTrigger: Optional[str] = None  # #157 A9: the trigger of the ``closed`` event (day_off, journal_row, window_expired, role_changed, ...); null for a record that is not closed
 
 
@@ -230,11 +234,12 @@ class WithdrawBatchOut(BaseModel):
 
 # -------------------------------------------------------------------------------- owner / admin (4.3)
 class SubstitutionListOut(BaseModel):
-    items: List[SubstitutionItem] = Field(default_factory=list)
+    items: List[Union[SubstitutionItem, Dict[str, Any]]] = Field(default_factory=list)          # LESSON-RULES С7: a record, or an entry of the journal / a waiting cancellation (a dict with ``source``)
     total: int = 0
     pendingTotal: int = 0
     urgentTotal: int = 0
     expiringTotal: int = 0
+    unconfirmedTotal: int = 0  # LESSON-RULES: cancellations that wait for the owner (also rows of ``items`` of the pending list, ``source: unconfirmed``)
 
 
 class SubstitutionSummary(BaseModel):
@@ -243,6 +248,7 @@ class SubstitutionSummary(BaseModel):
     overdueTotal: int = 0
     expiringTotal: int = 0     # W1 S20: requests that fall out of the window of the unclosed lessons on the 1st (shown only in the last 3 days before it)
     oneOffDecisionsTotal: int = 0     # #154: held additional lessons that wait for «Оплатить / Не оплачивать»
+    unconfirmedTotal: int = 0         # LESSON-RULES: cancellations that wait for the owner (in ``waitingTotal`` only for the money right)
     waitingTotal: int = 0             # #154: ``pendingTotal`` + ``oneOffDecisionsTotal`` - the counter of the tab «Ждут решения» and of the badge of the menu; #159 M2: an admin WITHOUT the right of money gets ``pendingTotal`` only (the money rows are not his tasks)
 
 

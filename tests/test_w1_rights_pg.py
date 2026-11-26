@@ -117,7 +117,9 @@ def test_s3_lesson_was_not_held_stays_the_teachers_for_a_past_lesson_and_is_in_t
     assert (row.status, row.cancellation_kind, row.marked_by) == ("cancelled", "unconfirmed", w.A.id)      # LESSON-RULES: a past lesson cancelled by a teacher WAITS for the owner
     (rec,) = [x for x in requests_of(w) if x.group_id == w.G2.id]
     assert (rec.status, rec.origin, rec.requester_id, rec.decided_by, rec.decided_via) == ("cancelled", "system", w.A.id, w.A.id, "teacher_cancel")
-    assert client(w, "admin").get(f"{SUB}", params={"status": "decided"}).json()["items"][0]["decision"]["via"] == "teacher_cancel"
+    assert client(w, "admin").get(f"{SUB}", params={"status": "decided"}).json()["items"] == []          # LESSON-RULES: a waiting cancellation has no outcome yet: it is not history ...
+    (waiting,) = client(w, "admin").get(f"{SUB}", params={"status": "pending"}).json()["items"]          # ... it is a row of «Ждут решения», with who cancelled it (the record «Урока не было» of the teacher stays under it)
+    assert (waiting["source"], waiting["kind"], waiting["cancelledBy"]["role"], waiting["teacher"]["id"]) == ("unconfirmed", "unconfirmed", "teacher", str(w.A.id))
     # a teacher may not choose «Праздник»
     body2 = {"lessonDate": "2026-10-20", "lessonId": "lesson-l3", "cancellationReason": "Праздник", "cancellationKind": "holiday"}
     assert client(w, "A").post(f"{API}/org/groups/{w.G2.id}/attendance/reconcile/cancel", json=body2).status_code == 403

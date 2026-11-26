@@ -32,7 +32,14 @@ def test_g1_the_text_of_a_decided_excuse_keeps_the_decision_for_everybody(world,
     excuse.status, excuse.reviewed_by, excuse.review_note = decision, world.owner.id, "Решено"
     world.db.commit()
     grant_money_right(world, False)
-    for who in (world.teacher, world.admin):                       # no right to the money: the text is saved, the decision (pack −1 lesson, teacher +20 000) stays
+    # LESSON-RULES С6: the TEACHER may not rewrite the text of a decided excuse any more (409 EXCUSE_DECIDED, nothing is written); an administrator without the right still may - the text is saved, the
+    # decision (pack −1 lesson, teacher +20 000) stays for everybody
+    refused = post_save(world, world.teacher, day, lid, ["excused", "present", "present"], excuseReasons={str(s1.id): "Текст преподавателя"})
+    assert refused.status_code == 409 and refused.json()["detail"]["code"] == "EXCUSE_DECIDED", refused.text
+    world.db.expire_all()
+    row = world.db.query(AttendanceExcuse).filter_by(student_id=s1.id).one()
+    assert (row.status, row.reviewed_by, row.review_note) == (decision, world.owner.id, "Решено") and row.reason == "Болел, написал"
+    for who in (world.admin,):
         r = post_save(world, who, day, lid, ["excused", "present", "present"], excuseReasons={str(s1.id): f"Другой текст {who.id}"})
         assert r.status_code == 200, r.text
         world.db.expire_all()
@@ -944,7 +951,11 @@ def test_g3m_c7_a_teacher_of_a_group_where_nothing_is_credited_hears_that_paymen
     g, s, m = month_world(w, clock, switch_on=None)
     clock.set("2026-10-30 12:00")
     assert _consequence(w, "owner", g) == {"consequence": "На оплату не влияет"}
-    assert _consequence(w, "A", g) == {"consequence": "На оплату не влияет"}
+    from src.auth.money_effects import WAITING_CONSEQUENCE
+
+    assert _consequence(w, "A", g) == {"consequence": WAITING_CONSEQUENCE}          # LESSON-RULES: the lesson has begun, his cancellation waits for the owner (nothing is credited in this group either way)
+    assert _no_confirmation(w)
+    assert _consequence(w, "A", g) == {"consequence": "На оплату не влияет"}          # the centre without the confirmation: the old sentence
 
 
 def test_r4_the_setting_off_says_the_payment_is_not_touched(pg_session, clock):

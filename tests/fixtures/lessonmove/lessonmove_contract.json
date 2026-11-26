@@ -686,7 +686,8 @@
                   "withdraw",
                   "teacher_cancel",
                   "manager_restore",
-                  "reason_change"
+                  "reason_change",
+                  "teacher_withdraw"
                 ],
                 "type": "string"
               },
@@ -900,6 +901,27 @@
             ],
             "title": "Comment"
           },
+          "confirmedAt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Confirmedat"
+          },
+          "confirmedBy": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PersonRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "createdAt": {
             "title": "Createdat",
             "type": "string"
@@ -1012,6 +1034,17 @@
           "teacher": {
             "$ref": "#/components/schemas/PersonRef"
           },
+          "teacherCanMark": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Teachercanmark"
+          },
           "trigger": {
             "anyOf": [
               {
@@ -1027,6 +1060,17 @@
             "default": false,
             "title": "Urgent",
             "type": "boolean"
+          },
+          "waitingDays": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Waitingdays"
           }
         },
         "required": [

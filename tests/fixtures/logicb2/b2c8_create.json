@@ -10,6 +10,8 @@
       "clearedTrigger": null,
       "closedTrigger": null,
       "comment": "Сам заболел",
+      "confirmedAt": null,
+      "confirmedBy": null,
       "createdAt": "2026-10-21T09:20:00",
       "decision": null,
       "group": {
@@ -49,8 +51,10 @@
         "name": "Рахимов Т.",
         "role": "teacher"
       },
+      "teacherCanMark": null,
       "trigger": null,
-      "urgent": false
+      "urgent": false,
+      "waitingDays": null
     }
   ],
   "skipped": []

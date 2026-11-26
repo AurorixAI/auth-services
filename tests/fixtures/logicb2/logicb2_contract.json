@@ -1709,7 +1709,8 @@
                   "withdraw",
                   "teacher_cancel",
                   "manager_restore",
-                  "reason_change"
+                  "reason_change",
+                  "teacher_withdraw"
                 ],
                 "type": "string"
               },
@@ -2146,6 +2147,27 @@
             ],
             "title": "Comment"
           },
+          "confirmedAt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Confirmedat"
+          },
+          "confirmedBy": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PersonRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "createdAt": {
             "title": "Createdat",
             "type": "string"
@@ -2258,6 +2280,17 @@
           "teacher": {
             "$ref": "#/components/schemas/PersonRef"
           },
+          "teacherCanMark": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Teachercanmark"
+          },
           "trigger": {
             "anyOf": [
               {
@@ -2273,6 +2306,17 @@
             "default": false,
             "title": "Urgent",
             "type": "boolean"
+          },
+          "waitingDays": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Waitingdays"
           }
         },
         "required": [
@@ -2325,7 +2369,15 @@
           },
           "items": {
             "items": {
-              "$ref": "#/components/schemas/SubstitutionItem"
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/SubstitutionItem"
+                },
+                {
+                  "additionalProperties": true,
+                  "type": "object"
+                }
+              ]
             },
             "title": "Items",
             "type": "array"
@@ -2338,6 +2390,11 @@
           "total": {
             "default": 0,
             "title": "Total",
+            "type": "integer"
+          },
+          "unconfirmedTotal": {
+            "default": 0,
+            "title": "Unconfirmedtotal",
             "type": "integer"
           },
           "urgentTotal": {
@@ -2448,6 +2505,11 @@
           "pendingTotal": {
             "default": 0,
             "title": "Pendingtotal",
+            "type": "integer"
+          },
+          "unconfirmedTotal": {
+            "default": 0,
+            "title": "Unconfirmedtotal",
             "type": "integer"
           },
           "urgentTotal": {
@@ -2691,7 +2753,7 @@
     },
     "/org/substitutions": {
       "get": {
-        "description": "Раздел «Замены»: запросы преподавателей.",
+        "description": "Раздел «Замены»: запросы преподавателей, отмены, которые ждут подтверждения, записи истории (оформлено задним числом, отметки исправлены, добавлен урок).",
         "parameters": [
           {
             "in": "query",
@@ -2828,6 +2890,18 @@
               "minimum": 0,
               "title": "Offset",
               "type": "integer"
+            }
+          },
+          {
+            "description": "только записи «задним числом» и «отметки исправлены» (флажок «Только задним числом» в истории)",
+            "in": "query",
+            "name": "backdated_only",
+            "required": false,
+            "schema": {
+              "default": false,
+              "description": "только записи «задним числом» и «отметки исправлены» (флажок «Только задним числом» в истории)",
+              "title": "Backdated Only",
+              "type": "boolean"
             }
           }
         ],

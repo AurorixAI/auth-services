@@ -10,6 +10,8 @@
         "clearedTrigger": null,
         "closedTrigger": null,
         "comment": null,
+        "confirmedAt": null,
+        "confirmedBy": null,
         "createdAt": "2026-10-21T09:00:00",
         "decision": {
           "at": "2026-10-21T09:01:00",
@@ -58,8 +60,10 @@
           "name": "Иванов И.",
           "role": "teacher"
         },
+        "teacherCanMark": null,
         "trigger": null,
-        "urgent": false
+        "urgent": false,
+        "waitingDays": null
       },
       "message": "Запрос уже решён"
     }

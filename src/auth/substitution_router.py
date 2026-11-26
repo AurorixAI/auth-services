@@ -148,12 +148,16 @@ def list_substitutions(
     search: Optional[str] = Query(None, max_length=100),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
+    backdated_only: bool = Query(False, description="только записи «задним числом» и «отметки исправлены» (флажок «Только задним числом» в истории)"),
     user: dict = Depends(_manager),
     db: Session = Depends(get_db),
 ):
-    """Раздел «Замены»: запросы преподавателей."""
-    return _subs(db).list(user["org_id"], status=status, group_id=groupId, teacher_id=teacherId, date_from=dateFrom, date_to=dateTo, urgent=urgent,
-                          search=search, limit=limit, offset=offset)
+    """Раздел «Замены»: запросы преподавателей, отмены, которые ждут подтверждения, записи истории (оформлено задним числом, отметки исправлены, добавлен урок)."""
+    from .one_off_purpose import OneOffPurpose
+
+    svc = _subs(db)
+    return svc.list(user["org_id"], status=status, group_id=groupId, teacher_id=teacherId, date_from=dateFrom, date_to=dateTo, urgent=urgent,
+                    search=search, limit=limit, offset=offset, backdated_only=backdated_only, money_right=OneOffPurpose(svc.svc).money_right(user["org_id"], user.get("org_role")))
 
 
 @router.get("/org/substitutions/{request_id}", response_model=SubstitutionDetailOut)

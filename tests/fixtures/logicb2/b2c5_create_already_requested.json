@@ -8,6 +8,8 @@
       "clearedTrigger": null,
       "closedTrigger": null,
       "comment": null,
+      "confirmedAt": null,
+      "confirmedBy": null,
       "createdAt": "2026-10-21T10:40:00",
       "decision": null,
       "group": {
@@ -42,8 +44,10 @@
         "name": "Иванов И.",
         "role": "teacher"
       },
+      "teacherCanMark": null,
       "trigger": null,
-      "urgent": false
+      "urgent": false,
+      "waitingDays": null
     }
   ],
   "batchId": "7a6f52fa-9115-5656-a1d3-37280afb4a9a",

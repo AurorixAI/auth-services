@@ -9,6 +9,8 @@
       "clearedTrigger": null,
       "closedTrigger": null,
       "comment": "Температура",
+      "confirmedAt": null,
+      "confirmedBy": null,
       "createdAt": "2026-10-21T09:00:00",
       "decision": null,
       "group": {
@@ -47,11 +49,14 @@
         "name": "Иванов И.",
         "role": "teacher"
       },
+      "teacherCanMark": null,
       "trigger": null,
-      "urgent": false
+      "urgent": false,
+      "waitingDays": null
     }
   ],
   "pendingTotal": 1,
   "total": 1,
+  "unconfirmedTotal": 0,
   "urgentTotal": 0
 }

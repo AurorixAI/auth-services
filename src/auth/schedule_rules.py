@@ -312,6 +312,12 @@ class ScheduleRules:
         warnings = self.room_warnings(group, new_id, items, room, fmt)
         group.schedule = [*(group.schedule or []), new_slot]
         flag_modified(group, "schedule")
+        if actor_id:                    # LESSON-RULES С7: one line of the journal of the group - the owner reads «добавил урок в расписание» in the history (a teacher's own lines only are shown there)
+            from .models import GroupAudit
+
+            self.db.add(GroupAudit(org_id=group.org_id, group_id=group.id, actor_id=actor_id, actor_role="admin" if is_org_admin else "teacher", action="lesson_added",
+                                   assigned_teacher_id=group.teacher_id, created_at=bc.utc_now(),
+                                   snapshot={"lessonId": new_id, "validFrom": valid_from.isoformat(), "dayOfWeek": req.dayOfWeek, "startTime": req.startTime, "endTime": req.endTime}))
         self.db.commit()
         warnings += DaysOffService(self.svc).apply_to_lesson(org_id, actor_id, group.id, new_id, valid_from)      # the series does not stay on a day off of the centre that was given before it
         return ScheduleLessonResponseB(

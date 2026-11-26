@@ -3,6 +3,7 @@
   "oneOffDecisionsTotal": 0,
   "overdueTotal": 1,
   "pendingTotal": 1,
+  "unconfirmedTotal": 0,
   "urgentTotal": 0,
   "waitingTotal": 1
 }

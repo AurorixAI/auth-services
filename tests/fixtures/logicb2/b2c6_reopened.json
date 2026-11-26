@@ -6,6 +6,8 @@
   "clearedTrigger": null,
   "closedTrigger": null,
   "comment": "Заменяющий Рахимов Т. больше не работает в центре. Нужно новое решение.",
+  "confirmedAt": null,
+  "confirmedBy": null,
   "createdAt": "2026-10-25T05:00:00",
   "decision": null,
   "group": {
@@ -45,6 +47,8 @@
     "name": "Иванов И.",
     "role": "teacher"
   },
+  "teacherCanMark": null,
   "trigger": null,
-  "urgent": false
+  "urgent": false,
+  "waitingDays": null
 }

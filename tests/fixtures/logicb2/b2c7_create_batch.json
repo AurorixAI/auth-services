@@ -10,6 +10,8 @@
       "clearedTrigger": null,
       "closedTrigger": null,
       "comment": "Конференция",
+      "confirmedAt": null,
+      "confirmedBy": null,
       "createdAt": "2026-10-21T09:00:00",
       "decision": null,
       "group": {
@@ -44,8 +46,10 @@
         "name": "Иванов И.",
         "role": "teacher"
       },
+      "teacherCanMark": null,
       "trigger": null,
-      "urgent": true
+      "urgent": true,
+      "waitingDays": null
     },
     {
       "batchId": "362d293e-5a4a-5548-875b-fc333863ef36",
@@ -55,6 +59,8 @@
       "clearedTrigger": null,
       "closedTrigger": null,
       "comment": "Конференция",
+      "confirmedAt": null,
+      "confirmedBy": null,
       "createdAt": "2026-10-21T09:00:00",
       "decision": null,
       "group": {
@@ -89,8 +95,10 @@
         "name": "Иванов И.",
         "role": "teacher"
       },
+      "teacherCanMark": null,
       "trigger": null,
-      "urgent": false
+      "urgent": false,
+      "waitingDays": null
     },
     {
       "batchId": "362d293e-5a4a-5548-875b-fc333863ef36",
@@ -100,6 +108,8 @@
       "clearedTrigger": null,
       "closedTrigger": null,
       "comment": "Конференция",
+      "confirmedAt": null,
+      "confirmedBy": null,
       "createdAt": "2026-10-21T09:00:00",
       "decision": null,
       "group": {
@@ -134,8 +144,10 @@
         "name": "Иванов И.",
         "role": "teacher"
       },
+      "teacherCanMark": null,
       "trigger": null,
-      "urgent": false
+      "urgent": false,
+      "waitingDays": null
     },
     {
       "batchId": "362d293e-5a4a-5548-875b-fc333863ef36",
@@ -145,6 +157,8 @@
       "clearedTrigger": null,
       "closedTrigger": null,
       "comment": "Конференция",
+      "confirmedAt": null,
+      "confirmedBy": null,
       "createdAt": "2026-10-21T09:00:00",
       "decision": null,
       "group": {
@@ -179,8 +193,10 @@
         "name": "Иванов И.",
         "role": "teacher"
       },
+      "teacherCanMark": null,
       "trigger": null,
-      "urgent": false
+      "urgent": false,
+      "waitingDays": null
     },
     {
       "batchId": "362d293e-5a4a-5548-875b-fc333863ef36",
@@ -190,6 +206,8 @@
       "clearedTrigger": null,
       "closedTrigger": null,
       "comment": "Конференция",
+      "confirmedAt": null,
+      "confirmedBy": null,
       "createdAt": "2026-10-21T09:00:00",
       "decision": null,
       "group": {
@@ -224,8 +242,10 @@
         "name": "Иванов И.",
         "role": "teacher"
       },
+      "teacherCanMark": null,
       "trigger": null,
-      "urgent": false
+      "urgent": false,
+      "waitingDays": null
     }
   ],
   "skipped": [

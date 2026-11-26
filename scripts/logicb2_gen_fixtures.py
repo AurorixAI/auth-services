@@ -99,6 +99,7 @@ def item(name: str, lesson: str, day: str, requester: str, now_local: datetime, 
         "createdAt": iso(utc(now_local)), "minutesToStart": minutes, "urgent": bool(pending and 0 < minutes < 1440),
         "overdue": bool(pending and minutes <= 0), "decision": decision, "previous": previous,
         "trigger": None, "clearedAt": None, "clearedBy": None, "clearedTo": None, "clearedTrigger": None,
+        "confirmedBy": None, "confirmedAt": None, "waitingDays": None, "teacherCanMark": None,          # LESSON-RULES: null for every record of these chains
         "outcome": outcome_of(status, decision), "needsDecision": False, "closedTrigger": CLOSING_TRIGGER.get((decision or {}).get("closedReason")) if status == "closed" else None,
         "lastActivityAt": (decision or {}).get("at") or iso(utc(now_local)),      # #157: no event of these chains comes later than the decision (or the creation)
     }
@@ -122,7 +123,7 @@ c1 = item("c1", "L1", "2026-10-26", "A", NOW, reason="sick", comment="Темпе
 assert c1["minutesToStart"] == 6960 and c1["lesson"]["startsAtUtc"] == "2026-10-26T05:00:00" and not c1["urgent"]
 put("b2c1_create.json", "CreateSubstitutionOut", {"batchId": c1["batchId"], "created": [c1], "alreadyRequested": [], "skipped": []})
 put("b2c1_create_repeat.json", "CreateSubstitutionOut", {"batchId": c1["batchId"], "created": [], "alreadyRequested": [c1], "skipped": []})
-put("b2c1_summary_pending.json", "SubstitutionSummary", {"pendingTotal": 1, "urgentTotal": 0, "overdueTotal": 0, "expiringTotal": 0, "oneOffDecisionsTotal": 0, "waitingTotal": 1})
+put("b2c1_summary_pending.json", "SubstitutionSummary", {"pendingTotal": 1, "urgentTotal": 0, "overdueTotal": 0, "expiringTotal": 0, "oneOffDecisionsTotal": 0, "unconfirmedTotal": 0, "waitingTotal": 1})
 cand = []
 free = ["C"]           # W1 round 2: only a teacher leads a lesson (no owner, no admin among the candidates)
 cand.append({"teacherId": IDS["D"], "name": short("D"), "orgRole": "teacher", "suggested": True, "isDefaultTeacher": False, "busy": False,
@@ -142,7 +143,7 @@ c1_done = settled(c1, status="substituted", urgent=False, decision=decision("sub
                minutesToStart=minutes_between(DEC1, "2026-10-26", "10:00"))
 put("b2c1_decide_substitute.json", "DecideOut", {"item": c1_done, "result": result(
     "substitute", teacherId=IDS["D"], teacherName=short("D"), isSubstitution=True, attendanceUpdated=False, payrollSheetsAffected=[])})
-put("b2c1_summary_after.json", "SubstitutionSummary", {"pendingTotal": 0, "urgentTotal": 0, "overdueTotal": 0, "expiringTotal": 0, "oneOffDecisionsTotal": 0, "waitingTotal": 0})
+put("b2c1_summary_after.json", "SubstitutionSummary", {"pendingTotal": 0, "urgentTotal": 0, "overdueTotal": 0, "expiringTotal": 0, "oneOffDecisionsTotal": 0, "unconfirmedTotal": 0, "waitingTotal": 0})
 put("b2c1_not_lesson_teacher.json", "-", B.error(403, "NOT_LESSON_TEACHER", f"Этот урок ведёт {short('D')}"))
 
 # ================================================================================================ chain 2
@@ -196,7 +197,7 @@ assert c5_late["minutesToStart"] == -30
 put("b2c5_item_overdue.json", "SubstitutionItem", c5_late)
 put("b2c5_lesson_already_started.json", "-", B.error(409, "LESSON_ALREADY_STARTED", "Урок уже начался или прошёл. Обратитесь к администратору"))
 put("b2c5_create_already_requested.json", "CreateSubstitutionOut", {"batchId": c5["batchId"], "created": [], "alreadyRequested": [c5_late], "skipped": []})
-put("b2c5_summary_overdue.json", "SubstitutionSummary", {"pendingTotal": 1, "urgentTotal": 0, "overdueTotal": 1, "expiringTotal": 0, "oneOffDecisionsTotal": 0, "waitingTotal": 1})
+put("b2c5_summary_overdue.json", "SubstitutionSummary", {"pendingTotal": 1, "urgentTotal": 0, "overdueTotal": 1, "expiringTotal": 0, "oneOffDecisionsTotal": 0, "unconfirmedTotal": 0, "waitingTotal": 1})
 
 # ================================================================================================ chain 6
 c6a = item("c6a", "L1", "2026-11-02", "A", NOW, reason="sick")
@@ -252,8 +253,8 @@ c9_closed = settled(c9, status="closed", decision=decision("closed", None, datet
 put("b2c9_closed.json", "SubstitutionItem", c9_closed)
 
 # ============================================================================================= misc shapes
-put("b2x_summary.json", "SubstitutionSummary", {"pendingTotal": 3, "urgentTotal": 1, "overdueTotal": 0, "expiringTotal": 0, "oneOffDecisionsTotal": 0, "waitingTotal": 3})
-put("b2x_list.json", "SubstitutionListOut", {"items": [c1], "total": 1, "pendingTotal": 1, "urgentTotal": 0, "expiringTotal": 0})
+put("b2x_summary.json", "SubstitutionSummary", {"pendingTotal": 3, "urgentTotal": 1, "overdueTotal": 0, "expiringTotal": 0, "oneOffDecisionsTotal": 0, "unconfirmedTotal": 0, "waitingTotal": 3})
+put("b2x_list.json", "SubstitutionListOut", {"items": [c1], "total": 1, "pendingTotal": 1, "urgentTotal": 0, "expiringTotal": 0, "unconfirmedTotal": 0})
 put("b2x_mine.json", "MineOut", {"items": [c1], "pendingTotal": 1, "assignedToMe": [
     {"groupId": IDS["G1"], "groupName": "9-А", "lessonId": LESSON["L1"], "lessonDate": "2026-10-26", "startTime": "10:00", "endTime": "11:30",
      "replacing": person("A"), "assignedAt": iso(utc(DEC1))}], "clearedForMe": []})

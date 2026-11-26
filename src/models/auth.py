@@ -582,7 +582,7 @@ class GroupAudit(Base):
             "'group_lesson_type_set', 'student_left_group', "
             "'group_archived', 'group_restored', 'lesson_teacher_set', 'lesson_teacher_cleared', 'day_off_voided', 'lesson_restored', 'lesson_cancelled', "
             "'one_off_created', 'one_off_money_decided', 'exam_release_pending', 'exam_release_done', "
-            "'payment_void', 'payment_replace', 'payment_file_removed', 'student_transferred')",
+            "'payment_void', 'payment_replace', 'payment_file_removed', 'student_transferred', 'lesson_added')",
             name="ck_group_audit_action",
         ),
         CheckConstraint(
@@ -1120,6 +1120,7 @@ class GroupAttendanceAudit(Base):
         ),
         Index("idx_group_attendance_audit_attendance", "attendance_id"),
         Index("idx_group_attendance_audit_group", "group_id"),
+        Index("ix_gaa_org_done_corrected", "org_id", "created_at", postgresql_where=text("action IN ('updated', 'corrected')")),
     )
 
 
