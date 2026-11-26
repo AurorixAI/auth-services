@@ -1055,7 +1055,7 @@ class Substitutions(LessonCancelMixin, SubstitutionsBase):
             elif body.decision == "reject":
                 result = self._reject(r, actor, body)
             elif body.decision == "cancel":
-                result = self._cancel(group, r, actor, body)
+                result = self._cancel(group, r, actor, body, money_right)
             else:
                 result = self._reschedule(group, r, actor, body, via, money_right)
             self.db.commit()
@@ -1231,7 +1231,7 @@ class Substitutions(LessonCancelMixin, SubstitutionsBase):
         return row
 
     # ---------------------------------------------------------------------------------------------- cancel
-    def _cancel(self, group: Group, r: Req, actor: UUID, body) -> Dict[str, Any]:
+    def _cancel(self, group: Group, r: Req, actor: UUID, body, money_right: bool) -> Dict[str, Any]:
         """The decision «Отменить урок» = THE cancellation (``cancel_lesson``) of the lesson of the request; the administrator chooses the kind (default: «по вине центра» - the
         sick teacher is the centre's fault, the students are deducted when the centre deducts cancelled lessons; a MOVE has no kind: neutral for the money)."""
         reason = self._reason(body, 3, 500)
@@ -1239,7 +1239,7 @@ class Substitutions(LessonCancelMixin, SubstitutionsBase):
         if r.starts_at <= self.now():
             self._assert_period_open(group, r.lesson_id, day)      # Money-1 A1: a lesson of a closed month cannot be cancelled - only the request can be declined
         out = self.cancel_lesson(r.org_id, actor, group.id, r.lesson_id, day, reason=reason, kind=getattr(body, "cancellationKind", None) or DEFAULT_CANCELLATION_KIND,
-                                 request=r, via="request")
+                                 request=r, via="request", money_right=money_right)
         return {"kind": "cancel", "version": out["version"], "cancellationKind": out["kind"], "warnings": out["warnings"]}
 
     # ------------------------------------------------------------------------------------------- reschedule
@@ -1807,6 +1807,8 @@ def on_schedule_changed(svc, group: Group, lesson_id: str, from_date: date, acto
         for row in db.query(GroupAttendance).filter(GroupAttendance.group_id == group.id, GroupAttendance.lesson_id == lesson_id, GroupAttendance.lesson_date >= iso,
                                                     GroupAttendance.status == "cancelled").all():
             if row.lesson_date in moved:
+                continue
+            if row.cancellation_kind == "unconfirmed":          # LESSON-RULES: a cancellation that waits for the owner is never dropped silently - he decides it (or gives the lesson back) from «Ждут решения»
                 continue
             removed.append({"date": row.lesson_date, "cancellationKind": row.cancellation_kind, "cancellationReason": row.cancellation_reason, "dayOffId": _s(row.day_off_id)})
             db.delete(row)

@@ -366,7 +366,7 @@ class GroupLifecycle:
                                if o["id"] == item.lessonId), None)
             if occurrence is None:
                 continue
-            subs.cancel_lesson(group.org_id, actor_id, group.id, item.lessonId, day, reason=text, kind=None, archive=True, archived_ok=True)
+            subs.cancel_lesson(group.org_id, actor_id, group.id, item.lessonId, day, reason=text, kind=None, archive=True, archived_ok=True, money_right=False)      # the archive writes no kind: the right is not asked
             count += 1
         return count
 

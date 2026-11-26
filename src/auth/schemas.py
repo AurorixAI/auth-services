@@ -273,7 +273,8 @@ class DiagnosticInviteResponse(BaseModel):
 # N13 P3: kind of lessons - the teacher's payroll percent is set per kind.
 LessonType = Literal["group", "mini_group", "pair", "individual"]
 # PAY-F: why the centre cancelled a lesson: its own fault (may be deducted from the next payment) or a holiday / day off (never)
-CancellationKind = Literal["centre", "holiday"]
+CancellationKind = Literal["centre", "holiday"]  # what a PERSON may send (every request): ``unconfirmed`` is written by the server only, a sent one is a 422
+StoredCancellationKind = Literal["centre", "holiday", "unconfirmed"]  # what the SERVER answers (every response)
 DEFAULT_CANCELLATION_KIND: CancellationKind = "centre"  # the usual cancellation is the centre's own (a holiday is chosen on purpose)
 
 

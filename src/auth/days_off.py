@@ -42,6 +42,7 @@ MAX_DAYS = 14
 MAX_AHEAD_DAYS = 366
 HOLIDAY = "holiday"
 CENTRE = "centre"
+UNCONFIRMED = "unconfirmed"          # LESSON-RULES: a PAST lesson cancelled by a role without the money right waits for the owner (neutral for the money until it is decided)
 DAY_OFF_KIND = "day_off"                 # ``trigger`` of the record of the journal «Замены» a day off made when it turned a hand cancellation «по вине центра» into a holiday (#157 A3) ...
 DAY_OFF_VOID_KIND = "day_off_void"       # ... and when its cancellation gave the kind back
 EXAM_DOWN = "сервис экзаменов недоступен, повторите"
@@ -176,7 +177,7 @@ def not_cancelled_text(day: date, reason: str, why: Optional[str]) -> str:
 
 
 def converted_text(day: date, reason: str) -> str:
-    return f"{_dm(day)} — выходной день центра ({reason}): отмена урока «по вине центра» переведена в «выходной», ученикам перерасчёта не будет"
+    return f"{_dm(day)} — выходной день центра ({reason}): отмена урока переведена в «выходной», ученикам перерасчёта не будет"
 
 
 def on_day_off_text(day: date, reason: str) -> str:
@@ -313,9 +314,10 @@ class DaysOffService:
 
     @staticmethod
     def _convertible(row: Optional[GroupAttendance]) -> bool:
-        """A lesson cancelled by hand «по вине центра» (not by a day off): the day off turns it into a holiday.  #154: not one that has a make-up - it stays «по вине центра» (the make-up lifts
-        the deduction by the facts; a holiday would have no deduction to lift and the make-up would make up for nothing)."""
-        return row is not None and row.status == LessonAttendanceStatus.CANCELLED.value and row.cancellation_kind == CENTRE and row.day_off_id is None and not row.made_up_by
+        """A lesson cancelled by hand «по вине центра» OR one that waits for the owner's confirmation (``unconfirmed``) - not by a day off: the day off turns it into a holiday (a holiday needs no confirmation).
+        #154: not one that has a make-up - it stays «по вине центра» (the make-up lifts the deduction by the facts; a holiday would have no deduction to lift and the make-up would make up for nothing)."""
+        return (row is not None and row.status == LessonAttendanceStatus.CANCELLED.value and row.cancellation_kind in (CENTRE, UNCONFIRMED) and row.day_off_id is None
+                and not row.made_up_by)
 
     @staticmethod
     def _makeup_kept(row: Optional[GroupAttendance]) -> bool:
@@ -559,15 +561,17 @@ class DaysOffService:
 
     def _convert_row(self, row: GroupAttendance, group: Group, day_off_id: UUID, reason: str, actor_id: Any, trigger: str = "day_off") -> None:
         """THE conversion of a hand cancellation «по вине центра» into a holiday (the row is locked and convertible; no commit)."""
-        row.converted_from_kind = row.cancellation_kind          # the marker: what it WAS (``centre``) - «Отменить выходной» gives it back, the deduction with it
+        was = row.cancellation_kind
+        row.converted_from_kind = was          # the marker: what it WAS (``centre`` / ``unconfirmed``) - «Отменить выходной» gives it back, the deduction with it
         row.cancellation_kind = HOLIDAY
         row.day_off_id = day_off_id
         row.version = int(row.version or 1) + 1
         self.db.add(GroupAttendanceAudit(
             attendance_id=row.id, org_id=row.org_id, group_id=row.group_id, actor_id=UUID(str(actor_id)), action="corrected", before_status="cancelled",
             after_status="cancelled", before_records={}, after_records={}, correction_reason=lesson_reason_text(reason)[:500],
-            cancellation_reason=row.cancellation_reason, details={"cancellation_kind": {"from": CENTRE, "to": HOLIDAY}, "day_off_id": str(day_off_id)}))
-        self._journal_kind(group, row, actor_id, CENTRE, HOLIDAY, f"Выходной «{reason}»: отмена урока стала «праздник», ученикам перерасчёта нет", trigger)      # #157 A3 (LESSONS 47): the money moved - the journal says so
+            cancellation_reason=row.cancellation_reason, details={"cancellation_kind": {"from": was, "to": HOLIDAY}, "day_off_id": str(day_off_id)}))
+        waited = "подтверждать её не нужно" if was == UNCONFIRMED else "ученикам перерасчёта нет"
+        self._journal_kind(group, row, actor_id, was, HOLIDAY, f"Выходной «{reason}»: отмена урока стала «праздник», {waited}", trigger)      # #157 A3 (LESSONS 47): the money moved - the journal says so
 
     def _journal_kind(self, group: Optional[Group], att: GroupAttendance, actor_id: Any, before: str, after: str, text: str, trigger: str) -> None:
         """#157 A3: a day off turned the kind of a hand cancellation (or gave it back): one record of the journal «Замены» (``KIND_CHANGED``, author - whoever made / cancelled the day off)."""
@@ -586,7 +590,7 @@ class DaysOffService:
             subs = Substitutions(self.svc)
             subs.exam_preflight(org_id, group.id, occurrence["id"], occurrence["occurrenceDate"], "")       # Wave B P4 (SV-15): before the group is locked
             subs.cancel_lesson(org_id, actor_id, group.id, occurrence["id"], date.fromisoformat(occurrence["occurrenceDate"]),
-                               reason=lesson_reason_text(reason), kind=HOLIDAY, day_off_id=day_off_id)
+                               reason=lesson_reason_text(reason), kind=HOLIDAY, day_off_id=day_off_id, money_right=True)      # a day off is the money-right holder's: the kind is ``holiday`` whatever the time
             self.db.commit()
         except RuntimeError:
             self.db.rollback()
@@ -646,7 +650,7 @@ class DaysOffService:
                     if not dry_run:
                         att.day_off_id = covering.id           # the covering day off wins: holiday under THAT one (the marker stays: voiding it gives the kind back); the reason is the author's own
                 else:
-                    item.reason = "Ручная отмена: вид «по вине центра» возвращён"
+                    item.reason = "Ручная отмена: вернулась в «Ждут решения»" if att.converted_from_kind == UNCONFIRMED else "Ручная отмена: вид «по вине центра» возвращён"
                     if not dry_run:
                         self._revert_conversion(att, row, actor_id, group)
                 kept.append(item)
@@ -706,7 +710,8 @@ class DaysOffService:
             attendance_id=att.id, org_id=att.org_id, group_id=att.group_id, actor_id=UUID(str(actor_id)), action="corrected", before_status="cancelled", after_status="cancelled",
             before_records={}, after_records={}, correction_reason=f"Выходной «{day_off.reason}» отменён: ручная отмена вернулась к прежнему виду"[:500], cancellation_reason=att.cancellation_reason,
             details={"cancellation_kind": {"from": before, "to": att.cancellation_kind}, "day_off_voided": str(day_off.id)}))
-        self._journal_kind(group, att, actor_id, before, att.cancellation_kind, f"Выходной «{day_off.reason}» отменён: отмена урока снова «по вине центра»", DAY_OFF_VOID_KIND)      # #157 A3
+        again = "ждёт подтверждения" if att.cancellation_kind == UNCONFIRMED else "«по вине центра»"
+        self._journal_kind(group, att, actor_id, before, att.cancellation_kind, f"Выходной «{day_off.reason}» отменён: отмена урока снова {again}", DAY_OFF_VOID_KIND)      # #157 A3
 
     def _started_today(self, group: Optional[Group], att: GroupAttendance, lines: Dict[Any, Dict[str, Any]]) -> bool:
         """The lesson of the row is today and its start has passed (a lesson that is gone from the schedule is not «started»)."""

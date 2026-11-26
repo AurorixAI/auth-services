@@ -5478,7 +5478,7 @@ class AuthService:
 
         out = Substitutions(self).cancel_lesson(
             org_id, cancelled_by, group_id, req.lessonId, req.lessonDate, reason=req.cancellationReason, kind=cancellation_kind, by_manager=manager,
-            via="request" if manager else "teacher_cancel", archived_ok=True,       # the missed lessons of an archived group are resolved by this very road
+            money_right=money_right and is_org_manager, via="request" if manager else "teacher_cancel", archived_ok=True,       # the missed lessons of an archived group are resolved by this very road
         )
         self.db.commit()
         from . import exam_release, money_effects
@@ -5795,7 +5795,7 @@ class AuthService:
 
             out = Substitutions(self).cancel_lesson(                     # W1 S2: the one road of every cancellation
                 org_id, marked_by, group_id, target_lesson_id, lesson_date, reason=req.cancellationReason, kind=cancellation_kind, allow_started=True,
-                by_manager=manager, via="request" if manager else "teacher_cancel",
+                by_manager=manager, money_right=money_right and is_org_manager, via="request" if manager else "teacher_cancel",
             )
             self.db.commit()
             from . import exam_release

@@ -1873,7 +1873,8 @@ def lesson_cancel_consequence(
     subs.exam_preflight(user["org_id"], group.id, lesson_id, lesson_date.isoformat(), "Предпросмотр последствий")          # SV-15: exam-service is asked BEFORE the group is locked, like on every road of the cancellation
 
     def cancel():
-        return subs.cancel_lesson(user["org_id"], user["user_id"], group.id, lesson_id, lesson_date, reason="Предпросмотр последствий", by_manager=manager, allow_started=True)
+        return subs.cancel_lesson(user["org_id"], user["user_id"], group.id, lesson_id, lesson_date, reason="Предпросмотр последствий", by_manager=manager, allow_started=True,
+                                  money_right=manager and has_payments_access(user, db))
 
     return {"consequence": me.lesson_cancel_consequence(db, user["org_id"], group.id, cancel, manager=manager)}
 

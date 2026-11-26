@@ -45,6 +45,7 @@ MAKEUP_REFUSALS = {
     "HOLIDAY": "Урок отменён как праздник или выходной: перерасчёта нет, отрабатывать нечего. Добавьте дополнительный урок",
     "NO_KIND": "Это отмена до обновления: отработать её нельзя. Добавьте дополнительный урок",
     "MOVED": "Урок перенесён: отрабатывать нечего",
+    "UNCONFIRMED": "Сначала подтвердите отмену урока: отработку можно назначить после подтверждения",
     "TOO_OLD": f"Отработать можно урок не старше {MAKEUP_BACK_DAYS} дней",
 }
 MAKEUP_EXISTS_TEXT = "По уроку назначена отработка: сначала отмените её"
@@ -160,6 +161,8 @@ class OneOffPurpose:
             return "HOLIDAY"
         if row.cancellation_kind is None:
             return "NO_KIND"
+        if row.cancellation_kind == "unconfirmed":
+            return "UNCONFIRMED"
         if day < today - timedelta(days=MAKEUP_BACK_DAYS):
             return "TOO_OLD"
         return None

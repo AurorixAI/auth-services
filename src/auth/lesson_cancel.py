@@ -28,7 +28,8 @@ from . import business_clock as bc
 from . import exam_release
 from . import money_effects
 from .closed_period import ClosedPeriods, lesson_teacher_ids, open_lessons_since
-from .days_off import DaysOffService, HOLIDAY
+from .centre_policy import CentrePolicy
+from .days_off import DaysOffService, HOLIDAY, UNCONFIRMED
 from .lesson_teachers import TeacherBook, _uuid
 from .models import AttendanceExcuse, Group, GroupAttendance, GroupAttendanceAudit, LessonSubstitutionRequest as Req, LessonTeacherAssignment, User
 from .one_off_purpose import MAKEUP_EXISTS_TEXT, OneOffPurpose
@@ -55,22 +56,25 @@ class LessonCancelMixin:
     # ------------------------------------------------------------------------------------------------ cancel
     def cancel_lesson(self, org_id: Any, actor_id: Any, group_id: Any, lesson_id: str, day: date, *, reason: str, kind: str = DEFAULT_CANCELLATION_KIND,
                       by_manager: bool = True, allow_started: bool = False, day_off_id: Any = None, request: Optional[Req] = None, via: str = "request",
-                      archived_ok: bool = False, archive: bool = False) -> Dict[str, Any]:
+                      archived_ok: bool = False, archive: bool = False, money_right: bool) -> Dict[str, Any]:
         """Cancel the lesson of ``group_id`` on ``day``.  ``kind``: what the author chose (``centre`` | ``holiday``); a date of a live day off turns it into ``holiday``.
         ``archive``: the cancellation of a missed lesson by the ARCHIVING of the group (W1 R3 10): the same road (row, audit, substitute released) with the kind it always had (none: neutral for the
         money), no record of «Замены», no exam call (the archive releases the exams of the group itself).  ``archived_ok``: the missed lessons of an archived group are resolved (the group refuses every new row otherwise).  ``allow_started``: a lesson that was started (an administrator's cancellation from the lesson sheet) may be cancelled when nothing is marked on it.  ``day_off_id``: the day
         off that cancels (its own lessons only: never a started one).  ``request``: the request that this cancellation decides (the decision of the «Замены» page); without one a
         request of the lesson that is waiting is decided by it, and without any a ``cancelled`` record is made.  Caller commits; any refusal rolls everything back.
+        ``money_right``: does the AUTHOR hold the money right (no default: a road that forgets it does not compile) - a PAST lesson (its start is behind the business clock, whether it has a journal row or not)
+        cancelled by a role without it is written ``unconfirmed`` (LESSON-RULES: it waits for the owner and moves no account), unless the centre switched the confirmation off
+        (``past_cancel_needs_confirmation``) or a live day off holds the date (a holiday wins).
         Returns ``{"version", "kind", "dayOffId", "warnings", "request"}``."""
         try:
             return self._cancel_locked(org_id, _uuid(actor_id), group_id, lesson_id, day, reason=reason, kind=kind, by_manager=by_manager, allow_started=allow_started,
-                                       day_off_id=day_off_id, request=request, via=via, archived_ok=archived_ok, archive=archive)
+                                       day_off_id=day_off_id, request=request, via=via, archived_ok=archived_ok, archive=archive, money_right=money_right)
         except BaseException:
             self.db.rollback()
             raise
 
     def _cancel_locked(self, org_id: Any, actor: Optional[Any], group_id: Any, lesson_id: str, day: date, *, reason: str, kind: str, by_manager: bool, allow_started: bool,
-                       day_off_id: Any, request: Optional[Req], via: str, archived_ok: bool, archive: bool) -> Dict[str, Any]:
+                       day_off_id: Any, request: Optional[Req], via: str, archived_ok: bool, archive: bool, money_right: bool) -> Dict[str, Any]:
         iso = day.isoformat()
         by_day_off = day_off_id is not None             # a DAY OFF cancels this lesson (not a hand cancellation on a date a day off holds): the substitute it takes off is marked with it (#157 A4)
         group = self._group_locked(org_id, _uuid(group_id))
@@ -84,6 +88,8 @@ class LessonCancelMixin:
         ref, occ = self._lesson_ref(group, lesson_id, day)
         warnings: List[Dict[str, str]] = []
         kind, day_off_id, converted = (None, None, None) if archive else self._kind_for(org_id, day, kind, day_off_id)
+        if kind != HOLIDAY and not archive and not money_right and ref.starts_at <= self.now() and CentrePolicy.of(self.db, org_id).past_cancel_needs_confirmation:
+            kind = UNCONFIRMED                  # LESSON-RULES: whoever has no right to the money does not decide it for a lesson that has begun - the owner confirms («по вине центра» / «праздник») or gives the lesson back
         if converted is not None:
             warnings.append({"code": "CANCELLED_AS_HOLIDAY", "message": f"{_dm(day)} — выходной день центра ({converted}): урок отменён как «выходной», ученикам перерасчёта не будет"})
         record = None if archive else self._record_of(group, ref, request, reason, MANAGER_CANCEL if by_manager else TEACHER_CANCEL, actor, journal=day_off_id is None)

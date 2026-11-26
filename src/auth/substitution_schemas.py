@@ -11,7 +11,7 @@ from typing import Any, Dict, List, Literal, Optional, Union
 from pydantic import BaseModel, ConfigDict, Field
 
 from .ops_schemas import CancelWarning, OpsErrorDetail, TeacherConflict
-from .schemas import CancellationKind
+from .schemas import CancellationKind, StoredCancellationKind
 
 ReasonCode = Literal["sick", "personal", "other"]
 RequestStatus = Literal["pending", "substituted", "rescheduled", "cancelled", "rejected", "withdrawn", "closed"]
@@ -405,7 +405,7 @@ class DecideResult(BaseModel):
     newLesson: Optional[NewLesson] = None
     version: Optional[int] = None
     warnings: Optional[List[MoveWarning]] = None
-    cancellationKind: Optional[CancellationKind] = None   # cancel: the kind that was written (a date of a live day off turns it into ``holiday``, then ``warnings`` says so)
+    cancellationKind: Optional[StoredCancellationKind] = None   # cancel: the kind that was written (a date of a live day off turns it into ``holiday``, then ``warnings`` says so)
 
 
 class DecideOut(BaseModel):
@@ -437,7 +437,7 @@ class BulkResult(BaseModel):
 
     id: str
     kind: Literal["substitute", "reschedule", "cancel", "reject"]
-    cancellationKind: Optional[CancellationKind] = None
+    cancellationKind: Optional[StoredCancellationKind] = None
     warnings: List[MoveWarning] = Field(default_factory=list)
 
 
@@ -567,7 +567,7 @@ class LessonRestoreOut(BaseModel):
     restored: bool = True
     lessonId: str
     lessonDate: str
-    previousKind: Optional[CancellationKind] = None       # what the cancellation was (null: an old one / a move): the deduction of ``centre`` is gone with the row
+    previousKind: Optional[StoredCancellationKind] = None       # what the cancellation was (null: an old one / a move): the deduction of ``centre`` is gone with the row
     examsNote: str = ""                                    # the exams freed by the cancellation do not come back
     warnings: List[CancelWarning] = Field(default_factory=list)
     returnedToReview: bool = False                         # Money-1 A2: a lesson that had begun went back to «Требует разбора» (not to the schedule)

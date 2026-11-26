@@ -979,7 +979,8 @@ class GroupAttendance(Base):
     completed_at = Column(DateTime, nullable=True)
     cancellation_reason = Column(String(500), nullable=True)
     # PAY-F: why the CENTRE cancelled the lesson - ``centre`` (its own fault: a sick teacher; may be deducted from the next payment) | ``holiday``
-    # (a holiday / a day off: never deducted).  NULL = an old cancellation or a move: neutral for the money, never recalculated.
+    # (a holiday / a day off: never deducted) | ``unconfirmed`` (LESSON-RULES: a PAST lesson cancelled by a role without the money right waits for the owner: neutral for the money until it is
+    # confirmed as ``centre`` / ``holiday``).  NULL = an old cancellation or a move: neutral for the money, never recalculated.
     cancellation_kind = Column(String(20), nullable=True)
     # PAY-F: the day off of the centre that cancelled the lesson (so that «Отменить выходной» gives back exactly its own lessons).
     day_off_id = Column(UUID(as_uuid=True), ForeignKey("org_days_off.id", ondelete="SET NULL"), nullable=True)
@@ -1010,7 +1011,7 @@ class GroupAttendance(Base):
             name="ck_group_attendance_status",
         ),
         CheckConstraint(
-            "cancellation_kind IS NULL OR cancellation_kind IN ('centre', 'holiday')",
+            "cancellation_kind IS NULL OR cancellation_kind IN ('centre', 'holiday', 'unconfirmed')",
             name="ck_group_attendance_cancellation_kind",
         ),
         Index("idx_attendance_group", "group_id"),
