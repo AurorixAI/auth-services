@@ -850,6 +850,8 @@ class SubstitutionsBase:
             newer = aliased(Req)
             newest = ~(select(newer.id).where(newer.group_id == Req.group_id, newer.lesson_id == Req.lesson_id, newer.lesson_date == Req.lesson_date, newer.status == "cancelled",
                                               newer.created_at > Req.created_at).correlate(Req).exists())
+            given_back = select(LessonSubstitutionEvent.id).where(LessonSubstitutionEvent.request_id == Req.id, LessonSubstitutionEvent.action == "lesson_restored").correlate(Req).exists()
+            q = q.filter(~and_(Req.status == "cancelled", given_back))          # С11 п.17: a cancellation the lesson was GIVEN BACK from is not a line of the history - the record of the return is (who gave it back, when)
             q = q.filter(~and_(Req.status == "cancelled", waiting, newest))          # the cancellation that has no outcome yet is not history - ONLY that record (the earlier records of the lesson stay)
         activity = self._activity()
         since = None
@@ -2230,6 +2232,8 @@ def annotate_occurrences(svc, user: Dict[str, Any], items: Sequence[Any]) -> Seq
     by_key: Dict[Tuple[str, str, str], List[Req]] = {}
     for r in reqs:
         by_key.setdefault((str(r.group_id), r.lesson_id, r.lesson_date), []).append(r)
+    row_state = {(str(g), lid, d): st for g, lid, d, st in svc.db.query(GroupAttendance.group_id, GroupAttendance.lesson_id, GroupAttendance.lesson_date, GroupAttendance.status).filter(
+        GroupAttendance.group_id.in_(gids), GroupAttendance.lesson_date >= min(days), GroupAttendance.lesson_date <= max(days))}          # the state of the row of each lesson NOW: the truth for «the last event»
     for item in items:
         group = by_key.get((str(item.groupId), item.id, item.occurrenceDate), [])
         if not group:
@@ -2239,7 +2243,7 @@ def annotate_occurrences(svc, user: Dict[str, Any], items: Sequence[Any]) -> Seq
             (r for r in reversed(visible) if r.status in ("substituted", "rescheduled", "cancelled", "rejected")), None)
         if shown is not None:
             item.substitutionRequest = {"id": str(shown.id), "status": shown.status, "reasonCode": shown.reason_code}
-        done = lesson_outcomes(group)                    # W1 S5: the newest of a cancellation / a move and a restore (a restored lesson has no outcome)
+        done = lesson_outcomes(group, row_state.get((str(item.groupId), item.id, item.occurrenceDate)))                    # W1 S5: the newest of a cancellation / a move and a restore (a restored lesson has no outcome)
         if done is not None:
             item.substitutionOutcome = {"kind": "rescheduled" if done.status == "rescheduled" else "cancelled", "movedTo": _moved(done)}
     return items
@@ -2289,7 +2293,9 @@ def annotate_journal(svc, user: Dict[str, Any], group: Group, resp) -> Any:
     by_lesson: Dict[str, List[Req]] = {}
     for r in reqs:
         by_lesson.setdefault(f"{r.lesson_date}_{r.lesson_id}", []).append(r)
-    done = {key: out for key, out in ((key, lesson_outcomes(group_reqs)) for key, group_reqs in by_lesson.items()) if out is not None}
+    row_state = {f"{d}_{lid}": st for lid, d, st in svc.db.query(GroupAttendance.lesson_id, GroupAttendance.lesson_date, GroupAttendance.status).filter(
+        GroupAttendance.group_id == group.id, GroupAttendance.lesson_date >= dates[0], GroupAttendance.lesson_date <= dates[-1])}
+    done = {key: out for key, out in ((key, lesson_outcomes(group_reqs, row_state.get(key))) for key, group_reqs in by_lesson.items()) if out is not None}
     for key, lesson in keys.items():
         r = done.get(key)
         if r is not None:
@@ -2331,10 +2337,10 @@ def annotate_student_attendance(svc, org_id: Any, student_id: Any, summary: Dict
     by_lesson: Dict[Tuple[Any, str, str], List[Req]] = {}
     for r in every:
         by_lesson.setdefault((r.group_id, r.lesson_id, r.lesson_date), []).append(r)
-    reqs = sorted((out for out in (lesson_outcomes(group_reqs) for group_reqs in by_lesson.values()) if out is not None), key=lambda r: (r.lesson_date, str(r.id)))   # W1 S5: the newest outcome only
+    row_of = {(x.group_id, x.lesson_id, x.lesson_date): x for x in db.query(GroupAttendance).filter(
+        GroupAttendance.group_id.in_({k[0] for k in by_lesson}), GroupAttendance.lesson_date >= d_from, GroupAttendance.lesson_date <= d_to)} if by_lesson else {}
+    reqs = sorted((out for out in (lesson_outcomes(group_reqs, row_of[k].status if k in row_of else None) for k, group_reqs in by_lesson.items()) if out is not None), key=lambda r: (r.lesson_date, str(r.id)))   # W1 S5: the newest outcome only
     if reqs:
-        row_of = {(x.group_id, x.lesson_id, x.lesson_date): x for x in db.query(GroupAttendance).filter(
-            GroupAttendance.group_id.in_({r.group_id for r in reqs}), GroupAttendance.lesson_date >= d_from, GroupAttendance.lesson_date <= d_to)}
         group_of = {g.id: g for g in db.query(Group).filter(Group.id.in_({r.group_id for r in reqs})).all()}
         for r in reqs:
             row = row_of.get((r.group_id, r.lesson_id, r.lesson_date))

@@ -19,7 +19,7 @@ recalculation disappears by itself because it is a function of the cancelled row
 The mixin lives in ``Substitutions`` (``lesson_substitutions.py``): it uses its locks, its exam saga, its system records.  Nothing here commits - the caller does."""
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 from typing import Any, Dict, List, Optional
 
 from src.models.auth import GroupAudit
@@ -256,7 +256,7 @@ class LessonCancelMixin:
                                assigned_teacher_id=group.teacher_id, snapshot=trace, created_at=bc.utc_now()))
         main = TeacherBook(self.db).default_teacher(group, iso, hhmm_to_minutes(ref.end_time))
         reqs = self._lesson_requests(group, lesson_id, iso)
-        cancelled = lesson_outcomes(list(reversed(reqs)))             # #157 A10: the record of THIS cancellation learns that the lesson is back (its chip stops being «Урок отменён»)
+        cancelled = lesson_outcomes(list(reversed(reqs)), row.status)             # #157 A10: the record of THIS cancellation learns that the lesson is back (its chip stops being «Урок отменён»)
         if cancelled is not None and cancelled.status == "cancelled":
             self.event(cancelled, "lesson_restored", actor, {"reason": reason})
         if main is not None:
@@ -340,10 +340,25 @@ class LessonCancelMixin:
             "cancellationKind", "cancellationReason", "version", "cancelledBy", "cancelledAt")}})
 
 
-def lesson_outcomes(reqs: List[Req]) -> Optional[Req]:
-    """The record that says what became of a lesson: the NEWEST of its ``rescheduled`` / ``cancelled`` records and its restore (a restore ends it: ``None``).  ``reqs`` oldest first."""
-    last = None
-    for r in reqs:
+ROW_UNKNOWN = object()
+
+
+def lesson_outcomes(reqs: List[Req], row_status: Any = ROW_UNKNOWN) -> Optional[Req]:
+    """THE place that chooses «the last event of a lesson» (the journal, the schedule, the card of a student, the confirmation and the return read it): the record that says what became of the lesson - the
+    newest of its ``rescheduled`` / ``cancelled`` records and its restore (a restore ends it: ``None``).  «Newest» is by the moment the record BECAME what it is (``decided_at``, else ``created_at``) and, at
+    one instant, by the order the records were written (``reqs`` oldest first).  ``row_status``: the state of the journal row of the lesson NOW (``cancelled`` / ``completed`` / ``in_progress`` / ``None`` for
+    no row) when the caller has it - the truth for a tie of the instants: a lesson whose row is cancelled is cancelled (the newest cancellation counts even when a restore carries the same instant), a lesson
+    whose row is not cancelled has been given back (a ``cancelled`` record is no outcome)."""
+    ordered = [r for _, r in sorted(enumerate(reqs), key=lambda p: (p[1].decided_at or p[1].created_at or datetime.min, p[0]))]
+    last, newest_cancel = None, None
+    for r in ordered:
         if r.status in ("rescheduled", "cancelled") or (r.status == "closed" and r.closed_reason == RESTORED):
             last = r
-    return None if last is None or last.status == "closed" else last
+            if r.status != "closed":
+                newest_cancel = r
+    out = None if last is None or last.status == "closed" else last
+    if row_status is ROW_UNKNOWN:
+        return out
+    if row_status == "cancelled":
+        return out or newest_cancel
+    return None if out is not None and out.status == "cancelled" else out

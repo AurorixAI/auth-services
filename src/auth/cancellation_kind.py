@@ -172,7 +172,7 @@ def _apply(db: Session, group: Group, row: GroupAttendance, req: ChangeCancellat
     subs = Substitutions(AuthService(db))
     actor = _uuid(actor_id)
     if before == UNCONFIRMED:                                              # the confirmation is an EVENT of the record of the cancellation, not a second record
-        record = lesson_outcomes(list(reversed(subs._lesson_requests(group, req.lessonId, req.lessonDate.isoformat()))))
+        record = lesson_outcomes(list(reversed(subs._lesson_requests(group, req.lessonId, req.lessonDate.isoformat()))), row.status)
         if record is not None and record.status == "cancelled":
             subs.event(record, "confirmed", actor, {"cancellationKind": {"from": before, "to": req.cancellationKind}, **({"reason": reason} if reason else {})})
             return
