@@ -89,14 +89,14 @@ def attendance_branch(org_id: Any, *, since: Optional[datetime], group_id: Optio
     The actor is whoever wrote the line (a teacher or an administrator over somebody's lesson); the teacher is the one the lesson is frozen with."""
     a, g, grp, actor, teacher, member = GroupAttendanceAudit, aliased(GroupAttendance), aliased(Group), aliased(User), aliased(User), aliased(OrganizationMember)
     late = business_day(a.created_at) - cast(a.lesson_date, Date)
-    done_late = and_(a.before_status == "in_progress", a.after_status == "completed", late >= 1)
+    done_late = and_(a.action == "updated", a.before_status == "in_progress", a.after_status == "completed", late >= 1)    # the completion writes ``updated`` (service.py)
     corrected = and_(a.action == "corrected", a.before_status == "completed", a.after_status == "completed")
     stmt = (select(*cols(case((done_late, literal(BACKDATED)), else_=literal(CORRECTED)), a.created_at, overdue=literal(True), ref_id=a.id, group_id=a.group_id, group_name=grp.name,
                          lesson_id=a.lesson_id, lesson_date=a.lesson_date, actor_id=a.actor_id, actor_last=actor.last_name, actor_first=actor.first_name, actor_role=member.org_role,
                          teacher_id=g.teacher_id, teacher_last=teacher.last_name, teacher_first=teacher.first_name, late_days=cast(late, Integer), reason=a.correction_reason))
             .select_from(a).join(g, g.id == a.attendance_id).join(grp, grp.id == a.group_id).outerjoin(actor, actor.id == a.actor_id).outerjoin(teacher, teacher.id == g.teacher_id)
             .outerjoin(member, and_(member.user_id == a.actor_id, member.org_id == a.org_id))
-            .where(a.org_id == org_id, or_(done_late, corrected)))
+            .where(a.org_id == org_id, a.action.in_(("updated", "corrected")), or_(done_late, corrected)))          # the action in the WHERE: the partial index ``ix_gaa_org_done_corrected`` is used only when the query implies its condition
     if since is not None:
         stmt = stmt.where(a.created_at >= since)
     if group_id is not None:
