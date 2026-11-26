@@ -1,4 +1,5 @@
 {
+  "canActSelf": true,
   "classLevel": 9,
   "color": "blue",
   "createdBy": null,
@@ -17,6 +18,7 @@
   "madeUpFor": null,
   "money": null,
   "moneyLabel": null,
+  "monthClosed": false,
   "movedFrom": null,
   "occurrenceDate": "2026-10-26",
   "originalEndTime": null,
@@ -35,5 +37,6 @@
   "teacherName": "Рахимов Т.",
   "topic": null,
   "validFrom": "2026-10-12",
-  "warnings": []
+  "warnings": [],
+  "windowDays": 7
 }

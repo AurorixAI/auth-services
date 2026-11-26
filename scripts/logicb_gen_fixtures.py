@@ -319,7 +319,7 @@ put("c4_schedule_lesson_created.json", "ScheduleLessonResponseB", {
 })
 put("c4_reconcile_not_in_schedule.json", "-", {"status": 400, "body": {"detail": "Урок не принадлежит расписанию этой группы"}})
 put("c4_not_lesson_teacher.json", "-", error(403, "NOT_LESSON_TEACHER", f"Этот урок ведёт {short('A')}"))
-put("c4_lesson_too_old.json", "-", error(403, "LESSON_TOO_OLD", "Урок старше 7 дн. — его закрывает администратор или владелец"))
+put("c4_lesson_too_old.json", "-", error(403, "LESSON_TOO_OLD", "Урок старше 7 дн. — его закрывает администратор или владелец."))
 assert date(2026, 10, 13) < TODAY - timedelta(days=7) and date(2026, 10, 14) >= TODAY - timedelta(days=7)
 
 # ================================================================================================ chain 5
@@ -397,6 +397,7 @@ put("x_occurrence_substitution.json", "ScheduleOccurrenceResponseB", {
     "teacherId": IDS["D"], "teacherName": short("D"), "isSubstitution": True, "defaultTeacherId": IDS["C"],
     "defaultTeacherName": short("C"), "substitutionRequest": None, "substitutionOutcome": None, "movedFrom": None,
     "purpose": None, "purposeLabel": None, "madeUpFor": None, "madeUpBy": None, "money": None, "moneyLabel": None,
+    "canActSelf": True, "monthClosed": False, "windowDays": 7,          # LESSON-RULES С10.1
 })
 put("x_student_no_group.json", "StudentResponseB", {
     "id": IDS["s6"], "org_id": IDS["org"], "first_name": "Азиз", "last_name": "Каримов", "full_name": "Каримов Азиз",

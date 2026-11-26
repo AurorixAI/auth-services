@@ -21,7 +21,7 @@ def test_c4_a_lesson_nobody_came_to_cannot_be_completed_by_its_teacher_the_day_a
     for extra in ({}, {"confirmNobodyCame": True}, {"confirmNobodyCame": False}):
         r = save(w, g, people, "2026-11-25", expect=409, **extra)
         d = r.json()["detail"]
-        assert d["code"] == "NOBODY_CAME_BACKDATED" and d["message"].startswith("Урок, на который никто не пришёл, задним числом оформляет администратор или владелец")
+        assert d["code"] == "NOBODY_CAME_BACKDATED" and d["message"] == "Никто не пришёл? Такой урок задним числом оформляет администратор — он видит его в уроках без отметки."
     assert kind_in_db(w, g, "2026-11-25", WED) == ("in_progress", None)
     w.db.expire_all()
     from src.models.auth import GroupAttendance
@@ -84,7 +84,7 @@ def test_c5_what_stays_old_a_lesson_not_started_a_cancel_and_a_correction_of_age
     a held lesson of age 8 (held on 25.11 by the teacher, corrected on 03.12 = 8 days later) is refused (403)."""
     w, g, people, members = world(pg_session, clock)
     r = reconcile(w, g, "2026-11-18", expect=403)
-    assert r.json()["detail"]["code"] == "LESSON_TOO_OLD" and r.json()["detail"]["message"] == "Урок старше 7 дн. — его закрывает администратор или владелец"
+    assert r.json()["detail"]["code"] == "LESSON_TOO_OLD" and r.json()["detail"]["message"] == "Урок старше 7 дн. — его закрывает администратор или владелец."
     r = teacher_cancels(w, g, "2026-11-18", WED, expect=403)
     assert r.json()["detail"]["code"] == "LESSON_TOO_OLD"
     clock.set("2026-11-25 20:00")

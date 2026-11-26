@@ -1883,7 +1883,7 @@ def lesson_cancel_consequence(
 def me_waiting_text() -> str:
     from . import money_effects as me
 
-    return me.WAITING_CONSEQUENCE
+    return me.WAITING_CONSEQUENCE_TEACHER          # only a teacher's cancellation is answered by this road (an administrator goes through ``_cancel_with_effects``)
 
 
 def _cancel_with_effects(db: Session, user: dict, group_id: str, cancel, *, owner: bool, money_right: bool, dry_run: bool, action_month: str, manager: bool):
@@ -1910,7 +1910,7 @@ def _cancel_with_effects(db: Session, user: dict, group_id: str, cancel, *, owne
     added = seen.get("added")
     consequence = me.cancel_consequence_text(added, manager=manager) if added is not None else None
     if isinstance(result, dict) and result.get("kind") == "unconfirmed":
-        consequence = me.WAITING_CONSEQUENCE                    # LESSON-RULES: the cancellation waits for the owner - the sentence says so (nothing is credited yet)
+        consequence = me.waiting_consequence(manager=manager)                    # LESSON-RULES: the cancellation waits for the owner - the sentence says so (nothing is credited yet)
     if money_right and added is not None:
         effects = {**effects, "deductions": added, "text": "; ".join(x for x in (me.recalc_text(added, done=not dry_run), effects.get("text")) if x)}
     return result, effects, (added if money_right else None), consequence

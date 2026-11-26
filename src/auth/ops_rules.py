@@ -167,7 +167,7 @@ def is_too_old_for_teacher(lesson_date: date, today: date, window_days: int) -> 
 
 def lesson_too_old_text(window_days: int) -> str:
     """The refusal of a lesson older than the window - the number comes from the rule of the centre."""
-    return f"Урок старше {window_days} дн. — его закрывает администратор или владелец"
+    return f"Урок старше {window_days} дн. — его закрывает администратор или владелец."
 
 
 # ------------------------------------------------------------------------------------------------- small helpers

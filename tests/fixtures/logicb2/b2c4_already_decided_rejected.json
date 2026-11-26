@@ -4,6 +4,7 @@
       "code": "SUBSTITUTION_ALREADY_DECIDED",
       "item": {
         "batchId": "b1780215-3212-5c9e-9997-2999025d29b7",
+        "canWithdraw": null,
         "clearedAt": null,
         "clearedBy": null,
         "clearedTo": null,

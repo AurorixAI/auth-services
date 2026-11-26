@@ -62,6 +62,7 @@
     "confirmedAt": null,
     "waitingDays": null,
     "teacherCanMark": null,
+    "canWithdraw": null,
     "outcome": "rescheduled",
     "lastActivityAt": "2026-10-21T09:00:00.000001",
     "needsDecision": false,

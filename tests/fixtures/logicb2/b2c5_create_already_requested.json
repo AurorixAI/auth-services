@@ -2,6 +2,7 @@
   "alreadyRequested": [
     {
       "batchId": "7a6f52fa-9115-5656-a1d3-37280afb4a9a",
+      "canWithdraw": null,
       "clearedAt": null,
       "clearedBy": null,
       "clearedTo": null,

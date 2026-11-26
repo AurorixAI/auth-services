@@ -170,6 +170,10 @@ class ScheduleOccurrenceResponseB(ScheduleOccurrenceResponse):
     madeUpBy: Optional[Dict[str, Any]] = None              # a cancelled lesson that has a make-up: {lessonId, date, startTime, endTime, label}
     money: Optional[str] = None                            # none | wait | paid (owner / admin; a teacher only for his own lesson; never a student)
     moneyLabel: Optional[str] = None
+    # LESSON-RULES С10.1: the window marks of the lesson for the VIEWER (``lesson_window.WindowMarks``: the same function as the refusals of the roads)
+    canActSelf: Optional[bool] = None                      # the viewer may act on the lesson himself: a manager always; a teacher - his own lesson inside the window of the centre
+    monthClosed: Optional[bool] = None                     # the month of the lesson of its teacher is closed (a saved sheet): nobody acts, the owner reopens it
+    windowDays: Optional[int] = None                       # the window of the centre in days
 
 
 # -------------------------------------------------------------------------------- 4.2 journal and marks
@@ -238,6 +242,7 @@ class ReconcileCancelOut(BaseModel):
     dryRun: bool = False
     deductions: Optional[List[Dict[str, Any]]] = Field(None, exclude_if=lambda v: v is None)
     moneyEffects: Optional[Dict[str, Any]] = Field(None, exclude_if=lambda v: v is None)
+    waiting: Optional[bool] = Field(None, exclude_if=lambda v: v is None)           # LESSON-RULES С10: true - the cancellation of a teacher WAITS for the owner (the road said it, the model cut it before); ``consequence`` is then the mock's sentence
     consequence: Optional[str] = Field(None, exclude_if=lambda v: v is None)       # Г-16: «Ученикам зачтётся по 46 000 сум» / «На оплату не влияет» - for everybody, in the preview and after the call
 
 

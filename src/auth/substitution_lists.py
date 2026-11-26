@@ -171,8 +171,10 @@ def entry_text(row) -> str:
     return ""
 
 
-def audit_item(row) -> Dict[str, Any]:
-    """One entry built from the journal (the history list): no request id - ``source: audit``, the id is the id of the line of the journal."""
+def audit_item(row, occ: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """One entry built from the journal (the history list): no request id - ``source: audit``, the id is the id of the line of the journal.  ``occ``: the lesson of the schedule - its time (LESSON-RULES С10.3:
+    the same ``startTime`` / ``endTime`` as the entries of the requests; ``None`` when the lesson is no more in the schedule)."""
     return {"source": "audit", "id": str(row.ref_id), "kind": row.kind, "at": row.at.isoformat(), "group": {"id": str(row.group_id), "name": row.group_name},
-            "lesson": {"lessonId": row.lesson_id, "date": row.lesson_date}, "teacher": person(row, "teacher", "teacher_id"), "by": person(row, "actor", "actor_id"),
+            "lesson": {"lessonId": row.lesson_id, "date": row.lesson_date, "startTime": occ["startTime"] if occ else None, "endTime": occ["endTime"] if occ else None},
+            "teacher": person(row, "teacher", "teacher_id"), "by": person(row, "actor", "actor_id"),
             "lateDays": int(row.late_days) if row.late_days is not None else None, "reason": row.reason, "text": entry_text(row)}

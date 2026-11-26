@@ -137,7 +137,7 @@ def test_the_window_decides_what_a_teacher_may_reconcile(w, g7, window, day, pas
     else:
         d = r.json()["detail"]
         assert r.status_code == 403 and d["code"] == "LESSON_TOO_OLD" and d["windowDays"] == window, r.text
-        assert d["message"] == f"Урок старше {window} дн. — его закрывает администратор или владелец" and "7 дней" not in d["message"]
+        assert d["message"] == f"Урок старше {window} дн. — его закрывает администратор или владелец." and "7 дней" not in d["message"]
         assert reconcile(w, "admin", g7, "lesson-wed", day).status_code == 200                      # the administrator is not bound by the window
 
 

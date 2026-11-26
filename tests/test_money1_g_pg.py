@@ -924,9 +924,9 @@ def test_g3m_c7_a_teacher_gets_the_sentence_without_a_sum_on_every_road_of_his_o
     import re
 
     w, g, students, ms, url = cancel_world(pg_session, clock)
-    from src.auth.money_effects import WAITING_CONSEQUENCE
+    from src.auth.money_effects import WAITING_CONSEQUENCE_TEACHER
 
-    word = WAITING_CONSEQUENCE                                                               # LESSON-RULES: the lesson has begun: his cancellation waits for the owner (before: «Ученикам зачтётся по 46 000 сум», then «Ученикам будет перерасчёт за этот урок»)
+    word = WAITING_CONSEQUENCE_TEACHER                                                       # LESSON-RULES: the lesson has begun: the teacher reads the words of the mock; his cancellation waits for the owner (before: «Ученикам зачтётся по 46 000 сум», then «Ученикам будет перерасчёт за этот урок»)
     assert _consequence(w, "A", g) == {"consequence": word}
     dry = cancel_post(w, "A", url, WED, dry=True)
     assert dry.status_code == 200, dry.text
@@ -951,9 +951,9 @@ def test_g3m_c7_a_teacher_of_a_group_where_nothing_is_credited_hears_that_paymen
     g, s, m = month_world(w, clock, switch_on=None)
     clock.set("2026-10-30 12:00")
     assert _consequence(w, "owner", g) == {"consequence": "На оплату не влияет"}
-    from src.auth.money_effects import WAITING_CONSEQUENCE
+    from src.auth.money_effects import WAITING_CONSEQUENCE_TEACHER
 
-    assert _consequence(w, "A", g) == {"consequence": WAITING_CONSEQUENCE}          # LESSON-RULES: the lesson has begun, his cancellation waits for the owner (nothing is credited in this group either way)
+    assert _consequence(w, "A", g) == {"consequence": WAITING_CONSEQUENCE_TEACHER}          # LESSON-RULES: the lesson has begun, his cancellation waits for the owner (nothing is credited in this group either way)
     assert _no_confirmation(w)
     assert _consequence(w, "A", g) == {"consequence": "На оплату не влияет"}          # the centre without the confirmation: the old sentence
 

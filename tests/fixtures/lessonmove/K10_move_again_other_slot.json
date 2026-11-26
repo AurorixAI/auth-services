@@ -67,6 +67,7 @@
         "confirmedAt": null,
         "waitingDays": null,
         "teacherCanMark": null,
+        "canWithdraw": null,
         "outcome": "rescheduled",
         "needsDecision": false,
         "closedTrigger": null,

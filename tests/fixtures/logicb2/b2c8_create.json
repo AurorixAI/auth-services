@@ -4,6 +4,7 @@
   "created": [
     {
       "batchId": "19ffb739-8f2c-50f8-805d-020599e2fa4e",
+      "canWithdraw": null,
       "clearedAt": null,
       "clearedBy": null,
       "clearedTo": null,

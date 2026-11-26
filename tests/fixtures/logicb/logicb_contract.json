@@ -3439,6 +3439,17 @@
             "title": "Version",
             "type": "integer"
           },
+          "waiting": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Waiting"
+          },
           "warnings": {
             "items": {
               "$ref": "#/components/schemas/CancelWarning"
@@ -4075,6 +4086,17 @@
       },
       "ScheduleOccurrenceResponseB": {
         "properties": {
+          "canActSelf": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Canactself"
+          },
           "classLevel": {
             "default": 5,
             "title": "Classlevel",
@@ -4204,6 +4226,17 @@
               }
             ],
             "title": "Moneylabel"
+          },
+          "monthClosed": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Monthclosed"
           },
           "movedFrom": {
             "anyOf": [
@@ -4393,6 +4426,17 @@
             },
             "title": "Warnings",
             "type": "array"
+          },
+          "windowDays": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Windowdays"
           }
         },
         "required": [

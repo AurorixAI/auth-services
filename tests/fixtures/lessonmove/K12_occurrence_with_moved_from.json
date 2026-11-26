@@ -44,5 +44,8 @@
   "madeUpFor": null,
   "madeUpBy": null,
   "money": null,
-  "moneyLabel": null
+  "moneyLabel": null,
+  "canActSelf": true,
+  "monthClosed": false,
+  "windowDays": 7
 }

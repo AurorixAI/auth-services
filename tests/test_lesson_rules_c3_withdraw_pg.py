@@ -80,7 +80,7 @@ def test_the_window_of_the_centre_decides_not_seven(pg_session, clock):
     teacher_cancels(w, g, "2026-11-16", MON)
     assert client(w, "owner").put(f"{API}/org/settings/lessons", json={"teacher_lesson_window_days": 3}).status_code == 200
     d = withdraw(w, g, day="2026-11-16", expect=403).json()["detail"]
-    assert d["code"] == "LESSON_TOO_OLD" and d["message"] == "Урок старше 3 дн. — его закрывает администратор или владелец"
+    assert d["code"] == "LESSON_TOO_OLD" and d["message"] == "Урок старше 3 дн. — его закрывает администратор или владелец."
     assert client(w, "owner").put(f"{API}/org/settings/lessons", json={"teacher_lesson_window_days": 14}).status_code == 200
     withdraw(w, g, day="2026-11-16")
     assert kind_in_db(w, g, "2026-11-16", MON) is None

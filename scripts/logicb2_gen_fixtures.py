@@ -99,7 +99,7 @@ def item(name: str, lesson: str, day: str, requester: str, now_local: datetime, 
         "createdAt": iso(utc(now_local)), "minutesToStart": minutes, "urgent": bool(pending and 0 < minutes < 1440),
         "overdue": bool(pending and minutes <= 0), "decision": decision, "previous": previous,
         "trigger": None, "clearedAt": None, "clearedBy": None, "clearedTo": None, "clearedTrigger": None,
-        "confirmedBy": None, "confirmedAt": None, "waitingDays": None, "teacherCanMark": None,          # LESSON-RULES: null for every record of these chains
+        "confirmedBy": None, "confirmedAt": None, "waitingDays": None, "teacherCanMark": None, "canWithdraw": None,          # LESSON-RULES: null for every record of these chains
         "outcome": outcome_of(status, decision), "needsDecision": False, "closedTrigger": CLOSING_TRIGGER.get((decision or {}).get("closedReason")) if status == "closed" else None,
         "lastActivityAt": (decision or {}).get("at") or iso(utc(now_local)),      # #157: no event of these chains comes later than the decision (or the creation)
     }
@@ -254,7 +254,7 @@ put("b2c9_closed.json", "SubstitutionItem", c9_closed)
 
 # ============================================================================================= misc shapes
 put("b2x_summary.json", "SubstitutionSummary", {"pendingTotal": 3, "urgentTotal": 1, "overdueTotal": 0, "expiringTotal": 0, "oneOffDecisionsTotal": 0, "unconfirmedTotal": 0, "waitingTotal": 3})
-put("b2x_list.json", "SubstitutionListOut", {"items": [c1], "total": 1, "pendingTotal": 1, "urgentTotal": 0, "expiringTotal": 0, "unconfirmedTotal": 0})
+put("b2x_list.json", "SubstitutionListOut", {"items": [c1], "total": 1, "pendingTotal": 1, "urgentTotal": 0, "expiringTotal": 0, "unconfirmedTotal": 0, "waitingTotal": 0})
 put("b2x_mine.json", "MineOut", {"items": [c1], "pendingTotal": 1, "assignedToMe": [
     {"groupId": IDS["G1"], "groupName": "9-А", "lessonId": LESSON["L1"], "lessonDate": "2026-10-26", "startTime": "10:00", "endTime": "11:30",
      "replacing": person("A"), "assignedAt": iso(utc(DEC1))}], "clearedForMe": []})

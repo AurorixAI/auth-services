@@ -1,6 +1,7 @@
 {
   "item": {
     "batchId": "0815c358-23af-5667-aa07-1a21fee1c6bc",
+    "canWithdraw": null,
     "clearedAt": null,
     "clearedBy": null,
     "clearedTo": null,

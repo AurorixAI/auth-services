@@ -4,6 +4,7 @@
   "created": [
     {
       "batchId": "362d293e-5a4a-5548-875b-fc333863ef36",
+      "canWithdraw": null,
       "clearedAt": null,
       "clearedBy": null,
       "clearedTo": null,
@@ -53,6 +54,7 @@
     },
     {
       "batchId": "362d293e-5a4a-5548-875b-fc333863ef36",
+      "canWithdraw": null,
       "clearedAt": null,
       "clearedBy": null,
       "clearedTo": null,
@@ -102,6 +104,7 @@
     },
     {
       "batchId": "362d293e-5a4a-5548-875b-fc333863ef36",
+      "canWithdraw": null,
       "clearedAt": null,
       "clearedBy": null,
       "clearedTo": null,
@@ -151,6 +154,7 @@
     },
     {
       "batchId": "362d293e-5a4a-5548-875b-fc333863ef36",
+      "canWithdraw": null,
       "clearedAt": null,
       "clearedBy": null,
       "clearedTo": null,
@@ -200,6 +204,7 @@
     },
     {
       "batchId": "362d293e-5a4a-5548-875b-fc333863ef36",
+      "canWithdraw": null,
       "clearedAt": null,
       "clearedBy": null,
       "clearedTo": null,

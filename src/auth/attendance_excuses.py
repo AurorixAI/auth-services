@@ -422,16 +422,23 @@ class AttendanceExcuseService:
                 reason = _clean_reason(reasons[sid])
                 if reason != existing[sid].reason:
                     if teacher_bound and existing[sid].status in ("confirmed", "rejected"):
-                        raise conflict("EXCUSE_DECIDED", EXCUSE_DECIDED_TEXT)
+                        raise self._decided_refusal(sid)
                     plan.update[sid] = reason
         # No longer excused (or the lesson was cancelled): the excuse goes away
         # together with its files.
         plan.delete = [e for sid, e in existing.items() if sid not in excused_now]
-        if teacher_bound and any(e.status == "confirmed" for e in plan.delete):
-            raise conflict("EXCUSE_DECIDED", EXCUSE_DECIDED_TEXT)          # a rejected one may go (the student is absent for the money either way)
+        if teacher_bound:
+            confirmed = sorted(str(e.student_id) for e in plan.delete if e.status == "confirmed")
+            if confirmed:
+                raise self._decided_refusal(confirmed[0])          # a rejected one may go (the student is absent for the money either way)
         if att is not None and plan.create and self._paused_students(att, set(plan.create)):
             raise ExcusePauseRefused(PAUSE_NOT_REQUIRED)       # LOGIC-A: a day of a pause needs no excuse
         return plan
+
+    def _decided_refusal(self, student_id: str) -> OpsError:
+        """409 ``EXCUSE_DECIDED`` of a teacher's save (LESSON-RULES С10.4): it names the student whose decided excuse the save touches (``studentId``, ``studentName``), so the screen shows the refusal at THAT mark."""
+        student = self.db.query(Student).filter(Student.id == UUID(str(student_id))).first()
+        return conflict("EXCUSE_DECIDED", EXCUSE_DECIDED_TEXT, studentId=str(student_id), studentName=student_full_name(student) if student is not None else None)
 
     def _paused_students(self, att: GroupAttendance, student_ids: set) -> set:
         """Students (of ``student_ids``) whose live pause covers the day of the lesson."""

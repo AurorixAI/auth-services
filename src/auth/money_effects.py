@@ -559,7 +559,13 @@ def recalc_text(added: List[Dict[str, Any]], *, done: bool) -> str:
     return f"Ученикам — перерасчёт: неоплаченная сумма {'уменьшилась' if done else 'уменьшится'} сразу на {num(sum(a['amount'] for a in added))}{NBSP}сум ({count} {plural(count, 'ученик', 'ученика', 'учеников')})"
 
 
-WAITING_CONSEQUENCE = "Отмену подтвердит владелец или администратор с доступом к деньгам: до подтверждения ученикам ничего не меняется"
+WAITING_CONSEQUENCE = "Отмену подтвердит владелец или администратор с доступом к деньгам: до подтверждения ученикам ничего не меняется"          # the administrator without the right of money reads it
+WAITING_CONSEQUENCE_TEACHER = "Отмену подтвердит администратор. За отменённый урок оплаты нет."          # the teacher reads it (the words of the approved mock, LESSON-RULES С10.5)
+
+
+def waiting_consequence(*, manager: bool) -> str:
+    """THE sentence of a cancellation that WAITS for the owner: the teacher's (no word of the money of the students) or the administrator's without the right."""
+    return WAITING_CONSEQUENCE if manager else WAITING_CONSEQUENCE_TEACHER
 
 
 def cancel_consequence_text(added: List[Dict[str, Any]], *, manager: bool) -> str:
@@ -581,7 +587,7 @@ def lesson_cancel_consequence(db, org_id: Any, group_id: Any, cancel: Callable[[
     with writes_rolled_back(db):
         out, added = measure_cancellation(db, org_id, group_id, cancel)
     if isinstance(out, dict) and out.get("kind") == "unconfirmed":
-        return WAITING_CONSEQUENCE
+        return waiting_consequence(manager=manager)
     return cancel_consequence_text(added, manager=manager)
 
 

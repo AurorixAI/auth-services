@@ -837,6 +837,17 @@
             "title": "Batchid",
             "type": "string"
           },
+          "canWithdraw": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Canwithdraw"
+          },
           "clearedAt": {
             "anyOf": [
               {

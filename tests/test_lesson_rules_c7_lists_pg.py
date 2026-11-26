@@ -220,4 +220,5 @@ def test_the_lists_ask_the_database_no_more_than_before_plus_one(pg_session, clo
         with _Counter(w.db.get_bind()) as c:
             assert client(w, who).get(f"{SUB}{path}", params=params).status_code == 200
         seen[name] = c.n
-    assert {k: v <= before[k] + 1 for k, v in seen.items()} == {k: True for k in before}, (seen, before)
+    room = {"mine": 2}          # С10.2: the block of the teacher reads the window of the centre once (``canWithdraw``): +1 more, a constant (not per row) - measured 21
+    assert {k: v <= before[k] + room.get(k, 1) for k, v in seen.items()} == {k: True for k in before}, (seen, before)

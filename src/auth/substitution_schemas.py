@@ -124,6 +124,7 @@ class SubstitutionItem(BaseModel):
     confirmedAt: Optional[str] = None
     waitingDays: Optional[int] = None  # a cancellation that waits for the owner: the days it has waited
     teacherCanMark: Optional[bool] = None  # a lesson that was given back: may its teacher still mark it (the window of the centre)? false = the administrator marks it
+    canWithdraw: Optional[bool] = None  # LESSON-RULES С10.2: a cancellation that waits (the teacher's eyes): may he give it back himself - his own, inside the window, the month open (the rule of ``withdraw``)
     closedTrigger: Optional[str] = None  # #157 A9: the trigger of the ``closed`` event (day_off, journal_row, window_expired, role_changed, ...); null for a record that is not closed
 
 
@@ -240,6 +241,7 @@ class SubstitutionListOut(BaseModel):
     urgentTotal: int = 0
     expiringTotal: int = 0
     unconfirmedTotal: int = 0  # LESSON-RULES: cancellations that wait for the owner (also rows of ``items`` of the pending list, ``source: unconfirmed``)
+    waitingTotal: int = 0      # LESSON-RULES С10.6: what the CALLER has to decide (the number of the tab): without the right of money only the requests
 
 
 class SubstitutionSummary(BaseModel):

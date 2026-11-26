@@ -5884,7 +5884,7 @@ class AuthService:
             if (att and att.status != LessonAttendanceStatus.COMPLETED.value and not manager and att.started_at is None and lesson_date < today
                     and not any(m in ("present", "late") for m in records.values())):
                 # LESSON-RULES С4: a lesson that was not started in its own day and that nobody came to is not «held» by its teacher the day after - it would be paid without a witness (always, ``confirmNobodyCame`` does not matter)
-                raise ops_rules.conflict("NOBODY_CAME_BACKDATED", "Урок, на который никто не пришёл, задним числом оформляет администратор или владелец. Урок остаётся в списке «Уроки без отметки» у администратора")
+                raise ops_rules.conflict("NOBODY_CAME_BACKDATED", "Никто не пришёл? Такой урок задним числом оформляет администратор — он видит его в уроках без отметки.")
             if records and att and att.status != LessonAttendanceStatus.COMPLETED.value and not any(m in ("present", "late") for m in records.values()) and getattr(req, "confirmNobodyCame", None) is False:     # only the request of the screen carries the field (``SaveAttendanceRequestB``)
                 raise ops_rules.conflict("NOBODY_CAME", "Никто не пришёл. Если завершить, урок будет считаться проведённым: он засчитывается ученикам (у учеников с пакетом из пакета спишется 1 урок) и войдёт в зарплату преподавателя. Если урока не было, нажмите «Урока не было»")
 
