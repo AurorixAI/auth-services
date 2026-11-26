@@ -918,7 +918,7 @@ class SubstitutionsBase:
         for row in rows:
             if row.kind == L.REQUEST:
                 if row.req_id in by_id:
-                    items.append(by_id[row.req_id])
+                    items.append({**by_id[row.req_id], "source": "request"})          # С11: the row says what it is (the three rows of the list: request / unconfirmed / audit)
             elif row.kind == L.UNCONFIRMED:
                 items.append(self._waiting_item(row, ctx, money_right))
             else:

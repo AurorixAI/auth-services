@@ -39,6 +39,7 @@
       "previous": null,
       "reasonCode": "sick",
       "reasonLabel": "Болезнь",
+      "source": "request",
       "status": "pending",
       "suggestedTeacher": {
         "active": true,
@@ -54,11 +55,73 @@
       "trigger": null,
       "urgent": false,
       "waitingDays": null
+    },
+    {
+      "ageDays": 2,
+      "canDecide": true,
+      "canWithdraw": true,
+      "cancelledAt": "2026-10-21T09:00:00",
+      "cancelledBy": {
+        "id": "917b0543-3c26-52c4-b849-5d99a8a9dd87",
+        "name": "Иванов И.",
+        "role": "teacher"
+      },
+      "group": {
+        "id": "4235a098-e818-5a7f-a19f-bedec8ab5b39",
+        "name": "9-А",
+        "studentCount": 3
+      },
+      "id": "85876221-2d43-5325-994e-f7163a1f692d",
+      "kind": "unconfirmed",
+      "lesson": {
+        "date": "2026-10-19",
+        "endTime": "11:30",
+        "lessonId": "lesson-l1",
+        "startTime": "10:00"
+      },
+      "reason": "Отключили свет",
+      "source": "unconfirmed",
+      "teacher": {
+        "id": "917b0543-3c26-52c4-b849-5d99a8a9dd87",
+        "name": "Иванов И.",
+        "role": "teacher"
+      },
+      "waitingDays": 0
+    },
+    {
+      "at": "2026-10-21T08:00:00",
+      "by": {
+        "id": "917b0543-3c26-52c4-b849-5d99a8a9dd87",
+        "name": "Иванов И.",
+        "role": "teacher"
+      },
+      "group": {
+        "id": "4235a098-e818-5a7f-a19f-bedec8ab5b39",
+        "name": "9-А",
+        "studentCount": 3
+      },
+      "id": "4c7fba1a-c6cc-558a-ad82-1b2b57be8716",
+      "kind": "backdated",
+      "lateDays": 2,
+      "lesson": {
+        "date": "2026-10-19",
+        "endTime": "11:30",
+        "lessonId": "lesson-l1",
+        "startTime": "10:00"
+      },
+      "reason": null,
+      "source": "audit",
+      "teacher": {
+        "id": "917b0543-3c26-52c4-b849-5d99a8a9dd87",
+        "name": "Иванов И.",
+        "role": "teacher"
+      },
+      "text": "Урок оформлен задним числом: на 2 дня позже даты урока"
     }
   ],
   "pendingTotal": 1,
-  "total": 1,
-  "unconfirmedTotal": 0,
+  "total": 3,
+  "unconfirmedTotal": 1,
   "urgentTotal": 0,
-  "waitingTotal": 0
+  "waitingTotal": 2
 }

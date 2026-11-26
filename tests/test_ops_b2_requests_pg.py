@@ -347,6 +347,7 @@ def test_s3_r5_overdue_is_not_urgent(w, clock):
     clock.set("2026-10-21 16:30")
     assert client(w, "admin").get(f"{SUB}/summary").json() == fx("b2c5_summary_overdue.json")
     item = client(w, "admin").get(SUB, params={"status": "pending"}).json()["items"][0]
+    assert item.pop("source") == "request"          # С11: a row of the list says its source; the record itself is the golden item
     assert not g(w, item, "b2c5_item_overdue.json"), g(w, item, "b2c5_item_overdue.json")
     again = req(w, "A", [L(w, "L2", "2026-10-21")])
     assert again.status_code == 201 and not g(w, again.json(), "b2c5_create_already_requested.json"), g(w, again.json(), "b2c5_create_already_requested.json")

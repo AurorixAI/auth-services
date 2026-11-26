@@ -60,6 +60,96 @@
         "title": "AssignedToMe",
         "type": "object"
       },
+      "AuditEntryRow": {
+        "description": "LESSON-RULES С11: an entry of the history built from the journals (no request behind it) - ``source: audit``; ``kind``: backdated / corrected / lesson_added.",
+        "properties": {
+          "at": {
+            "title": "At",
+            "type": "string"
+          },
+          "by": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PersonRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "group": {
+            "$ref": "#/components/schemas/RowGroup"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "backdated",
+              "corrected",
+              "lesson_added"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "lateDays": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latedays"
+          },
+          "lesson": {
+            "$ref": "#/components/schemas/RowLesson"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "source": {
+            "const": "audit",
+            "default": "audit",
+            "title": "Source",
+            "type": "string"
+          },
+          "teacher": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PersonRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "text": {
+            "default": "",
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "at",
+          "group",
+          "lesson"
+        ],
+        "title": "AuditEntryRow",
+        "type": "object"
+      },
       "BulkResult": {
         "description": "W1 R3 (D): what ONE decided request of a bulk decision did besides deciding - a bulk cancel that turned into a holiday (``CANCELLED_AS_HOLIDAY``), released a substitute\n(``SUBSTITUTE_RELEASED``) ... is not silent.",
         "properties": {
@@ -1508,6 +1598,80 @@
         "title": "RequestClosed",
         "type": "object"
       },
+      "RowGroup": {
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "default": "",
+            "title": "Name",
+            "type": "string"
+          },
+          "studentCount": {
+            "default": 0,
+            "title": "Studentcount",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "title": "RowGroup",
+        "type": "object"
+      },
+      "RowLesson": {
+        "description": "The lesson of a row that is not a request: its time comes from the schedule (``null`` when the lesson is no more in it).",
+        "properties": {
+          "date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Date"
+          },
+          "endTime": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Endtime"
+          },
+          "lessonId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lessonid"
+          },
+          "startTime": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Starttime"
+          }
+        },
+        "title": "RowLesson",
+        "type": "object"
+      },
       "SkippedLesson": {
         "properties": {
           "code": {
@@ -2380,13 +2544,23 @@
           },
           "items": {
             "items": {
-              "anyOf": [
+              "discriminator": {
+                "mapping": {
+                  "audit": "#/components/schemas/AuditEntryRow",
+                  "request": "#/components/schemas/SubstitutionRequestRow",
+                  "unconfirmed": "#/components/schemas/WaitingCancellationRow"
+                },
+                "propertyName": "source"
+              },
+              "oneOf": [
                 {
-                  "$ref": "#/components/schemas/SubstitutionItem"
+                  "$ref": "#/components/schemas/SubstitutionRequestRow"
                 },
                 {
-                  "additionalProperties": true,
-                  "type": "object"
+                  "$ref": "#/components/schemas/WaitingCancellationRow"
+                },
+                {
+                  "$ref": "#/components/schemas/AuditEntryRow"
                 }
               ]
             },
@@ -2499,6 +2673,281 @@
           "reasonCode"
         ],
         "title": "SubstitutionRequestMark",
+        "type": "object"
+      },
+      "SubstitutionRequestRow": {
+        "description": "LESSON-RULES С11: a row of the list that is a RECORD of a teacher's request (the whole item) - ``source: request``.",
+        "properties": {
+          "batchId": {
+            "title": "Batchid",
+            "type": "string"
+          },
+          "canWithdraw": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Canwithdraw"
+          },
+          "clearedAt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Clearedat"
+          },
+          "clearedBy": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PersonRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "clearedTo": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PersonRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "clearedTrigger": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Clearedtrigger"
+          },
+          "closedTrigger": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Closedtrigger"
+          },
+          "comment": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Comment"
+          },
+          "confirmedAt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Confirmedat"
+          },
+          "confirmedBy": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PersonRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "createdAt": {
+            "title": "Createdat",
+            "type": "string"
+          },
+          "decision": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SubDecision"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "group": {
+            "$ref": "#/components/schemas/SubGroup"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "lastActivityAt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lastactivityat"
+          },
+          "lesson": {
+            "$ref": "#/components/schemas/SubLesson"
+          },
+          "minutesToStart": {
+            "title": "Minutestostart",
+            "type": "integer"
+          },
+          "needsDecision": {
+            "default": false,
+            "title": "Needsdecision",
+            "type": "boolean"
+          },
+          "origin": {
+            "default": "teacher",
+            "enum": [
+              "teacher",
+              "system"
+            ],
+            "title": "Origin",
+            "type": "string"
+          },
+          "outcome": {
+            "default": "pending",
+            "title": "Outcome",
+            "type": "string"
+          },
+          "overdue": {
+            "default": false,
+            "title": "Overdue",
+            "type": "boolean"
+          },
+          "previous": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SubPrevious"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "reasonCode": {
+            "enum": [
+              "sick",
+              "personal",
+              "other"
+            ],
+            "title": "Reasoncode",
+            "type": "string"
+          },
+          "reasonLabel": {
+            "title": "Reasonlabel",
+            "type": "string"
+          },
+          "source": {
+            "const": "request",
+            "default": "request",
+            "title": "Source",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "pending",
+              "substituted",
+              "rescheduled",
+              "cancelled",
+              "rejected",
+              "withdrawn",
+              "closed"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "suggestedTeacher": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SuggestedTeacher"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "teacher": {
+            "$ref": "#/components/schemas/PersonRef"
+          },
+          "teacherCanMark": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Teachercanmark"
+          },
+          "trigger": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Trigger"
+          },
+          "urgent": {
+            "default": false,
+            "title": "Urgent",
+            "type": "boolean"
+          },
+          "waitingDays": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Waitingdays"
+          }
+        },
+        "required": [
+          "id",
+          "batchId",
+          "status",
+          "group",
+          "lesson",
+          "teacher",
+          "reasonCode",
+          "reasonLabel",
+          "createdAt",
+          "minutesToStart"
+        ],
+        "title": "SubstitutionRequestRow",
         "type": "object"
       },
       "SubstitutionSummary": {
@@ -2648,6 +3097,102 @@
           "type"
         ],
         "title": "ValidationError",
+        "type": "object"
+      },
+      "WaitingCancellationRow": {
+        "description": "LESSON-RULES С11: a cancellation of a past lesson that WAITS for the owner (``group_attendance.cancellation_kind = unconfirmed``) - ``source: unconfirmed``.  No sum in it (the sums are the dry run of\nthe decision).  ``canDecide``: the caller has the right of money; ``canWithdraw``: the caller may give the cancellation back himself (his own, the rule of ``cancellation_kind``).",
+        "properties": {
+          "ageDays": {
+            "default": 0,
+            "title": "Agedays",
+            "type": "integer"
+          },
+          "canDecide": {
+            "default": false,
+            "title": "Candecide",
+            "type": "boolean"
+          },
+          "canWithdraw": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Canwithdraw"
+          },
+          "cancelledAt": {
+            "title": "Cancelledat",
+            "type": "string"
+          },
+          "cancelledBy": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PersonRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "group": {
+            "$ref": "#/components/schemas/RowGroup"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "const": "unconfirmed",
+            "default": "unconfirmed",
+            "title": "Kind",
+            "type": "string"
+          },
+          "lesson": {
+            "$ref": "#/components/schemas/RowLesson"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "source": {
+            "const": "unconfirmed",
+            "default": "unconfirmed",
+            "title": "Source",
+            "type": "string"
+          },
+          "teacher": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PersonRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "waitingDays": {
+            "default": 0,
+            "title": "Waitingdays",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "group",
+          "lesson",
+          "cancelledAt"
+        ],
+        "title": "WaitingCancellationRow",
         "type": "object"
       },
       "WithdrawBatchOut": {

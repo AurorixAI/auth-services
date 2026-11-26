@@ -334,7 +334,8 @@ def test_chain6_deleting_the_substitute_reopens_golden(w, clock):
     out = client(w, "owner").delete(f"{API}/org/members/{w.ids('member_D')}")
     assert out.status_code == 200 and out.json()["releasedSubstitutions"] == 1
     pending = client(w, "admin").get(SUB, params={"status": "pending"}).json()["items"]
-    assert len(pending) == 1 and not g(w, pending[0], "b2c6_reopened.json"), g(w, pending[0], "b2c6_reopened.json")
+    assert len(pending) == 1 and pending[0].pop("source") == "request"          # С11: a row of the list says its source; the record itself is the golden item
+    assert not g(w, pending[0], "b2c6_reopened.json"), g(w, pending[0], "b2c6_reopened.json")
     assert [r.status for r in requests_of(w)] == ["substituted", "pending"] and requests_of(w)[1].origin == "system"
     assert [e.action for e in events_of(w, requests_of(w)[1].id)] == ["reopened"]
     impact = client(w, "owner").get(f"{API}/org/members/{w.ids('member_A')}/removal-impact").json()

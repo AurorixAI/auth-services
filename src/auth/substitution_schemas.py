@@ -6,7 +6,7 @@ A teacher asks "I cannot teach this lesson"; the owner / admin decides (substitu
 from __future__ import annotations
 
 from datetime import date
-from typing import Any, Dict, List, Literal, Optional, Union
+from typing import Annotated, Any, Dict, List, Literal, Optional, Union
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -233,9 +233,68 @@ class WithdrawBatchOut(BaseModel):
     skipped: List[WithdrawSkipped] = Field(default_factory=list)
 
 
+class SubstitutionRequestRow(SubstitutionItem):
+    """LESSON-RULES С11: a row of the list that is a RECORD of a teacher's request (the whole item) - ``source: request``."""
+
+    source: Literal["request"] = "request"
+
+
+class RowLesson(BaseModel):
+    """The lesson of a row that is not a request: its time comes from the schedule (``null`` when the lesson is no more in it)."""
+
+    lessonId: Optional[str] = None
+    date: Optional[str] = None
+    startTime: Optional[str] = None
+    endTime: Optional[str] = None
+
+
+class RowGroup(BaseModel):
+    id: str
+    name: str = ""
+    studentCount: int = 0
+
+
+class WaitingCancellationRow(BaseModel):
+    """LESSON-RULES С11: a cancellation of a past lesson that WAITS for the owner (``group_attendance.cancellation_kind = unconfirmed``) - ``source: unconfirmed``.  No sum in it (the sums are the dry run of
+    the decision).  ``canDecide``: the caller has the right of money; ``canWithdraw``: the caller may give the cancellation back himself (his own, the rule of ``cancellation_kind``)."""
+
+    source: Literal["unconfirmed"] = "unconfirmed"
+    id: str
+    kind: Literal["unconfirmed"] = "unconfirmed"
+    group: RowGroup
+    lesson: RowLesson
+    teacher: Optional[PersonRef] = None
+    cancelledBy: Optional[PersonRef] = None
+    reason: Optional[str] = None          # the words of the cancelling person
+    cancelledAt: str
+    waitingDays: int = 0
+    ageDays: int = 0
+    canDecide: bool = False
+    canWithdraw: Optional[bool] = None
+
+
+class AuditEntryRow(BaseModel):
+    """LESSON-RULES С11: an entry of the history built from the journals (no request behind it) - ``source: audit``; ``kind``: backdated / corrected / lesson_added."""
+
+    source: Literal["audit"] = "audit"
+    id: str
+    kind: Literal["backdated", "corrected", "lesson_added"]
+    at: str
+    group: RowGroup
+    lesson: RowLesson
+    teacher: Optional[PersonRef] = None
+    by: Optional[PersonRef] = None
+    lateDays: Optional[int] = None
+    reason: Optional[str] = None
+    text: str = ""
+
+
+ListRow = Annotated[Union[SubstitutionRequestRow, WaitingCancellationRow, AuditEntryRow], Field(discriminator="source")]
+
+
 # -------------------------------------------------------------------------------- owner / admin (4.3)
 class SubstitutionListOut(BaseModel):
-    items: List[Union[SubstitutionItem, Dict[str, Any]]] = Field(default_factory=list)          # LESSON-RULES С7: a record, or an entry of the journal / a waiting cancellation (a dict with ``source``)
+    items: List[ListRow] = Field(default_factory=list)          # LESSON-RULES С11: three kinds of rows, told apart by ``source`` (a record / a waiting cancellation / an entry of the journal)
     total: int = 0
     pendingTotal: int = 0
     urgentTotal: int = 0
