@@ -5775,7 +5775,8 @@ class AuthService:
         # marks (O7): a stale ``expectedVersion`` is a conflict, an identical repeat answers 200 without a write.
         rules = attendance_rules.AttendanceRules(self)
         lesson_teacher_id = rules.assert_lesson_rights(
-            group, att, matching_slot, lesson_date, target_lesson_id, actor_id=marked_by, is_org_admin=is_org_admin
+            group, att, matching_slot, lesson_date, target_lesson_id, actor_id=marked_by, is_org_admin=is_org_admin,
+            check_age=not (att is not None and att.status == LessonAttendanceStatus.IN_PROGRESS.value and not is_cancellation),      # LESSON-RULES С5: his OWN started lesson is closed always (age is judged at the start / a cancel / a correction)
         )
         if att is None and group.status != "active":
             raise ops_rules.group_archived()
@@ -5880,12 +5881,16 @@ class AuthService:
             missing_student_ids = roster_student_ids - set(records)
             if missing_student_ids:
                 raise ValueError("Перед завершением урока заполните отметки всех учеников из состава урока")
+            if (att and att.status != LessonAttendanceStatus.COMPLETED.value and not manager and att.started_at is None and lesson_date < today
+                    and not any(m in ("present", "late") for m in records.values())):
+                # LESSON-RULES С4: a lesson that was not started in its own day and that nobody came to is not «held» by its teacher the day after - it would be paid without a witness (always, ``confirmNobodyCame`` does not matter)
+                raise ops_rules.conflict("NOBODY_CAME_BACKDATED", "Урок, на который никто не пришёл, задним числом оформляет администратор или владелец. Урок остаётся в списке «Уроки без отметки» у администратора")
             if records and att and att.status != LessonAttendanceStatus.COMPLETED.value and not any(m in ("present", "late") for m in records.values()) and getattr(req, "confirmNobodyCame", None) is False:     # only the request of the screen carries the field (``SaveAttendanceRequestB``)
                 raise ops_rules.conflict("NOBODY_CAME", "Никто не пришёл. Если завершить, урок будет считаться проведённым: он засчитывается ученикам (у учеников с пакетом из пакета спишется 1 урок) и войдёт в зарплату преподавателя. Если урока не было, нажмите «Урока не было»")
 
         # Reasons for new "excused" marks are validated before any write.
         excuse_service = AttendanceExcuseService(self.db)
-        excuse_plan = excuse_service.plan_save(att, records, req.excuseReasons)
+        excuse_plan = excuse_service.plan_save(att, records, req.excuseReasons, teacher_bound=not manager)
 
         # O8: ending a lesson while an exam of it is still live: warn first, the exam runs on its own timer (fail-open).
         completing = (

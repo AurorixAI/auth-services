@@ -42,12 +42,13 @@ from src.models.auth import (
 from . import business_clock as bc
 from . import money_effects as me
 from .closed_period import ClosedPeriods, assert_lesson_open, lesson_teacher_ids
-from .ops_rules import OpsError
+from .ops_rules import OpsError, conflict
 from .roster_names import student_full_name
 from .sql_text import contains
 
 logger = logging.getLogger(__name__)
 
+EXCUSE_DECIDED_TEXT = "Уважительную причину уже рассмотрели — изменить отметку может администратор или владелец"
 PAUSE_NOT_REQUIRED = "Не требуется: ученик на паузе"   # LOGIC-A: the note of an excuse closed by a pause / the refusal to open one on a pause day
 EXCUSED = "excused"
 REASON_MIN = 3
@@ -393,8 +394,10 @@ class AttendanceExcuseService:
         att: Optional[GroupAttendance],
         records: Dict[str, str],
         excuse_reasons: Optional[Dict[Any, str]],
+        teacher_bound: bool = False,
     ) -> ExcusePlan:
-        """Validate reasons for the new ``records``; performs no writes."""
+        """Validate reasons for the new ``records``; performs no writes.  ``teacher_bound`` (LESSON-RULES С6): the save is a teacher's - he cannot erase an APPROVED excuse (by marking the student
+        otherwise) and cannot rewrite the text of any DECIDED one (approved / rejected): 409 ``EXCUSE_DECIDED``; the owner and an administrator are not bound."""
         reasons = {str(k): v for k, v in (excuse_reasons or {}).items()}
         existing: Dict[str, AttendanceExcuse] = {}
         if att is not None and att.id is not None:
@@ -418,10 +421,14 @@ class AttendanceExcuseService:
             elif sid in reasons:
                 reason = _clean_reason(reasons[sid])
                 if reason != existing[sid].reason:
+                    if teacher_bound and existing[sid].status in ("confirmed", "rejected"):
+                        raise conflict("EXCUSE_DECIDED", EXCUSE_DECIDED_TEXT)
                     plan.update[sid] = reason
         # No longer excused (or the lesson was cancelled): the excuse goes away
         # together with its files.
         plan.delete = [e for sid, e in existing.items() if sid not in excused_now]
+        if teacher_bound and any(e.status == "confirmed" for e in plan.delete):
+            raise conflict("EXCUSE_DECIDED", EXCUSE_DECIDED_TEXT)          # a rejected one may go (the student is absent for the money either way)
         if att is not None and plan.create and self._paused_students(att, set(plan.create)):
             raise ExcusePauseRefused(PAUSE_NOT_REQUIRED)       # LOGIC-A: a day of a pause needs no excuse
         return plan

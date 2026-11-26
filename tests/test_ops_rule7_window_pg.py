@@ -50,7 +50,9 @@ def test_r2_the_idempotent_reconcile_obeys_the_window_and_an_old_open_lesson_is_
     marks = {str(w.ids("g7")): "present"}
     body = {"lessonDate": "2026-10-14", "lessonId": "lesson-wed", "status": "completed", "records": marks, **seen_version(w, w.G7, "2026-10-14", "lesson-wed")}
     teacher = client(w, "D").post(f"{API}/groups/{w.G7.id}/attendance", json=body)
-    assert teacher.status_code == 403 and teacher.json()["detail"]["code"] == "LESSON_TOO_OLD"
+    assert teacher.status_code == 200, teacher.text          # LESSON-RULES С5 (was 403 LESSON_TOO_OLD): his OWN lesson started inside the window is closed whenever he gets to it; the age is judged at the start
+    again = rec(w, "D", "lesson-wed", "2026-10-07")             # ... a lesson he has NOT started that is 15 days old stays the administrator's
+    assert again.status_code == 403 and again.json()["detail"]["code"] == "LESSON_TOO_OLD"
     assert client(w, "admin").post(f"{API}/groups/{w.G7.id}/attendance", json=body).status_code == 200
     assert rec(w, "admin", "lesson-wed", "2026-10-14").status_code in (200, 400)
 
