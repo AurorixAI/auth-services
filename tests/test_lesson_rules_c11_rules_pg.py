@@ -368,8 +368,6 @@ def _makeup_world(pg_session, clock):
     return w, g, members, r.json()["id"]
 
 
-@pytest.mark.xfail(strict=True, reason="FOUND 26.11 (not in the pack's list): the cancellation of a make-up by a role without the right releases the pointer of the lesson it makes up at once - the deduction of "
-                                       "16.11 comes back (50 000 each) while the cancellation WAITS; the waiting must be neutral (hand: (0, 0, 0)).  The lead decides the fix (one_off_purpose.release / _load_makeups).")
 def test_a_waiting_cancellation_of_a_makeup_lesson_does_not_move_the_account(pg_session, clock):
     """Hand (``ledger_service._load_makeups``): Mon 16.11 cancelled «по вине центра» (50 000 each); the make-up for it is «ahead» (today, not closed) and lifts the deduction: (0, 0, 0).  The teacher A
     cancels the make-up «Урока не было»: a PAST lesson, so the cancellation WAITS, and a waiting cancellation is neutral for the money: the accounts must stay (0, 0, 0)."""

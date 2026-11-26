@@ -107,7 +107,8 @@ class LessonCancelMixin:
             row = self._cancelled_row(group, ref, actor, reason, {"cancellation_kind": kind}, kind=kind, day_off_id=day_off_id, request=request)
         else:
             self._cancel_started_row(group, ref, row, actor, reason, kind)
-        OneOffPurpose(self.svc).release(group, lesson_id, actor)          # #154: a cancelled make-up frees the lesson it made up for (the deduction comes back by itself)
+        if kind != UNCONFIRMED:          # #154: a cancelled make-up frees the lesson it made up for (the deduction comes back by itself); a WAITING cancellation moves nothing - it frees it when the kind is confirmed (C12.1)
+            OneOffPurpose(self.svc).release(group, lesson_id, actor)
         released = self._release_substitute(group, ref, actor, "cancel", {"dayOffId": str(day_off_id)} if by_day_off else None)
         if released:
             warnings.append({"code": "SUBSTITUTE_RELEASED", "message": f"Замена снята: {released}"})

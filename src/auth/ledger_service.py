@@ -727,11 +727,12 @@ class LedgerLoader:
             one = ones.get(make_up)
             row = rows.get((group_id, make_up, one.lesson_date)) if one is not None and one.group_id == group_id else None
             key = (group_id, date.fromisoformat(day), lesson_id)
+            waiting = row is not None and row.status == "cancelled" and row.cancellation_kind == "unconfirmed"          # C12.1: a cancellation that WAITS for the owner moves nothing: the make-up counts as before it
             if one is None:
                 self.makeups[key] = MakeupFacts("gone")
-            elif one.lesson_date >= self.today.isoformat() and (row is None or row.status == "in_progress"):
+            elif one.lesson_date >= self.today.isoformat() and (row is None or row.status == "in_progress" or waiting):
                 self.makeups[key] = MakeupFacts("ahead")      # still to come (or going on today)
-            elif row is None or row.status == "in_progress":
+            elif row is None or row.status == "in_progress" or waiting:
                 self.makeups[key] = MakeupFacts("missed")      # the day has passed and the lesson was never closed (no row, or started and left open): «не проведена», the deduction stays; closed later, the facts lift it (LESSONS 54)
             elif row.status == "cancelled":
                 self.makeups[key] = MakeupFacts("gone")

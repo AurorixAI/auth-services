@@ -25,7 +25,7 @@ from . import ledger_service as ls
 from . import payment_status as ps
 from .centre_policy import CentrePolicy
 from .closed_period import ClosedPeriods, lesson_teacher_ids, open_lessons_since
-from .one_off_purpose import MAKEUP_EXISTS_TEXT
+from .one_off_purpose import MAKEUP_EXISTS_TEXT, OneOffPurpose
 from .ops_rules import OpsError, conflict, is_too_old_for_teacher, lesson_age_days, not_found, unprocessable
 from .lesson_teachers import _uuid
 from .schemas import CancellationKind, StoredCancellationKind
@@ -171,7 +171,9 @@ def _apply(db: Session, group: Group, row: GroupAttendance, req: ChangeCancellat
         details={"cancellation_kind": {"from": before, "to": req.cancellationKind}}))
     subs = Substitutions(AuthService(db))
     actor = _uuid(actor_id)
-    if before == UNCONFIRMED:                                              # the confirmation is an EVENT of the record of the cancellation, not a second record
+    if before == UNCONFIRMED:
+        OneOffPurpose(AuthService(db)).release(group, row.lesson_id, actor)           # C12.1: the confirmation of a cancelled make-up frees the lesson it made up for - what the owner's cancellation does at once
+                                              # the confirmation is an EVENT of the record of the cancellation, not a second record
         record = lesson_outcomes(list(reversed(subs._lesson_requests(group, req.lessonId, req.lessonDate.isoformat()))), row.status)
         if record is not None and record.status == "cancelled":
             subs.event(record, "confirmed", actor, {"cancellationKind": {"from": before, "to": req.cancellationKind}, **({"reason": reason} if reason else {})})

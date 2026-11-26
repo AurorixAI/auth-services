@@ -310,6 +310,8 @@ class OneOffPurpose:
         if one_off is None or one_off.purpose != MAKEUP:
             return
         origin = self._origin_of(group.id, one_off)
+        if origin is not None and origin.made_up_by == lesson_id:          # C12.1: the cancellation of the make-up WAITED, the pointer was never released - nothing to link
+            return
         if origin is None or origin.status != "cancelled" or origin.cancellation_kind != "centre" or origin.made_up_by:
             raise conflict("RESTORE_MAKEUP_TARGET", "Отменённый урок, который отрабатывался, уже изменён или у него другая отработка: вернуть отработку нельзя")
         origin.made_up_by = lesson_id
