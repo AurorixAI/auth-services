@@ -410,7 +410,7 @@ class PayrollService:
                 raise MonthInvalid("Делитель можно задать не раньше января 2020")
         else:
             month = today.replace(day=1)
-        org = self.db.query(Organization).filter(Organization.id == org_id).with_for_update().first()
+        org = self.db.query(Organization).filter(Organization.id == org_id).with_for_update().populate_existing().first()
         if not org:
             raise PayrollNotFound("Организация не найдена")
         if self._divisor_at_locked(org_id, month, org) == divisor:      # the same divisor from the same month: nothing to write

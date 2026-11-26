@@ -335,7 +335,7 @@ class OpeningsService(_Base):
             raise PaymentInvalid("Состояние: done, skipped или pending")
         if state == "pending" and actor_role != "owner":
             raise OpeningOwnerOnly("Вернуть запуск учёта может владелец")
-        org = self.db.query(Organization).filter(Organization.id == org_id).with_for_update().first()
+        org = self.db.query(Organization).filter(Organization.id == org_id).with_for_update().populate_existing().first()
         if org is None:
             raise PaymentNotFound("Организация не найдена")
         settings = dict(org.settings or {})
@@ -587,7 +587,7 @@ class OpeningsService(_Base):
             if len(request.items) > MAX_ITEMS:
                 raise TooManyItems(f"Не больше {MAX_ITEMS} строк за один раз — сохраните по группам")
             # (1) the centre is locked first: one batch at a time per centre (and the ring of the idempotency keys is read under the lock)
-            org = self.db.query(Organization).filter(Organization.id == org_id).with_for_update().first()
+            org = self.db.query(Organization).filter(Organization.id == org_id).with_for_update().populate_existing().first()
             if org is None:
                 raise PaymentNotFound("Организация не найдена")
             body_hash = self._body_hash(request)

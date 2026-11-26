@@ -549,7 +549,7 @@ class PaymentService:
         due_impact = None if dry_run else self._safe_pay_due_impact(org_id, changes)
         pre = None if dry_run else self._precomputed_regime_audit(org_id, {k: v for k, v in changes.items() if k not in ("accounting_start_date", "centre_cancel_recalc")}, today)
         query = self.db.query(Organization).filter(Organization.id == org_id)
-        org = query.first() if dry_run else query.with_for_update().first()
+        org = query.first() if dry_run else query.with_for_update().populate_existing().first()
         if not org:
             raise PaymentNotFound("Организация не найдена")
         due_before = self.get_settings(org_id)

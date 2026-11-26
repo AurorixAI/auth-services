@@ -87,15 +87,15 @@ def test_only_the_owner_changes_the_rules_and_the_page_of_the_payments_does_not_
     assert w.db.query(OrgMoneyAudit).filter_by(org_id=w.org.id, action=POLICY_CHANGED).count() == 1
 
 
-def test_a_parallel_write_of_the_payment_settings_and_of_the_lessons_loses_neither(w):
-    """The two blocks live in one JSON of the organisation: each write locks the row and replaces ITS block.  Two writes in turn (one of each) leave both."""
-    assert put(w, teacher_lesson_window_days=14).status_code == 200
-    r = client(w, "owner").put(f"{ORG}/settings/payments", json={"pay_due_days": 4})
-    assert r.status_code == 200, r.text
-    assert put(w, past_cancel_needs_confirmation=False).status_code == 200
-    pay = client(w, "owner").get(f"{ORG}/settings/payments").json()
-    rules = client(w, "owner").get(RULES).json()
-    assert pay["pay_due_days"] == 4 and (rules["teacher_lesson_window_days"], rules["past_cancel_needs_confirmation"]) == (14, False)
+def test_a_parallel_write_of_the_payment_settings_and_of_the_lessons_loses_neither(w, pg_session):
+    """The two blocks live in one JSON of the organisation: each write locks the row, reads it fresh and replaces ITS block.  Two REAL threads on two sessions (the second one holds the row it
+    read before the first commit), both orders: the lessons then the payments, the payments then the lessons - both values stay (the full set of the pairs: ``test_lesson_rules_c11_settings_race_pg``)."""
+    from tests.test_lesson_rules_c11_settings_race_pg import run_pair
+
+    other = build_d2(pg_session, "second")          # a second centre: each order starts from the untouched settings
+    grant_money_right(other)
+    run_pair(w, "policy", "payments")
+    run_pair(other, "payments", "policy")
 
 
 def test_versions_carry_the_day_and_a_key_without_a_default_reads_none(w):
