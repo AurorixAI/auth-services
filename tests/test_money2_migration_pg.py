@@ -44,7 +44,7 @@ def test_the_revision_sits_on_top_of_the_one_of_the_production():
     from alembic.script import ScriptDirectory
 
     script = ScriptDirectory.from_config(config())
-    assert script.get_heads() == ["mm22a1b2c3d4"] and script.get_revision("mm22a1b2c3d4").down_revision == REVISION and script.get_revision(REVISION).down_revision == BEFORE
+    assert script.get_heads() == ["lr3a2b3c4d5e"] and script.get_revision("mm22a1b2c3d4").down_revision == REVISION and script.get_revision(REVISION).down_revision == BEFORE
 
 
 def test_up_down_up_the_baseline_the_counters_the_wider_checks_and_the_cascade(engine):
