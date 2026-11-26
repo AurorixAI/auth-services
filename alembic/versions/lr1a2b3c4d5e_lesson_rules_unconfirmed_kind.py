@@ -35,10 +35,12 @@ def _replace(bind, expression: str) -> None:
 
 
 def upgrade() -> None:
+    op.execute("SET LOCAL lock_timeout = '5s'")          # as lr2 and lr3: a lock that is not given in 5 seconds fails the migration instead of queueing the whole table behind it
     _replace(op.get_bind(), NEW)
 
 
 def downgrade() -> None:
     bind = op.get_bind()
+    op.execute("SET LOCAL lock_timeout = '5s'")
     op.execute(f"UPDATE {TABLE} SET cancellation_kind = NULL WHERE cancellation_kind = 'unconfirmed'")
     _replace(bind, OLD)

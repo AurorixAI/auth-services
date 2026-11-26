@@ -21,7 +21,7 @@ from sqlalchemy.orm.attributes import flag_modified
 from . import business_clock as bc
 from src.models.auth import Organization, OrgMoneyAudit, User
 from .money_journal_actions import POLICY_CHANGED
-from .ops_rules import OpsError, conflict, not_found, unprocessable
+from .ops_rules import LESSON_WINDOW_DEFAULT_DAYS, OpsError, conflict, not_found, unprocessable
 
 LESSON_WINDOW_DAYS = "teacher_lesson_window_days"
 PAST_CANCEL_NEEDS_CONFIRMATION = "past_cancel_needs_confirmation"
@@ -48,7 +48,7 @@ class PolicyKey:
 
 
 KEYS: Dict[str, PolicyKey] = {k.name: k for k in (
-    PolicyKey(LESSON_WINDOW_DAYS, LESSONS_SECTION, 7, (1, 3, 7, 14, 30),
+    PolicyKey(LESSON_WINDOW_DAYS, LESSONS_SECTION, LESSON_WINDOW_DEFAULT_DAYS, (1, 3, 7, 14, 30),
               "Преподаватель сам оформляет прошедший урок в течение",
               "Позже этого срока урок оформляет администратор или владелец. Оформленное задним числом видно в «Замены → История»."),
     PolicyKey(PAST_CANCEL_NEEDS_CONFIRMATION, LESSONS_SECTION, True, (True, False),

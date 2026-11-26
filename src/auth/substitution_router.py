@@ -157,7 +157,8 @@ def list_substitutions(
 
     svc = _subs(db)
     return svc.list(user["org_id"], status=status, group_id=groupId, teacher_id=teacherId, date_from=dateFrom, date_to=dateTo, urgent=urgent,
-                    search=search, limit=limit, offset=offset, backdated_only=backdated_only, money_right=OneOffPurpose(svc.svc).money_right(user["org_id"], user.get("org_role")))
+                    search=search, limit=limit, offset=offset, backdated_only=backdated_only, money_right=OneOffPurpose(svc.svc).money_right(user["org_id"], user.get("org_role")),
+                    actor_id=user["user_id"], org_role=user.get("org_role"))
 
 
 @router.get("/org/substitutions/{request_id}", response_model=SubstitutionDetailOut)
@@ -246,7 +247,7 @@ def restore_cancelled_lesson(group_id: str, request: LessonRestoreRequest, user:
 @router.post("/org/groups/{group_id}/lessons/withdraw-cancellation")
 def withdraw_own_cancellation(group_id: str, request: WithdrawCancellationRequest, user: dict = Depends(_member), db: Session = Depends(get_db)):
     """LESSON-RULES С3: the teacher gives back HIS OWN waiting cancellation (``unconfirmed``) of a lesson inside the window of the centre - the lesson returns to «Уроки без отметки»."""
-    return _subs(db).withdraw_cancellation(user["org_id"], user["user_id"], group_id, request.lessonId, request.lessonDate, request.expectedKind)
+    return _subs(db).withdraw_cancellation(user["org_id"], user["user_id"], group_id, request.lessonId, request.lessonDate, request.expectedKind, org_role=user.get("org_role"))
 
 
 # ------------------------------------------------------------------------------------ exam-service (D-1)

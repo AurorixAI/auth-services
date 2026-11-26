@@ -10,6 +10,7 @@ second record in the journal «Замены»), ``dry_run`` answers what it woul
 the same final kind again = 200 ``changed: false``."""
 from __future__ import annotations
 
+import logging
 from datetime import date
 from typing import Any, Dict, Optional
 
@@ -21,16 +22,45 @@ from src.models.auth import Group, GroupAttendance, GroupAttendanceAudit
 from . import billing_ledger as bl
 from . import business_clock as bc
 from . import ledger_service as ls
+from . import payment_status as ps
 from .centre_policy import CentrePolicy
 from .closed_period import ClosedPeriods, lesson_teacher_ids, open_lessons_since
 from .one_off_purpose import MAKEUP_EXISTS_TEXT
-from .ops_rules import conflict, is_too_old_for_teacher, lesson_age_days, not_found, unprocessable
+from .ops_rules import OpsError, conflict, is_too_old_for_teacher, lesson_age_days, not_found, unprocessable
 from .lesson_teachers import _uuid
 from .schemas import CancellationKind, StoredCancellationKind
+
+logger = logging.getLogger(__name__)
 
 UNCONFIRMED = "unconfirmed"
 ROLE_WORDS = {"owner": "владелец", "admin": "администратор", "teacher": "преподаватель"}
 KIND_WORDS = {"centre": "по вине центра", "holiday": "праздник", UNCONFIRMED: "ждёт подтверждения"}
+ZERO_TEXTS = {          # the words of the server for «перерасчёта нет» (the dry run of a confirmation whose total is 0)
+    "packages": "В пакетах уроков отмена не требует перерасчёта: урок просто не списывается.",
+    "nobody_charged": "За этот урок никто из учеников не платит: перерасчёта нет.",
+    "one_off": "Разовый урок: перерасчёта нет.",
+}
+
+
+def withdraw_refusal(*, author: bool, role: Optional[str], in_window: bool) -> Optional[str]:
+    """THE rule of «Отозвать отмену» (the road ``withdraw_cancellation`` and the flag ``canWithdraw`` of every list read it, nobody keeps a copy): the right of the AUTHOR of the cancellation, while it waits.
+    A teacher also only inside the window of the centre; an administrator without the right of money - as long as it is not confirmed (the window is the rule of the teacher's own actions, not of his).
+    The refusal code, ``None`` when allowed.  The month (closed) and the group (archived) are checked beside it with their own answers."""
+    if not author:
+        return "NOT_YOUR_CANCELLATION"
+    if role == "teacher" and not in_window:
+        return "LESSON_TOO_OLD"
+    return None
+
+
+def zero_reason(block: Dict[str, Any], lesson_id: str, day: date) -> str:
+    """Why a confirmation recalculates NOTHING for anybody: ``one_off`` (a one-off lesson), ``packages`` (the regime of that day is the package of lessons: the lesson is simply not written off), else
+    ``nobody_charged`` (nobody of the group pays for that lesson: a pause, the period has not begun)."""
+    if str(lesson_id).startswith("one-off-"):
+        return "one_off"
+    if bl.regime_at(ls.parse_regimes(block), day).mode == ps.LESSONS:
+        return "packages"
+    return "nobody_charged"
 
 
 class ChangeCancellationKind(BaseModel):
@@ -60,7 +90,8 @@ def _who_decided(db: Session, group: Group, row: Optional[GroupAttendance], less
     name = None
     if actor_id is not None:
         user = db.query(User).filter(User.id == actor_id).first()
-        name = " ".join(p for p in ((user.first_name or "").strip(), (user.last_name or "").strip()) if p) or None if user else None
+        if user is not None:                                              # a user who is gone (the line outlives him): no name, the answer is the same 409
+            name = " ".join(p for p in ((user.first_name or "").strip(), (user.last_name or "").strip()) if p) or None
         member = db.query(OrganizationMember.org_role).filter(OrganizationMember.org_id == group.org_id, OrganizationMember.user_id == actor_id).scalar()
         role = member or role
     return {"decided_by_name": name, "decided_by_role": role, "decided_at": bc.as_utc(moment).isoformat() if moment else None,
@@ -165,14 +196,18 @@ def _preview(db: Session, org_id: str, group: Group, row: GroupAttendance, req: 
     with me.writes_rolled_back(db):
         _, added = me.measure_cancellation(db, org_id, group.id, lambda: _apply(db, group, row, req, row.marked_by, before, reason))
     amounts = [int(a["amount"]) for a in added]
+    why = zero_reason(block if isinstance(block, dict) else {}, req.lessonId, day) if not amounts and not recalc_off else None          # recalc off: the screen says it by ``recalc_off``
     policy = CentrePolicy.of(db, org_id)
     window = policy.lesson_window_days
     restore_allowed = group.status == "active" and day >= open_lessons_since(db, org_id, today)
     if restore_allowed:
         try:
             Substitutions(AuthService(db))._lesson_ref(group, req.lessonId, day)
-        except Exception:                                                  # the schedule no longer has the lesson: it cannot be given back
+        except OpsError:                                                   # the schedule no longer has the lesson: it cannot be given back
             restore_allowed = False
+        except Exception:                                                  # a broken database is not «нельзя вернуть»: it goes out, with its trace in the log
+            logger.exception("dry run of the cancellation kind: the lesson could not be read org=%s group=%s", org_id, group.id)
+            raise
     return {"ok": True, "dry_run": True, "changed": True, "from": before, "to": req.cancellationKind, "students": len(amounts),
-            "per_student": amounts[0] if amounts and len(set(amounts)) == 1 else None, "total": sum(amounts), "deductions": added, "recalc_off": recalc_off,
+            "per_student": amounts[0] if amounts and len(set(amounts)) == 1 else None, "total": sum(amounts), "deductions": added, "recalc_off": recalc_off, "zero_reason": why, "zero_text": ZERO_TEXTS.get(why),
             "restore_allowed": restore_allowed, "age_days": lesson_age_days(day, today), "window_days": window, "teacher_can_mark": not is_too_old_for_teacher(day, today, window)}

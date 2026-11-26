@@ -62,10 +62,19 @@ def _names(user):
     return {"last": user.last_name, "first": user.first_name}
 
 
+def cancelled_at(g):
+    """SQL: the moment the cancellation of the row ``g`` was WRITTEN - the newest line of the journal «cancelled» of the row (a day off set and voided, a kind changed back touch ``updated_at`` and are not a
+    new cancellation); the row's own ``updated_at`` only for a row without such a line."""
+    newest = (select(func.max(GroupAttendanceAudit.created_at)).where(GroupAttendanceAudit.attendance_id == g.id, GroupAttendanceAudit.action.in_(("cancelled", "reconciliation_cancelled")))
+              .correlate(g).scalar_subquery())
+    return func.coalesce(newest, g.updated_at)
+
+
 def unconfirmed_branch(org_id: Any, *, group_id: Optional[UUID], teacher_id: Optional[UUID], date_from: Optional[str], date_to: Optional[str], like: Optional[str]):
     """The cancellations that wait for the owner: ``kind = unconfirmed``; the sort column is the moment the cancellation was written (the oldest wait first)."""
     g, grp, actor, teacher, member = GroupAttendance, aliased(Group), aliased(User), aliased(User), aliased(OrganizationMember)
-    stmt = (select(*cols(UNCONFIRMED, g.updated_at, overdue=literal(True), ref_id=g.id, group_id=g.group_id, group_name=grp.name, lesson_id=g.lesson_id, lesson_date=g.lesson_date,
+    moment = cancelled_at(g)
+    stmt = (select(*cols(UNCONFIRMED, moment, overdue=literal(True), ref_id=g.id, group_id=g.group_id, group_name=grp.name, lesson_id=g.lesson_id, lesson_date=g.lesson_date,
                          actor_id=g.marked_by, actor_last=actor.last_name, actor_first=actor.first_name, actor_role=member.org_role, teacher_id=g.teacher_id,
                          teacher_last=teacher.last_name, teacher_first=teacher.first_name, reason=g.cancellation_reason))
             .select_from(g).join(grp, grp.id == g.group_id).outerjoin(actor, actor.id == g.marked_by).outerjoin(teacher, teacher.id == g.teacher_id)
@@ -89,7 +98,11 @@ def attendance_branch(org_id: Any, *, since: Optional[datetime], group_id: Optio
     The actor is whoever wrote the line (a teacher or an administrator over somebody's lesson); the teacher is the one the lesson is frozen with."""
     a, g, grp, actor, teacher, member = GroupAttendanceAudit, aliased(GroupAttendance), aliased(Group), aliased(User), aliased(User), aliased(OrganizationMember)
     late = business_day(a.created_at) - cast(a.lesson_date, Date)
-    done_late = and_(a.action == "updated", a.before_status == "in_progress", a.after_status == "completed", late >= 1)    # the completion writes ``updated`` (service.py)
+    # a lesson STARTED in time (``started_at`` filled) is closed «later» only when it is closed more than 12 hours after it was started (the end of the lesson is not kept in the journal; the start is its lower
+    # bound, so an evening lesson closed after midnight is not «задним числом»); a lesson arranged afterwards (``started_at`` empty) - by the difference of the dates
+    wall = a.created_at + text(f"interval '{_hours()} hours'")
+    in_time = and_(g.started_at.isnot(None), wall <= g.started_at + text("interval '12 hours'"))
+    done_late = and_(a.action == "updated", a.before_status == "in_progress", a.after_status == "completed", late >= 1, ~in_time)    # the completion writes ``updated`` (service.py)
     corrected = and_(a.action == "corrected", a.before_status == "completed", a.after_status == "completed")
     stmt = (select(*cols(case((done_late, literal(BACKDATED)), else_=literal(CORRECTED)), a.created_at, overdue=literal(True), ref_id=a.id, group_id=a.group_id, group_name=grp.name,
                          lesson_id=a.lesson_id, lesson_date=a.lesson_date, actor_id=a.actor_id, actor_last=actor.last_name, actor_first=actor.first_name, actor_role=member.org_role,

@@ -280,11 +280,12 @@ class LessonCancelMixin:
                 out["moneyEffects"]["text"] = money_effects.deduction_text(gone, done=not dry_run, past=bool(past))
         return out
 
-    def withdraw_cancellation(self, org_id: Any, actor_id: Any, group_id: Any, lesson_id: str, day: date, expected_kind: Optional[str] = None) -> Dict[str, Any]:
-        """LESSON-RULES С3: the teacher gives back HIS OWN cancellation while it WAITS (``unconfirmed``) and the lesson is inside the window of the centre: the same return to the mark as the owner's
-        «Урок был» (the right is this one case only), written as the teacher's (the group audit says ``teacher``, the trigger is ``teacher_withdraw``).  After the decision, in an archived group, in a closed
-        month, for a cancellation of somebody else or of a lesson older than the window: a refusal.  The answer carries no money."""
-        from .cancellation_kind import already_decided
+    def withdraw_cancellation(self, org_id: Any, actor_id: Any, group_id: Any, lesson_id: str, day: date, expected_kind: Optional[str] = None, org_role: str = "teacher") -> Dict[str, Any]:
+        """LESSON-RULES С3 / С11: the AUTHOR gives back HIS OWN cancellation while it WAITS (``unconfirmed``): the same return to the mark as the owner's «Урок был» (the right is this one case only), written as
+        his (the group audit says his role, the trigger is ``teacher_withdraw``).  A teacher - inside the window of the centre; an administrator without the right of money - as long as it is not confirmed
+        (``cancellation_kind.withdraw_refusal`` is the one rule, the flag ``canWithdraw`` reads the same).  After the decision, in an archived group, in a closed month, for a cancellation of somebody else:
+        a refusal.  The answer carries no money."""
+        from .cancellation_kind import already_decided, withdraw_refusal
         from .ops_rules import forbidden, is_too_old_for_teacher, lesson_too_old_text
 
         actor = _uuid(actor_id)
@@ -298,12 +299,14 @@ class LessonCancelMixin:
                    .with_for_update().first())
             if row is None or row.status != "cancelled" or row.cancellation_kind != "unconfirmed":
                 raise already_decided(self.db, group, row, lesson_id, day)
-            if row.marked_by != actor:
-                raise forbidden("NOT_YOUR_CANCELLATION", "Эту отмену оформили не вы: вернуть урок на отметку может владелец или администратор")
+            role = org_role if org_role in ("owner", "admin", "teacher") else "teacher"
             window = CentrePolicy.of(self.db, org_id).lesson_window_days
-            if is_too_old_for_teacher(day, bc.business_today(), window):
+            refusal = withdraw_refusal(author=row.marked_by == actor, role=role, in_window=not is_too_old_for_teacher(day, bc.business_today(), window))
+            if refusal == "NOT_YOUR_CANCELLATION":
+                raise forbidden("NOT_YOUR_CANCELLATION", "Эту отмену оформили не вы: вернуть урок на отметку может владелец или администратор")
+            if refusal == "LESSON_TOO_OLD":
                 raise forbidden("LESSON_TOO_OLD", lesson_too_old_text(window), windowDays=window)
-            out = self._restore_locked(org_id, actor, "teacher", group_id, lesson_id, day, "Преподаватель отозвал отмену", False, False, expected_kind, True)
+            out = self._restore_locked(org_id, actor, role, group_id, lesson_id, day, "Преподаватель отозвал отмену" if role == "teacher" else "Автор отмены отозвал её", False, False, expected_kind, True)
             self.db.commit()
             return {k: out[k] for k in ("ok", "restored", "lessonId", "lessonDate", "previousKind", "returnedToReview") if k in out}
         except BaseException:

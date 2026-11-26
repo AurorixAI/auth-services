@@ -5881,9 +5881,9 @@ class AuthService:
             missing_student_ids = roster_student_ids - set(records)
             if missing_student_ids:
                 raise ValueError("Перед завершением урока заполните отметки всех учеников из состава урока")
-            if (att and att.status != LessonAttendanceStatus.COMPLETED.value and not manager and att.started_at is None and lesson_date < today
+            if (att and att.status != LessonAttendanceStatus.COMPLETED.value and not manager and att.started_at is None and lesson_date < (business_clock.utc_to_business_date(att.created_at) if att.created_at else today)
                     and not any(m in ("present", "late") for m in records.values())):
-                # LESSON-RULES С4: a lesson that was not started in its own day and that nobody came to is not «held» by its teacher the day after - it would be paid without a witness (always, ``confirmNobodyCame`` does not matter)
+                # LESSON-RULES С4 / С11: a lesson that was ARRANGED after its own day (the day the row of the arrangement was created, not the moment of the completion) and that nobody came to is not «held» by its teacher - it would be paid without a witness (always, ``confirmNobodyCame`` does not matter)
                 raise ops_rules.conflict("NOBODY_CAME_BACKDATED", "Никто не пришёл? Такой урок задним числом оформляет администратор — он видит его в уроках без отметки.")
             if records and att and att.status != LessonAttendanceStatus.COMPLETED.value and not any(m in ("present", "late") for m in records.values()) and getattr(req, "confirmNobodyCame", None) is False:     # only the request of the screen carries the field (``SaveAttendanceRequestB``)
                 raise ops_rules.conflict("NOBODY_CAME", "Никто не пришёл. Если завершить, урок будет считаться проведённым: он засчитывается ученикам (у учеников с пакетом из пакета спишется 1 урок) и войдёт в зарплату преподавателя. Если урока не было, нажмите «Урока не было»")

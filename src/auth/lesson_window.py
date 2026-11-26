@@ -26,6 +26,15 @@ class WindowMarks:
         self.window = CentrePolicy.of(db, org_id).lesson_window_days
         self.periods = ClosedPeriods.of(db, org_id)
 
+    def within_window(self, lesson_date: Any) -> bool:
+        """THE question «is the lesson still inside the window of the teacher's own actions» (``ops_rules.is_too_old_for_teacher`` with the rule of the centre): ``canActSelf``, ``teacherCanMark`` and the window of
+        «Отозвать» read it here.  A date that cannot be read is inside (the refusal of the road decides)."""
+        try:
+            day = lesson_date if isinstance(lesson_date, date) else date.fromisoformat(lesson_date)
+        except (TypeError, ValueError):
+            return True
+        return not is_too_old_for_teacher(day, self.today, self.window)
+
     def of(self, teacher_id: Any, lesson_date: str) -> Dict[str, Any]:
         """``{"canActSelf", "monthClosed", "windowDays"}`` of one lesson (``teacher_id``: its teacher, the substitute included; ``lesson_date``: ``YYYY-MM-DD``)."""
         try:
@@ -36,7 +45,7 @@ class WindowMarks:
             return {"canActSelf": self.manager, "monthClosed": False, "windowDays": self.window}
         closed = bool(teacher_id) and self.periods.any_closed(day) and self.periods.closed_for([teacher_id], day) is not None
         mine = self.manager or (bool(teacher_id) and self.actor is not None and str(teacher_id) == self.actor)
-        return {"canActSelf": bool(mine and (self.manager or not is_too_old_for_teacher(day, self.today, self.window))), "monthClosed": closed, "windowDays": self.window}
+        return {"canActSelf": bool(mine and (self.manager or self.within_window(day))), "monthClosed": closed, "windowDays": self.window}
 
 
 def apply_window(item: Any, marks: Dict[str, Any]) -> None:

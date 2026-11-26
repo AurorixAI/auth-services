@@ -21,7 +21,7 @@ from datetime import date, datetime, timedelta
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 from uuid import UUID, uuid4
 
-from sqlalchemy import event, func, literal, or_, select
+from sqlalchemy import and_, event, func, literal, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, aliased
 
@@ -30,6 +30,7 @@ from src.models.auth import OrgDayOff
 from . import business_clock as bc
 from .centre_policy import CentrePolicy
 from . import exam_bridge, exam_release, substitution_rules as R
+from .cancellation_kind import withdraw_refusal
 from .closed_period import ClosedPeriods, lesson_teacher_ids
 from .days_off import DaysOffService
 from .lesson_cancel import LessonCancelMixin, RESTORED, lesson_outcomes
@@ -92,7 +93,7 @@ SNAPSHOT_KEYS: Dict[str, Tuple[str, ...]] = {
 }
 SNAPSHOT_KEYS["closed"] = SNAPSHOT_KEYS["closed"] + ("byDayOff",)
 # ``dayOffId`` is the machinery for a teacher: he reads ``byDayOff: true`` instead (derived in ``clean_snapshot``, never stored); ``subject`` / ``needsDecision`` of ``day_off_voided`` are written with the event
-_MANAGER_ONLY: Dict[str, Tuple[str, ...]] = {"cancelled": ("cancellationKind",), "closed": ("reason", "cancellationKind", "previous", "dayOffId"), "lesson_restored": ("reason", "previous"), "confirmed": ("cancellationKind", "reason"),
+_MANAGER_ONLY: Dict[str, Tuple[str, ...]] = {"cancelled": ("cancellationKind",), "closed": ("reason", "cancellationKind", "previous", "dayOffId"), "lesson_restored": ("reason", "previous"), "confirmed": ("reason",),          # С11 п.16: the teacher reads the kind of a confirmed cancellation («по вине центра» / «праздник») in the event as in the block; the reason of the owner stays his own
                                               "reopened": ("dayOffId",), "assignment_cleared": ("dayOffId",), "day_off_voided": ("dayOffId",)}
 CLOSED_OUTCOME = {          # #157 A11: ``closed_reason`` -> the code of ``outcome`` (``LESSON_CANCELLED`` is told apart by the closing trigger: a day off)
     "LESSON_OUTSIDE_WINDOW": "not_resolved_in_time", "LESSON_STARTED": "lesson_started", "LESSON_REMOVED": "lesson_removed", "GROUP_ARCHIVED": "group_archived",
@@ -301,9 +302,11 @@ class SubstitutionsBase:
             state = ctx.rows.get((r.group_id, r.lesson_id, r.lesson_date))
             if r.id in ctx.restored:
                 return "included_in_payroll" if state is not None and state[0] == "completed" else "lesson_restored"          # LESSON-RULES: the lesson was given back; held afterwards it is in the pay
-            if ctx.triggers.get(r.id) == "teacher_cancel" or r.decided_via == "teacher_cancel":
+            past = r.decided_at is not None and r.starts_at is not None and r.decided_at >= r.starts_at          # the lesson had begun when it was cancelled: the rule of the confirmation applied to it
+            by_teacher = ctx.triggers.get(r.id) == "teacher_cancel" or r.decided_via == "teacher_cancel"
+            if past or by_teacher:
                 kind = state[1] if state is not None and state[0] == "cancelled" else None
-                return {"unconfirmed": "cancel_waiting", "centre": "cancelled_centre", "holiday": "cancelled_holiday"}.get(kind or "", "lesson_not_held")          # LESSON-RULES: the words of the teacher's block
+                return {"unconfirmed": "cancel_waiting", "centre": "cancelled_centre", "holiday": "cancelled_holiday"}.get(kind or "", "lesson_not_held" if by_teacher else "cancelled")          # LESSON-RULES: the words of the teacher's block follow the KIND of the cancellation, whoever cancelled (the road ``decide`` too)
             return "cancelled"
         if r.status == "closed":
             if r.closed_reason == "LESSON_CANCELLED":
@@ -369,13 +372,12 @@ class SubstitutionsBase:
         state = ctx.rows.get((r.group_id, r.lesson_id, r.lesson_date))
         if r.status == "cancelled" and state is not None and state[0] == "cancelled" and state[1] == "unconfirmed" and r.decided_at is not None:
             out["waitingDays"] = max(0, (bc.business_today() - bc.utc_to_business_date(r.decided_at)).days)
-            if ctx.viewer != MANAGER and ctx.window is not None:          # «Отозвать»: the teacher's OWN waiting cancellation, inside the window, month open, group active - the conditions of ``withdraw_cancellation``
-                marks = ctx.window.of(r.requester_id, r.lesson_date)
+            if ctx.viewer != MANAGER and ctx.window is not None:          # «Отозвать»: the teacher's OWN waiting cancellation, inside the window, month open, group active - ONE rule with the road (``withdraw_refusal``)
                 group = ctx.groups.get(r.group_id)
-                out["canWithdraw"] = bool(ctx.marked_by.get((r.group_id, r.lesson_id, r.lesson_date)) == ctx.viewer and marks["canActSelf"] and not marks["monthClosed"]
-                                          and group is not None and group.status == "active")
-        if r.id in ctx.restored:
-            out["teacherCanMark"] = (bc.business_today() - date.fromisoformat(r.lesson_date)).days <= ctx.window_days
+                out["canWithdraw"] = bool(withdraw_refusal(author=ctx.marked_by.get((r.group_id, r.lesson_id, r.lesson_date)) == ctx.viewer, role="teacher", in_window=ctx.window.within_window(r.lesson_date)) is None
+                                          and not ctx.window.of(r.requester_id, r.lesson_date)["monthClosed"] and group is not None and group.status == "active")
+        if r.id in ctx.restored and ctx.window is not None:
+            out["teacherCanMark"] = ctx.window.within_window(r.lesson_date)
         return out
 
     def items(self, reqs: Sequence[Req], viewer: Any) -> List[Dict[str, Any]]:
@@ -830,7 +832,8 @@ class SubstitutionsBase:
         return func.greatest(func.coalesce(Req.decided_at, Req.created_at), newest)
 
     def list(self, org_id: Any, *, status: str, group_id: Optional[str], teacher_id: Optional[str], date_from: Optional[date], date_to: Optional[date],
-             urgent: Optional[bool], search: Optional[str], limit: int, offset: int, backdated_only: bool = False, money_right: bool = True) -> Dict[str, Any]:
+             urgent: Optional[bool], search: Optional[str], limit: int, offset: int, backdated_only: bool = False, money_right: bool = True,
+             actor_id: Any = None, org_role: Optional[str] = None) -> Dict[str, Any]:
         """The list of «Замены».  LESSON-RULES С7: ``pending`` = the waiting requests AND the cancellations that wait for the owner; ``decided`` = the decided requests AND the entries of the journal («оформлен
         задним числом», «отметки исправлены», «добавил урок»), a waiting cancellation is NOT in it; each is ONE list (``substitution_lists``: ``UNION ALL``, one count, one page).  ``backdated_only``: only
         the entries that look back.  ``money_right`` marks who may decide a waiting cancellation (the roles without it read the same rows: «решает владелец», no sums)."""
@@ -844,7 +847,10 @@ class SubstitutionsBase:
             q = q.filter(Req.status != PENDING)
             waiting = (select(GroupAttendance.id).where(GroupAttendance.group_id == Req.group_id, GroupAttendance.lesson_id == Req.lesson_id, GroupAttendance.lesson_date == Req.lesson_date,
                                                          GroupAttendance.status == "cancelled", GroupAttendance.cancellation_kind == "unconfirmed").correlate(Req).exists())
-            q = q.filter(~waiting)                          # a cancellation that has no outcome yet is not history
+            newer = aliased(Req)
+            newest = ~(select(newer.id).where(newer.group_id == Req.group_id, newer.lesson_id == Req.lesson_id, newer.lesson_date == Req.lesson_date, newer.status == "cancelled",
+                                              newer.created_at > Req.created_at).correlate(Req).exists())
+            q = q.filter(~and_(Req.status == "cancelled", waiting, newest))          # the cancellation that has no outcome yet is not history - ONLY that record (the earlier records of the lesson stay)
         activity = self._activity()
         since = None
         if status != "pending" and date_from is None and date_to is None:          # #157 A8: «за 30 дней» = what HAPPENED in the last 30 days (the time of the newest event), not the date of the lesson
@@ -912,6 +918,7 @@ class SubstitutionsBase:
         counts = self.summary(org_id, revalidate=False, money_right=money_right)
         waiting_rows = [r for r in rows if r.kind != L.REQUEST]          # the waiting cancellations AND the entries of the journal: both show the time of their lesson (one preload of the schedule for the page)
         ctx = self.ctx_for(reqs, MANAGER, extra=[(r.group_id, r.lesson_date) for r in waiting_rows])
+        window = WindowMarks(self.db, org_id, manager=True, actor=None) if any(r.kind == L.UNCONFIRMED for r in waiting_rows) else None          # the window and the closed months: read once, only when a waiting row is on the page
         now2 = self.now()
         by_id = {r.id: self.item(r, ctx, now2) for r in reqs}
         items: List[Dict[str, Any]] = []
@@ -920,7 +927,7 @@ class SubstitutionsBase:
                 if row.req_id in by_id:
                     items.append({**by_id[row.req_id], "source": "request"})          # С11: the row says what it is (the three rows of the list: request / unconfirmed / audit)
             elif row.kind == L.UNCONFIRMED:
-                items.append(self._waiting_item(row, ctx, money_right))
+                items.append(self._waiting_item(row, ctx, money_right, window, _uuid(actor_id) if actor_id else None, org_role))
             else:
                 entry = L.audit_item(row, ctx.occ.get((row.group_id, row.lesson_id, row.lesson_date)))
                 entry["group"]["studentCount"] = int(ctx.counts.get(row.group_id, 0))          # the same group block as the entries of the requests
@@ -928,7 +935,7 @@ class SubstitutionsBase:
         return {"items": items, "total": total, "pendingTotal": counts["pendingTotal"], "urgentTotal": counts["urgentTotal"], "expiringTotal": counts["expiringTotal"],
                 "unconfirmedTotal": counts["unconfirmedTotal"], "waitingTotal": counts["waitingTotal"]}          # LESSON-RULES С10.6: ``waitingTotal`` - what the CALLER has to decide (the number of the tab): the waiting cancellations and the money rows only with the money right
 
-    def _waiting_item(self, row: Any, ctx: Ctx, money_right: bool) -> Dict[str, Any]:
+    def _waiting_item(self, row: Any, ctx: Ctx, money_right: bool, window: Optional[WindowMarks] = None, actor: Any = None, org_role: Optional[str] = None) -> Dict[str, Any]:
         """A cancellation that waits for the owner as a row of «Ждут решения» (``source: unconfirmed``): the group, the lesson with its time, the teacher, WHO cancelled, the words of the cancelling person,
         how long it has waited and how old the lesson is.  ``canDecide``: the money right - the others read it as «решает владелец» (no sum anywhere: the sums are the dry run of the decision)."""
         from . import substitution_lists as L
@@ -941,7 +948,16 @@ class SubstitutionsBase:
                 "lesson": {"lessonId": row.lesson_id, "date": row.lesson_date, "startTime": occ["startTime"] if occ else None, "endTime": occ["endTime"] if occ else None},
                 "teacher": L.person(row, "teacher", "teacher_id"), "cancelledBy": L.person(row, "actor", "actor_id"), "reason": row.reason,
                 "cancelledAt": row.at.isoformat(), "waitingDays": max(0, (today - bc.utc_to_business_date(row.at)).days), "ageDays": (today - date.fromisoformat(row.lesson_date)).days,
-                "canDecide": bool(money_right)}
+                "canDecide": bool(money_right), "canWithdraw": self._can_withdraw_waiting(row, ctx, window, actor, org_role)}
+
+    @staticmethod
+    def _can_withdraw_waiting(row: Any, ctx: Ctx, window: Optional[WindowMarks], actor: Any, org_role: Optional[str]) -> bool:
+        """«Отозвать» on a row of «Ждут решения»: ONE rule with the road (``withdraw_refusal``: the author; a teacher inside the window), and - as on the road - an open month and an active group."""
+        if window is None or actor is None:
+            return False
+        group = ctx.groups.get(row.group_id)
+        return bool(withdraw_refusal(author=row.actor_id == actor, role=org_role, in_window=window.within_window(row.lesson_date)) is None
+                    and not window.of(row.teacher_id, row.lesson_date)["monthClosed"] and group is not None and group.status == "active")
 
     def detail(self, org_id: Any, actor_id: Any, is_manager: bool, request_id: Any) -> Dict[str, Any]:
         """The record with its WHOLE history (#157 A5): ``chain`` (before), ``next`` (after), ``events`` of all of them, each with ``requestId``.  A GET writes nothing (A6: no revalidate - the

@@ -88,6 +88,14 @@ class LessonInProgressForRoster(EnrolmentRefused):
     code = "lesson_in_progress"
 
 
+LESSON_WINDOW_DEFAULT_DAYS = 7          # the default of the rule of the centre «сколько дней преподаватель сам оформляет прошедший урок» (``centre_policy`` takes it from here: one number)
+
+
+def lesson_too_old_text(window_days: int) -> str:
+    """The refusal of a lesson older than the window - the number comes from the rule of the centre (the catalogue below says it for the default)."""
+    return f"Урок старше {window_days} дн. — его закрывает администратор или владелец."
+
+
 def group_archived() -> OpsError:
     """409 ``GROUP_ARCHIVED``: an archived group is read-only (SPEC O4)."""
     return conflict("GROUP_ARCHIVED", ERROR_CATALOGUE["GROUP_ARCHIVED"][1])
@@ -104,7 +112,7 @@ ERROR_CATALOGUE: Dict[str, tuple[int, str]] = {
     "NO_STUDENTS_COMPLETE": (409, "В составе урока нет учеников — завершить нельзя. Отметьте «Урока не было»."),
     "ATTENDANCE_CONFLICT": (409, "Отметки уже изменил другой сотрудник"),
     "LESSON_HAS_LIVE_EXAM": (409, "У урока есть незавершённый экзамен"),
-    "LESSON_TOO_OLD": (403, "Урок старше срока, в который преподаватель сам отмечает уроки, — его закрывает администратор или владелец"),
+    "LESSON_TOO_OLD": (403, lesson_too_old_text(LESSON_WINDOW_DEFAULT_DAYS)),
     "LESSON_OUTSIDE_WINDOW": (422, "Урок вне окна уроков без отметки"),
     "PERIOD_CLOSED": (409, "Месяц закрыт (зарплата сохранена). Чтобы изменить урок, переоткройте месяц (это делает владелец или администратор с доступом к деньгам)"),
     "MONEY_RIGHT_REQUIRED": (403, "Это действие меняет деньги: его выполняет владелец или администратор с доступом к деньгам"),
@@ -163,11 +171,6 @@ def lesson_age_days(lesson_date: date, today: date) -> int:
 
 def is_too_old_for_teacher(lesson_date: date, today: date, window_days: int) -> bool:
     return lesson_date < teacher_lesson_window_start(today, window_days)
-
-
-def lesson_too_old_text(window_days: int) -> str:
-    """The refusal of a lesson older than the window - the number comes from the rule of the centre."""
-    return f"Урок старше {window_days} дн. — его закрывает администратор или владелец."
 
 
 # ------------------------------------------------------------------------------------------------- small helpers
