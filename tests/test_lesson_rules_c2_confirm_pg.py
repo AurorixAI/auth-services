@@ -262,6 +262,18 @@ def test_worlds_equal_a_student_who_left_between(pg_session, clock):
     assert out[0][:8] == [(50_000, 0, 50_000)] * 8
 
 
+def test_worlds_equal_the_schedule_template_changed_between(pg_session, clock):
+    """The owner stops the Monday series from 30.11 on 25.11 (the lesson of 30.11 is gone): November has 4 Mondays (2, 9, 16, 23) + 4 Wednesdays (4, 11, 18, 25) = 8 lessons, so a lesson is worth
+    450 000 / 8 = 56 250 -> the rounding of the product to whole thousands = 56 000 (``payment_status.round_1000``, src/auth/payment_status.py:306: 0.25 of a thousand goes down; the ledger takes it at
+    billing_ledger.py:1184).  The lead's decision 26.11: 56 000 is accepted (my first hand figure 56 250 forgot the rounding).  The equality of the worlds is the part that must hold: the same figure for
+    every student in BOTH worlds (``_twin`` asserts A == B before it asserts the figure)."""
+    def between(w, g, people, members):
+        r = client(w, "owner").post(f"{API}/org/schedule/lessons/{MON}/recurrence/end", json={"effectiveFrom": "2026-11-30", "reason": "Курс закончен", "groupId": str(g.id)})
+        assert r.status_code == 200, r.text
+
+    _twin(pg_session, clock, between, [(56_000, 0, 56_000)] * 9)
+
+
 def test_worlds_equal_the_recalculation_switched_off_and_on_between(pg_session, clock):
     """On at the lesson (23.11), OFF on 25.11 - the day of the lesson decides: the confirmation on 26.11 gives 50 000 each in both worlds (world B cancels on 26.11 with the setting OFF since 25.11:
     a cancellation made after the switch-off for a lesson dated BEFORE it - the same version of the setting, the day of the lesson)."""
