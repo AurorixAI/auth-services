@@ -111,7 +111,7 @@ def run_pair(w, first, second):
     threads = []
     try:
         for i, name in enumerate((first, second)):
-            t = threading.Thread(target=run, args=(name, clients[i]))
+            t = threading.Thread(target=run, args=(name, clients[i]), daemon=True)
             t.start()
             threads.append(t)
             assert _waiting(engine, i + 1), f"{name} did not reach the lock of the organisation"

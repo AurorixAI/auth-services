@@ -79,6 +79,9 @@ jobs:
     # Skipped only when the gate proved it. A failed or silent gate leaves skip_tests empty: the tests run.
     if: ${{ !cancelled() && needs.gate.outputs.skip_tests != 'true' }}
     runs-on: ubuntu-latest
+    # A shard runs 8-25 minutes (the biggest one - the property tests of PAY-TAILS, which stand alone in their shard - about 22 on a fast machine). A job that is still running at 60 is hung:
+    # it is stopped (not left for the 6 hours of the default) and the log names the test (faulthandler below). 28.11: shard 6 ran 45+ minutes with no word.
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
@@ -146,7 +149,7 @@ jobs:
         run: |
           FILES=$(python .github/scripts/ci_shard.py ${{ matrix.shard }} 8)
           set +e
-          pytest $FILES -q --tb=short -rfE --junitxml=junit-${{ matrix.shard }}.xml 2>&1 | tee pytest-${{ matrix.shard }}.log
+          pytest $FILES -q --tb=short -rfE -o faulthandler_timeout=1800 --junitxml=junit-${{ matrix.shard }}.xml 2>&1 | tee pytest-${{ matrix.shard }}.log
           code=${PIPESTATUS[0]}
           # the failed tests as annotations: the log needs a login, the check marks do not (LESSONS 106 / the shard 2 of 10.11 had only "exit code 1")
           grep -E '^(FAILED|ERROR) ' pytest-${{ matrix.shard }}.log | head -50 | sed -E 's/^(FAILED|ERROR) ([^ ]+)( - (.{0,160}))?.*/::error title=pytest::\1 \2 \4/'

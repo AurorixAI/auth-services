@@ -716,11 +716,13 @@ def test_the_tick_reaches_the_server_and_is_off_by_default(cw, centre):
 # ============================================================================================================ F8: sign-in || password set
 
 
-def wait_for_advisory_waiter(engine, seconds=15):
+def wait_for_advisory_waiter(engine, seconds=60):
+    """The poll ends the moment the waiter shows up; the limit only bounds a failure (a sign-in hashes the password BEFORE it asks for the lock: on a loaded machine that takes seconds).
+    Only the waiters of THIS database count: another test database on the same server (a parallel worker) must not be taken for ours."""
     deadline = time.time() + seconds
     with engine.connect() as c:
         while time.time() < deadline:
-            n = c.execute(text("select count(*) from pg_stat_activity where wait_event_type='Lock' and wait_event='advisory'")).scalar()
+            n = c.execute(text("select count(*) from pg_stat_activity where wait_event_type='Lock' and wait_event='advisory' and datname = current_database()")).scalar()
             if n:
                 return True
             time.sleep(0.05)
@@ -733,6 +735,7 @@ def test_f8_a_sign_in_that_verified_the_old_password_is_refused_when_the_passwor
     factory = sessionmaker(cw.engine, autoflush=False)
     db_b, db_a = factory(), factory()
     outcome = {}
+    thread = None
     try:
         # B: the password is changed and the sessions revoked, NOT yet committed (it holds the session lock)
         b_user = db_b.get(User, user.id)
@@ -748,7 +751,7 @@ def test_f8_a_sign_in_that_verified_the_old_password_is_refused_when_the_passwor
             except Exception as exc:  # noqa: BLE001
                 outcome["result"] = f"error {type(exc).__name__}"
 
-        thread = threading.Thread(target=sign_in_with_the_old_password)
+        thread = threading.Thread(target=sign_in_with_the_old_password, daemon=True)          # a daemon: whatever fails, the process can still end
         thread.start()
         assert wait_for_advisory_waiter(cw.engine), "the sign-in should be waiting for the session lock"
         db_b.commit()                                           # the password change lands
@@ -760,8 +763,13 @@ def test_f8_a_sign_in_that_verified_the_old_password_is_refused_when_the_passwor
         # the new password works, the old one does not
         assert AuthService(factory()).login(LoginRequest(email=user.email, password="the-new-password-1")).user.email == user.email
     finally:
-        db_a.close()
+        # the order matters: FIRST let go of the lock the sign-in waits for (B), THEN wait for the sign-in with a limit, only then close its session (A).
+        # Closing A first, while its thread is inside the lock wait, raises in the main thread and leaves B open: the thread waits for ever.
+        db_b.rollback()
         db_b.close()
+        if thread is not None:
+            thread.join(30)
+        db_a.close()
 
 
 @needs_pg

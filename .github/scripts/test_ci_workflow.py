@@ -94,6 +94,25 @@ class GateWiring(unittest.TestCase):
         self.assertIn("needs.tests-ok.result == 'success'", deploy)
 
 
+class HangGuard(unittest.TestCase):
+    """28.11: a shard ran 45+ minutes in silence (the default limit of a job is 6 hours). A job that hangs must stop by itself and a test that hangs must name itself."""
+
+    def test_a_test_job_has_a_time_limit_far_below_the_default_six_hours(self):
+        limit = int(re.search(r"^    timeout-minutes: (\d+)$", job(TEST_JOB), re.M).group(1))
+        self.assertLessEqual(limit, 60)
+
+    def test_a_test_that_hangs_prints_its_stacks_before_the_job_is_stopped(self):
+        text = job(TEST_JOB)
+        limit = int(re.search(r"^    timeout-minutes: (\d+)$", text, re.M).group(1))
+        seconds = int(re.search(r"-o faulthandler_timeout=(\d+)", text).group(1))
+        self.assertLess(seconds, limit * 60)                                      # the stacks come BEFORE the stop
+
+    def test_the_heaviest_file_has_its_own_measured_weight_so_that_it_stands_in_a_shard_alone(self):
+        import json
+        known = json.loads((ROOT / ".github" / "ci_test_durations.json").read_text())
+        self.assertGreater(known["tests/test_pay_tails_property.py"], 1000)
+
+
 class ReuseWiring(unittest.TestCase):
     def test_the_build_step_decides_between_reuse_and_build_before_up(self):
         deploy = job("deploy")

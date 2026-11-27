@@ -143,6 +143,7 @@
  "tests/test_pay2_contract.py": 2.5,
  "tests/test_pay2_loader_pg.py": 2.4,
  "tests/test_pay2_perf_concurrency_pg.py": 10.8,
+ "tests/test_pay_tails_property.py": 1303.5,
  "tests/test_payf_fix_pg.py": 18.5,
  "tests/test_payf_ledger.py": 0.5,
  "tests/test_payf_migration_pg.py": 4.7,
