@@ -127,7 +127,7 @@ def change_cancellation_kind(db: Session, org_id: str, group_id: str, req: Chang
             raise already_decided(db, group, row, req.lessonId, req.lessonDate)
         raise not_found("LESSON_NOT_CANCELLED", "Урок не отменён: менять нечего")
     if req.expectedKind is not None and row.cancellation_kind != req.expectedKind:
-        if row.cancellation_kind == req.cancellationKind:                 # the same final kind (a double press, a second owner of the same mind): nothing to do
+        if row.cancellation_kind == req.cancellationKind and not dry_run:          # the same final kind (a double press, a second owner of the same mind): nothing to do - a PREVIEW of it is always the refusal below (C13.1: a window that shows a decision made by another must say so)
             return {"ok": True, "changed": False, "cancellationKind": row.cancellation_kind, "version": row.version}
         raise already_decided(db, group, row, req.lessonId, req.lessonDate)
     if row.made_up_by:                                                    # #154: a make-up is appointed - the kind decides the money of its deduction: cancel the make-up first
@@ -197,6 +197,13 @@ def _preview(db: Session, org_id: str, group: Group, row: GroupAttendance, req: 
     recalc_off = not bl.recalc_on(ls.parse_recalc(block if isinstance(block, dict) else {}), day)        # judged by the day of the LESSON, not by today's setting (SPEC 7.2)
     with me.writes_rolled_back(db):
         _, added = me.measure_cancellation(db, org_id, group.id, lambda: _apply(db, group, row, req, row.marked_by, before, reason))
+    centre_added = added
+    if req.cancellationKind != "centre":              # C13.5: the words of the outcome «по вине центра» are said whatever kind the window asked the numbers for
+        db.expire(row)
+        centre_req = req.model_copy(update={"cancellationKind": "centre"})
+        with me.writes_rolled_back(db):
+            _, centre_added = me.measure_cancellation(db, org_id, group.id, lambda: _apply(db, group, row, centre_req, row.marked_by, before, reason))
+        db.expire(row)
     amounts = [int(a["amount"]) for a in added]
     why = zero_reason(block if isinstance(block, dict) else {}, req.lessonId, day) if not amounts and not recalc_off else None          # recalc off: the screen says it by ``recalc_off``
     policy = CentrePolicy.of(db, org_id)
@@ -210,6 +217,33 @@ def _preview(db: Session, org_id: str, group: Group, row: GroupAttendance, req: 
         except Exception:                                                  # a broken database is not «нельзя вернуть»: it goes out, with its trace in the log
             logger.exception("dry run of the cancellation kind: the lesson could not be read org=%s group=%s", org_id, group.id)
             raise
+    can_mark = not is_too_old_for_teacher(day, today, window)
     return {"ok": True, "dry_run": True, "changed": True, "from": before, "to": req.cancellationKind, "students": len(amounts),
             "per_student": amounts[0] if amounts and len(set(amounts)) == 1 else None, "total": sum(amounts), "deductions": added, "recalc_off": recalc_off, "zero_reason": why, "zero_text": ZERO_TEXTS.get(why),
-            "restore_allowed": restore_allowed, "age_days": lesson_age_days(day, today), "window_days": window, "teacher_can_mark": not is_too_old_for_teacher(day, today, window)}
+            "restore_allowed": restore_allowed, "age_days": lesson_age_days(day, today), "window_days": window, "teacher_can_mark": can_mark,
+            **outcome_texts(centre_added, recalc_off=recalc_off, zero_text=ZERO_TEXTS.get(zero_reason(block if isinstance(block, dict) else {}, req.lessonId, day)) if not centre_added and not recalc_off else None,
+                            window=window, teacher_can_mark=can_mark)}
+
+
+TEACHER_NOT_PAID = "Преподавателю урок не оплачивается."
+
+
+def outcome_texts(added: Any, *, recalc_off: bool, zero_text: Optional[str], window: int, teacher_can_mark: bool) -> Dict[str, str]:
+    """C13.5: THE words of each outcome of the confirmation (the screen keeps no copy of the rules of the money): ``centre_text`` (the recalculation as counted for «по вине центра»), ``holiday_text``, ``held_text``
+    («Урок был»: the lesson returns to the mark of its teacher, or - older than the window - of the administrator / the owner)."""
+    from . import money_effects as me
+    from .payments_texts import plural
+
+    amounts = [int(a["amount"]) for a in added]
+    if recalc_off:
+        centre = f"Перерасчёт за отмены в центре выключен — ученикам ничего не изменится. {TEACHER_NOT_PAID}"
+    elif not amounts or sum(amounts) <= 0:
+        centre = f"{zero_text or 'Ученикам: без перерасчёта.'} {TEACHER_NOT_PAID}"
+    else:
+        n = len(amounts)
+        who = f"{n} {plural(n, 'ученику', 'ученикам', 'ученикам')}"
+        each = f" по {me.num(amounts[0])}{me.NBSP}сум" if len(set(amounts)) == 1 else ""
+        centre = f"Перерасчёт {who}{each}, всего {me.num(sum(amounts))}{me.NBSP}сум. {TEACHER_NOT_PAID}"
+    held = ("Отмена снимается, преподаватель отметит посещаемость. Деньги считаются как за обычный урок." if teacher_can_mark
+            else f"Отмена снимается. Урок старше {window} дн.: отметит администратор или владелец.")
+    return {"centre_text": centre, "holiday_text": f"Ученикам: без перерасчёта. {TEACHER_NOT_PAID}", "held_text": held}

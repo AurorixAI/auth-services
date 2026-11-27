@@ -3803,6 +3803,17 @@
       },
       "SaveAttendanceOut": {
         "properties": {
+          "consequence": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Consequence"
+          },
           "examSync": {
             "anyOf": [
               {
@@ -3838,6 +3849,17 @@
           "version": {
             "title": "Version",
             "type": "integer"
+          },
+          "waiting": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Waiting"
           },
           "warnings": {
             "items": {
@@ -4097,6 +4119,17 @@
             ],
             "title": "Canactself"
           },
+          "canWithdraw": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Canwithdraw"
+          },
           "classLevel": {
             "default": 5,
             "title": "Classlevel",
@@ -4321,6 +4354,28 @@
             ],
             "title": "Replacedby"
           },
+          "reportedBy": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reportedby"
+          },
+          "reportedByRole": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reportedbyrole"
+          },
           "rescheduleReason": {
             "anyOf": [
               {
@@ -4419,6 +4474,17 @@
               }
             ],
             "title": "Validfrom"
+          },
+          "waiting": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Waiting"
           },
           "warnings": {
             "items": {

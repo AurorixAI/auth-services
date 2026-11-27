@@ -77,6 +77,17 @@
               }
             ]
           },
+          "canReturn": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Canreturn"
+          },
           "group": {
             "$ref": "#/components/schemas/RowGroup"
           },
@@ -182,6 +193,17 @@
             ],
             "title": "Kind",
             "type": "string"
+          },
+          "waiting": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Waiting"
           },
           "warnings": {
             "items": {
@@ -839,6 +861,17 @@
             ],
             "title": "Cancelledversion"
           },
+          "consequence": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Consequence"
+          },
           "isSubstitution": {
             "anyOf": [
               {
@@ -917,6 +950,17 @@
               }
             ],
             "title": "Version"
+          },
+          "waiting": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Waiting"
           },
           "warnings": {
             "anyOf": [
@@ -3163,6 +3207,32 @@
               }
             ],
             "title": "Reason"
+          },
+          "reportedBy": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reportedby"
+          },
+          "reportedByRole": {
+            "anyOf": [
+              {
+                "enum": [
+                  "teacher",
+                  "admin"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reportedbyrole"
           },
           "source": {
             "const": "unconfirmed",

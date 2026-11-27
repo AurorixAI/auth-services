@@ -398,6 +398,7 @@ put("x_occurrence_substitution.json", "ScheduleOccurrenceResponseB", {
     "defaultTeacherName": short("C"), "substitutionRequest": None, "substitutionOutcome": None, "movedFrom": None,
     "purpose": None, "purposeLabel": None, "madeUpFor": None, "madeUpBy": None, "money": None, "moneyLabel": None,
     "canActSelf": True, "monthClosed": False, "windowDays": 7,          # LESSON-RULES С10.1
+    "waiting": False, "reportedBy": None, "reportedByRole": None, "canWithdraw": None,          # LESSON-RULES C13.4 / C13.6
 })
 put("x_student_no_group.json", "StudentResponseB", {
     "id": IDS["s6"], "org_id": IDS["org"], "first_name": "Азиз", "last_name": "Каримов", "full_name": "Каримов Азиз",

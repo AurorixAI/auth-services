@@ -57,6 +57,17 @@
             ],
             "title": "Cancelledversion"
           },
+          "consequence": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Consequence"
+          },
           "isSubstitution": {
             "anyOf": [
               {
@@ -135,6 +146,17 @@
               }
             ],
             "title": "Version"
+          },
+          "waiting": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Waiting"
           },
           "warnings": {
             "anyOf": [

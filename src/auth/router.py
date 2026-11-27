@@ -1750,6 +1750,10 @@ def save_group_attendance(
             owner=user.get("org_role") == "owner",
         )
         out = {"ok": True, "saved": True, "version": result["version"], "examSync": result["examSync"], "warnings": result["warnings"]}
+        if result.get("kind") == "unconfirmed":            # C13.2: a cancellation of the past lesson by a role without the right of money WAITS - the answer says so, in the words of the dialog
+            from . import money_effects as me
+
+            out["waiting"], out["consequence"] = True, me.waiting_consequence(manager=is_org_manager(user))
         if result.get("moneyEffects") is not None:         # Money-1 A3: only a correction of a held lesson has it
             out["moneyEffects"] = result["moneyEffects"]
         return out
@@ -1833,9 +1837,10 @@ def cancel_missed_group_attendance(
         if not dry_run and not manager:
             result = cancel()                           # a teacher cancels his own lesson as before: nothing about money is said to him
             waiting = result.get("kind") == "unconfirmed"
-            return {"ok": True, "cancelled": True, "version": result["version"], "warnings": result["warnings"], **({"waiting": True, "consequence": me_waiting_text()} if waiting else {})}
+            return {"ok": True, "cancelled": True, "version": result["version"], "warnings": result["warnings"], "waiting": waiting, **({"consequence": me_waiting_text()} if waiting else {})}
         result, effects, added, consequence = _cancel_with_effects(db, user, group_id, cancel, owner=user.get("org_role") == "owner", money_right=money_right, dry_run=dry_run, action_month=request.lessonDate.strftime("%Y-%m"), manager=manager)
-        out = {"ok": True, "cancelled": True, "version": result["version"], "warnings": result["warnings"], "dryRun": dry_run, "moneyEffects": effects, "consequence": consequence}
+        out = {"ok": True, "cancelled": True, "version": result["version"], "warnings": result["warnings"], "dryRun": dry_run, "moneyEffects": effects, "consequence": consequence,
+               "waiting": result.get("kind") == "unconfirmed"}          # C13.2: said in EVERY branch (the sentence of the consequence is the waiting one then)
         if added is not None:
             out["deductions"] = added                   # the money right only (a teacher / an administrator without it never read the sums of the students)
         return out
@@ -1873,11 +1878,16 @@ def lesson_cancel_consequence(
     subs.assert_may_cancel(group, lesson_id, lesson_date, att, actor_id=user["user_id"], manager=manager)
     subs.exam_preflight(user["org_id"], group.id, lesson_id, lesson_date.isoformat(), "Предпросмотр последствий")          # SV-15: exam-service is asked BEFORE the group is locked, like on every road of the cancellation
 
-    def cancel():
-        return subs.cancel_lesson(user["org_id"], user["user_id"], group.id, lesson_id, lesson_date, reason="Предпросмотр последствий", by_manager=manager, allow_started=True,
-                                  money_right=manager and has_payments_access(user, db))
+    seen: dict = {}
 
-    return {"consequence": me.lesson_cancel_consequence(db, user["org_id"], group.id, cancel, manager=manager)}
+    def cancel():
+        seen["result"] = subs.cancel_lesson(user["org_id"], user["user_id"], group.id, lesson_id, lesson_date, reason="Предпросмотр последствий", by_manager=manager, allow_started=True,
+                                            money_right=manager and has_payments_access(user, db))
+        return seen["result"]
+
+    text = me.lesson_cancel_consequence(db, user["org_id"], group.id, cancel, manager=manager)
+    waiting = (seen.get("result") or {}).get("kind") == "unconfirmed"          # C13.3: the road itself says whether THIS cancellation would wait (the right of money, the setting of the centre) - the window is named and coloured by it
+    return {"consequence": text, "waiting": waiting}
 
 
 def me_waiting_text() -> str:

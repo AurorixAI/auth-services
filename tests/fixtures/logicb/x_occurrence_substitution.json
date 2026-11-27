@@ -1,5 +1,6 @@
 {
   "canActSelf": true,
+  "canWithdraw": null,
   "classLevel": 9,
   "color": "blue",
   "createdBy": null,
@@ -27,6 +28,8 @@
   "purpose": null,
   "purposeLabel": null,
   "replacedBy": null,
+  "reportedBy": null,
+  "reportedByRole": null,
   "rescheduleReason": null,
   "room": null,
   "startTime": "10:00",
@@ -37,6 +40,7 @@
   "teacherName": "Рахимов Т.",
   "topic": null,
   "validFrom": "2026-10-12",
+  "waiting": false,
   "warnings": [],
   "windowDays": 7
 }

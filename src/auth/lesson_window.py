@@ -55,3 +55,53 @@ def apply_window(item: Any, marks: Dict[str, Any]) -> None:
             item[name] = value
         else:
             setattr(item, name, value)
+
+
+def reported_by_role(org_role: Optional[str]) -> str:
+    """C13.6: the screen says «Преподаватель сообщил…» / «Администратор сообщил…» by THIS word of the server: a teacher or - whoever else cancels - an administrator."""
+    return "teacher" if org_role == "teacher" else "admin"
+
+
+class WaitingMarks:
+    """C13.4 / C13.6: the cancellations that WAIT for the owner among the lessons of one answer (the journal of a group, the schedule): ``waiting``, WHO reported it (``reportedBy`` the short name,
+    ``reportedByRole`` ``teacher`` | ``admin``) and ``canWithdraw`` for the viewer - the SAME rule as the road (``cancellation_kind.withdraw_refusal``, the open month, the active group), nobody keeps a copy.
+    One query for the rows, one for the names, whatever the number of lessons."""
+
+    def __init__(self, db: Any, org_id: Any, window: WindowMarks, *, actor: Any, org_role: Optional[str]) -> None:
+        self.db, self.org_id, self.window = db, org_id, window
+        self.actor = str(actor) if actor else None
+        self.org_role = org_role
+        self.rows: Dict[tuple, Any] = {}
+        self.names: Dict[str, Any] = {}
+        self.roles: Dict[str, str] = {}
+        self.inactive: set = set()
+
+    def load(self, group_ids: Any, first: str, last: str) -> "WaitingMarks":
+        from .models import Group, GroupAttendance, OrganizationMember, User
+        from .ops_rules import short_name
+
+        gids = list(group_ids)
+        if not gids:
+            return self
+        rows = self.db.query(GroupAttendance).filter(GroupAttendance.group_id.in_(gids), GroupAttendance.lesson_date >= first, GroupAttendance.lesson_date <= last,
+                                                     GroupAttendance.status == "cancelled", GroupAttendance.cancellation_kind == "unconfirmed").all()
+        self.rows = {(str(r.group_id), r.lesson_id, r.lesson_date): r for r in rows}
+        if not rows:
+            return self
+        authors = {r.marked_by for r in rows if r.marked_by}
+        self.names = {str(u.id): short_name(u) for u in self.db.query(User).filter(User.id.in_(authors)).all()} if authors else {}
+        self.roles = {str(m.user_id): m.org_role for m in self.db.query(OrganizationMember).filter(OrganizationMember.org_id == self.org_id, OrganizationMember.user_id.in_(authors)).all()} if authors else {}
+        self.inactive = {str(g.id) for g in self.db.query(Group).filter(Group.id.in_({r.group_id for r in rows})).all() if g.status != "active"}
+        return self
+
+    def of(self, group_id: Any, lesson_id: Any, lesson_date: Any) -> Dict[str, Any]:
+        """``{waiting, reportedBy, reportedByRole, canWithdraw}`` of one lesson; a lesson that does not wait has the empty ones (the front reads one shape)."""
+        from .cancellation_kind import withdraw_refusal
+
+        row = self.rows.get((str(group_id), lesson_id, lesson_date))
+        if row is None:
+            return {"waiting": False, "reportedBy": None, "reportedByRole": None, "canWithdraw": None}
+        author = str(row.marked_by) if row.marked_by else None
+        can = bool(self.actor is not None and withdraw_refusal(author=author == self.actor, role=self.org_role, in_window=self.window.within_window(lesson_date)) is None
+                   and not self.window.of(row.teacher_id, lesson_date)["monthClosed"] and str(group_id) not in self.inactive)
+        return {"waiting": True, "reportedBy": self.names.get(author) if author else None, "reportedByRole": reported_by_role(self.roles.get(author)) if author else None, "canWithdraw": can}

@@ -34,7 +34,7 @@ from .cancellation_kind import withdraw_refusal
 from .closed_period import ClosedPeriods, lesson_teacher_ids
 from .days_off import DaysOffService
 from .lesson_cancel import LessonCancelMixin, RESTORED, lesson_outcomes
-from .lesson_window import WindowMarks, apply_window
+from .lesson_window import WaitingMarks, WindowMarks, apply_window, reported_by_role
 from .lesson_teachers import (
     TEACHING_ROLES,
     BusyItem,
@@ -922,6 +922,7 @@ class SubstitutionsBase:
         ctx = self.ctx_for(reqs, MANAGER, extra=[(r.group_id, r.lesson_date) for r in waiting_rows])
         window = WindowMarks(self.db, org_id, manager=True, actor=None) if any(r.kind == L.UNCONFIRMED for r in waiting_rows) else None          # the window and the closed months: read once, only when a waiting row is on the page
         now2 = self.now()
+        returnable = self._returnable(org_id, [r for r in rows if r.kind in (L.BACKDATED, L.CORRECTED)], money_right)
         by_id = {r.id: self.item(r, ctx, now2) for r in reqs}
         items: List[Dict[str, Any]] = []
         for row in rows:
@@ -933,6 +934,7 @@ class SubstitutionsBase:
             else:
                 entry = L.audit_item(row, ctx.occ.get((row.group_id, row.lesson_id, row.lesson_date)))
                 entry["group"]["studentCount"] = int(ctx.counts.get(row.group_id, 0))          # the same group block as the entries of the requests
+                entry["canReturn"] = returnable.get((str(row.group_id), row.lesson_id, row.lesson_date)) if row.kind in (L.BACKDATED, L.CORRECTED) else None
                 items.append(entry)
         return {"items": items, "total": total, "pendingTotal": counts["pendingTotal"], "urgentTotal": counts["urgentTotal"], "expiringTotal": counts["expiringTotal"],
                 "unconfirmedTotal": counts["unconfirmedTotal"], "waitingTotal": counts["waitingTotal"]}          # LESSON-RULES С10.6: ``waitingTotal`` - what the CALLER has to decide (the number of the tab): the waiting cancellations and the money rows only with the money right
@@ -949,8 +951,24 @@ class SubstitutionsBase:
                                                                                                  "studentCount": int(ctx.counts.get(row.group_id, 0))},
                 "lesson": {"lessonId": row.lesson_id, "date": row.lesson_date, "startTime": occ["startTime"] if occ else None, "endTime": occ["endTime"] if occ else None},
                 "teacher": L.person(row, "teacher", "teacher_id"), "cancelledBy": L.person(row, "actor", "actor_id"), "reason": row.reason,
-                "cancelledAt": row.at.isoformat(), "waitingDays": max(0, (today - bc.utc_to_business_date(row.at)).days), "ageDays": (today - date.fromisoformat(row.lesson_date)).days,
+                "reportedBy": (L.person(row, "actor", "actor_id") or {}).get("name"), "reportedByRole": reported_by_role(row.actor_role) if row.actor_id else None, "cancelledAt": row.at.isoformat(), "waitingDays": max(0, (today - bc.utc_to_business_date(row.at)).days), "ageDays": (today - date.fromisoformat(row.lesson_date)).days,
                 "canDecide": bool(money_right), "canWithdraw": self._can_withdraw_waiting(row, ctx, window, actor, org_role)}
+
+    def _returnable(self, org_id: Any, entries: Sequence[Any], money_right: bool) -> Dict[Tuple[str, str, str], bool]:
+        """C13.7 ``canReturn`` of an entry of the history: «Вернуть урок на отметку» is offered when the lesson is HELD now, its group is active, its month is open and the caller has the right of money
+        (the conditions of the road ``attendance/return`` - nobody keeps a copy on the screen).  One query for the lessons, one for the groups."""
+        if not entries:
+            return {}
+        gids = {e.group_id for e in entries}
+        days = [e.lesson_date for e in entries]
+        held = {(str(g), lid, d): t for g, lid, d, t in self.db.query(GroupAttendance.group_id, GroupAttendance.lesson_id, GroupAttendance.lesson_date, GroupAttendance.teacher_id).filter(
+            GroupAttendance.org_id == org_id, GroupAttendance.group_id.in_(gids), GroupAttendance.lesson_date >= min(days), GroupAttendance.lesson_date <= max(days),
+            GroupAttendance.status == "completed")}
+        active = {str(g) for (g,) in self.db.query(Group.id).filter(Group.id.in_(gids), Group.status == "active")}
+        window = WindowMarks(self.db, org_id, manager=True, actor=None)
+        return {(str(e.group_id), e.lesson_id, e.lesson_date): bool(money_right and (str(e.group_id), e.lesson_id, e.lesson_date) in held and str(e.group_id) in active
+                                                                   and not window.of(held[(str(e.group_id), e.lesson_id, e.lesson_date)], e.lesson_date)["monthClosed"])
+                for e in entries}
 
     @staticmethod
     def _can_withdraw_waiting(row: Any, ctx: Ctx, window: Optional[WindowMarks], actor: Any, org_role: Optional[str]) -> bool:
@@ -1251,7 +1269,8 @@ class Substitutions(LessonCancelMixin, SubstitutionsBase):
                     "attendanceUpdated": False, "payrollSheetsAffected": []}
         if r.status == "cancelled":
             row = self._row(r)           # the REAL version and kind of the cancellation (a repeat of the decision answers what was written)
-            return {"kind": "cancel", "version": int(row.version or 1) if row is not None else 1, "cancellationKind": row.cancellation_kind if row is not None else None, "warnings": []}
+            return {"kind": "cancel", "version": int(row.version or 1) if row is not None else 1, "cancellationKind": row.cancellation_kind if row is not None else None, "warnings": [],
+                    **self._waiting_words(row.cancellation_kind if row is not None else None)}
         if r.status == "rescheduled":
             return {"kind": "reschedule", "cancelledVersion": 1, "warnings": [],
                     "newLesson": {"id": r.moved_to_lesson_id, "groupId": str(r.group_id), "date": r.moved_to_date, "startTime": r.moved_to_start,
@@ -1376,7 +1395,14 @@ class Substitutions(LessonCancelMixin, SubstitutionsBase):
             self._assert_period_open(group, r.lesson_id, day)      # Money-1 A1: a lesson of a closed month cannot be cancelled - only the request can be declined
         out = self.cancel_lesson(r.org_id, actor, group.id, r.lesson_id, day, reason=reason, kind=getattr(body, "cancellationKind", None) or DEFAULT_CANCELLATION_KIND,
                                  request=r, via="request", money_right=money_right)
-        return {"kind": "cancel", "version": out["version"], "cancellationKind": out["kind"], "warnings": out["warnings"]}
+        return {"kind": "cancel", "version": out["version"], "cancellationKind": out["kind"], "warnings": out["warnings"], **self._waiting_words(out["kind"])}
+
+    @staticmethod
+    def _waiting_words(kind: Optional[str]) -> Dict[str, Any]:
+        """C13.2: the decision «Отменить урок» of an administrator WITHOUT the right of money waits for the owner: ``waiting`` and the sentence of it (the same words as the dialog of the journal)."""
+        from . import money_effects as me
+
+        return {"waiting": True, "consequence": me.waiting_consequence(manager=True)} if kind == "unconfirmed" else {}
 
     # ------------------------------------------------------------------------------------------- reschedule
     def _new_slot(self, group: Group, r: Req, body) -> Tuple[date, str, str, int, int]:
@@ -1831,7 +1857,8 @@ class Substitutions(LessonCancelMixin, SubstitutionsBase):
                 updated += 1
                 items.append(out["item"])
                 res = out["result"]
-                results.append({"id": str(rid), "kind": res["kind"], "cancellationKind": res.get("cancellationKind"), "warnings": list(res.get("warnings") or [])})        # W1 R3 (D)
+                results.append({"id": str(rid), "kind": res["kind"], "cancellationKind": res.get("cancellationKind"), "warnings": list(res.get("warnings") or []),
+                                **({"waiting": True} if res.get("waiting") else {})})        # W1 R3 (D)
             except OpsError as exc:
                 self.db.rollback()
                 entry = {"id": str(rid), "code": exc.code, "message": exc.message}
@@ -2223,8 +2250,10 @@ def annotate_occurrences(svc, user: Dict[str, Any], items: Sequence[Any]) -> Seq
         apply_marks(item, purposes.get((str(item.groupId), item.id, item.occurrenceDate)))
     org_id = user.get("org_id") or svc.db.query(Group.org_id).filter(Group.id.in_(gids)).limit(1).scalar()          # the dashboard of a teacher passes no org in its stand-in user: the groups say it
     window = WindowMarks(svc.db, org_id, manager=manager, actor=actor)
+    waiting = WaitingMarks(svc.db, org_id, window, actor=actor, org_role=user.get("org_role")).load(gids, min(i.occurrenceDate for i in items), max(i.occurrenceDate for i in items))
     for item in items:                                   # LESSON-RULES С10.1: the window marks of EVERY lesson (the same function as the refusal)
         apply_window(item, window.of(item.teacherId, item.occurrenceDate))
+        apply_window(item, waiting.of(item.groupId, item.id, item.occurrenceDate))          # C13.4 / C13.6: a waiting cancellation: who reported it, may the viewer withdraw it
     days = [i.occurrenceDate for i in items]
     reqs = (
         svc.db.query(Req).filter(Req.group_id.in_(gids), Req.lesson_date >= min(days), Req.lesson_date <= max(days)).order_by(Req.created_at, Req.id).all()
@@ -2270,10 +2299,13 @@ def annotate_journal(svc, user: Dict[str, Any], group: Group, resp) -> Any:
         apply_marks(lesson, purposes.get((str(group.id), lesson.get("id"), lesson.get("date"))))
     window = WindowMarks(svc.db, group.org_id, manager=manager, actor=actor)
     teachers = resp.lessonTeachers or {}
+    dates_of = sorted(l["date"] for l in keys.values() if l.get("date"))
+    waiting = WaitingMarks(svc.db, group.org_id, window, actor=actor, org_role=user.get("org_role")).load([group.id], dates_of[0], dates_of[-1]) if dates_of else WaitingMarks(svc.db, group.org_id, window, actor=actor, org_role=None)
     for key, lesson in keys.items():                      # LESSON-RULES С10.1: the window marks of EVERY lesson of the journal (the same function as the refusal)
         info = teachers.get(key)
         teacher = info.get("teacherId") if isinstance(info, dict) else getattr(info, "teacherId", None)
         apply_window(lesson, window.of(teacher, lesson.get("date")))
+        apply_window(lesson, waiting.of(group.id, lesson.get("id"), lesson.get("date")))          # C13.4 / C13.6
     dates = sorted({l["date"] for l in keys.values()})
     reqs = svc.db.query(Req).filter(Req.group_id == group.id, Req.lesson_date >= dates[0], Req.lesson_date <= dates[-1]).order_by(Req.created_at, Req.id).all()
     marks: Dict[str, Dict[str, Any]] = {}

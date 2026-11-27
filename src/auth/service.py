@@ -5801,7 +5801,7 @@ class AuthService:
             self.db.commit()
             from . import exam_release
             warnings = [*out["warnings"], *exam_release.release_pending(self, org_id, group_id)]   # Wave B P4 (SV-15 / LD-23): AFTER the commit, no lock held
-            return {"version": out["version"], "examSync": None, "warnings": warnings}
+            return {"version": out["version"], "examSync": None, "warnings": warnings, "kind": out["kind"]}
         # An administrator may correct a completed lesson (a reason is required
         # below); anyone else only edits a lesson that is in progress.
         teacher_own_correction = bool(att and not is_org_manager and lesson_teacher_id is not None and str(lesson_teacher_id) == str(marked_by))      # A5: his own held lesson (the 7 days were checked by ``assert_lesson_rights``)

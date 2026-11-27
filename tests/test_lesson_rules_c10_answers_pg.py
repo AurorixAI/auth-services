@@ -285,6 +285,27 @@ def test_export_of_the_real_answers_for_the_screens(pg_session, clock):
     sm = dump(out, "schedule_teacher_month_closed", client(w, "A").get(f"{API}/org/schedule/occurrences", params={"date_from": "2026-10-01", "date_to": "2026-10-31"}))
     assert any(i.get("monthClosed") is True for i in sm)
 
+    # ---- (С13.8) the new answers: the preview after somebody else's decision (409), the cancellation of the administrator without the right (``waiting``), the preview of the cancellation with the setting off
+    w6, g6, p6, m6 = agreed_world(pg_session, clock)
+    teacher_cancels(w6, g6, reason=REASON)
+    set_kind(w6, g6, "centre")
+    late = dump(out, "dry_run_confirm_after_other_decided_409", set_kind(w6, g6, "centre", dry_run=True, expect=409), 409)
+    assert late["detail"]["code"] == "ALREADY_DECIDED" and late["detail"]["kind"] == "centre", late
+    w7, g7, p7, m7 = agreed_world(pg_session, clock)
+    ask = f"{API}/org/groups/{g7.id}/lessons/cancel-consequence"
+    cc = dump(out, "cancel_consequence_waiting_admin", client(w7, "admin").get(ask, params={"lessonDate": PAST_MON, "lessonId": MON}))
+    assert cc["waiting"] is True, cc
+    adm = dump(out, "cancel_admin_without_right_waiting", teacher_cancels(w7, g7, who="admin", reason=REASON))
+    assert adm["waiting"] is True and adm["consequence"].startswith("Отмену подтвердит владелец"), adm
+    w8, g8, p8, m8 = agreed_world(pg_session, clock)
+    assert client(w8, "owner").put(RULES, json={"past_cancel_needs_confirmation": False}).status_code == 200
+    cc2 = dump(out, "cancel_consequence_setting_off_admin", client(w8, "admin").get(f"{API}/org/groups/{g8.id}/lessons/cancel-consequence", params={"lessonDate": PAST_MON, "lessonId": MON}))
+    assert cc2["waiting"] is False, cc2
+    jt = out["journal_teacher"]["lessons"]
+    assert [(l["date"], l["waiting"], l["canWithdraw"], l["reportedByRole"]) for l in jt if l["date"] == "2026-11-23"] == [("2026-11-23", True, True, "teacher")]
+    kinds = {i["kind"]: i["canReturn"] for i in out["history"]["items"] if i.get("source") == "audit"}
+    assert kinds.get("backdated") is True and kinds.get("lesson_added") is None, kinds          # the owner reads: a held lesson of an open month may be returned; the entry of an added lesson has no such question
+
     # ---- the history entry of an administrator WITH the right of money (the owner gives the right at the end: every answer above is the administrator without it)
     grant_money_right(w)
     reconcile(w, g2, "2026-11-05", THU, who="admin")

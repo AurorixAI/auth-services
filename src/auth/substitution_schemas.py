@@ -265,6 +265,8 @@ class WaitingCancellationRow(BaseModel):
     lesson: RowLesson
     teacher: Optional[PersonRef] = None
     cancelledBy: Optional[PersonRef] = None
+    reportedBy: Optional[str] = None          # C13.6: the short name of whoever cancelled it and his role (``teacher`` | ``admin``) - the screen writes «Преподаватель сообщил…» / «Администратор сообщил…» by them
+    reportedByRole: Optional[Literal["teacher", "admin"]] = None
     reason: Optional[str] = None          # the words of the cancelling person
     cancelledAt: str
     waitingDays: int = 0
@@ -287,6 +289,7 @@ class AuditEntryRow(BaseModel):
     lateDays: Optional[int] = None
     reason: Optional[str] = None
     text: str = ""
+    canReturn: Optional[bool] = None          # C13.7: «Вернуть урок на отметку» is offered - the lesson is held, its group active, its month open, the caller has the right of money (null: not an entry about a held lesson)
 
 
 ListRow = Annotated[Union[SubstitutionRequestRow, WaitingCancellationRow, AuditEntryRow], Field(discriminator="source")]
@@ -473,6 +476,8 @@ class DecideResult(BaseModel):
     version: Optional[int] = None
     warnings: Optional[List[MoveWarning]] = None
     cancellationKind: Optional[StoredCancellationKind] = None   # cancel: the kind that was written (a date of a live day off turns it into ``holiday``, then ``warnings`` says so)
+    waiting: Optional[bool] = Field(None, exclude_if=lambda v: v is None)          # C13.2: true - the cancellation WAITS for the owner (the kind is ``unconfirmed``); only then present
+    consequence: Optional[str] = Field(None, exclude_if=lambda v: v is None)       # the words of it
 
 
 class DecideOut(BaseModel):
@@ -505,6 +510,7 @@ class BulkResult(BaseModel):
     id: str
     kind: Literal["substitute", "reschedule", "cancel", "reject"]
     cancellationKind: Optional[StoredCancellationKind] = None
+    waiting: Optional[bool] = Field(None, exclude_if=lambda v: v is None)          # C13.2: this cancellation WAITS for the owner
     warnings: List[MoveWarning] = Field(default_factory=list)
 
 

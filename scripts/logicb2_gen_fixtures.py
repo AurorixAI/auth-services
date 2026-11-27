@@ -256,10 +256,10 @@ put("b2c9_closed.json", "SubstitutionItem", c9_closed)
 put("b2x_summary.json", "SubstitutionSummary", {"pendingTotal": 3, "urgentTotal": 1, "overdueTotal": 0, "expiringTotal": 0, "oneOffDecisionsTotal": 0, "unconfirmedTotal": 0, "waitingTotal": 3})
 WAITING_ROW = {"source": "unconfirmed", "id": uid("att-waiting"), "kind": "unconfirmed", "group": {"id": IDS["G1"], "name": "9-А", "studentCount": 3},
                "lesson": {"lessonId": LESSON["L1"], "date": "2026-10-19", "startTime": "10:00", "endTime": "11:30"}, "teacher": person("A"),
-               "cancelledBy": person("A"), "reason": "Отключили свет", "cancelledAt": "2026-10-21T09:00:00", "waitingDays": 0, "ageDays": 2, "canDecide": True, "canWithdraw": True}
+               "cancelledBy": person("A"), "reportedBy": "Иванов И.", "reportedByRole": "teacher", "reason": "Отключили свет", "cancelledAt": "2026-10-21T09:00:00", "waitingDays": 0, "ageDays": 2, "canDecide": True, "canWithdraw": True}
 AUDIT_ROW = {"source": "audit", "id": uid("gaa-late"), "kind": "backdated", "at": "2026-10-21T08:00:00", "group": {"id": IDS["G1"], "name": "9-А", "studentCount": 3},
              "lesson": {"lessonId": LESSON["L1"], "date": "2026-10-19", "startTime": "10:00", "endTime": "11:30"}, "teacher": person("A"), "by": person("A"), "lateDays": 2, "reason": None,
-             "text": "Урок оформлен задним числом: на 2 дня позже даты урока"}
+             "text": "Урок оформлен задним числом: на 2 дня позже даты урока", "canReturn": True}
 put("b2x_list.json", "SubstitutionListOut", {"items": [{**c1, "source": "request"}, WAITING_ROW, AUDIT_ROW], "total": 3, "pendingTotal": 1, "urgentTotal": 0, "expiringTotal": 0, "unconfirmedTotal": 1, "waitingTotal": 2})
 put("b2x_mine.json", "MineOut", {"items": [c1], "pendingTotal": 1, "assignedToMe": [
     {"groupId": IDS["G1"], "groupName": "9-А", "lessonId": LESSON["L1"], "lessonDate": "2026-10-26", "startTime": "10:00", "endTime": "11:30",

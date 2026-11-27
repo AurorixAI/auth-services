@@ -174,6 +174,11 @@ class ScheduleOccurrenceResponseB(ScheduleOccurrenceResponse):
     canActSelf: Optional[bool] = None                      # the viewer may act on the lesson himself: a manager always; a teacher - his own lesson inside the window of the centre
     monthClosed: Optional[bool] = None                     # the month of the lesson of its teacher is closed (a saved sheet): nobody acts, the owner reopens it
     windowDays: Optional[int] = None                       # the window of the centre in days
+    # C13.4 / C13.6 (``lesson_window.WaitingMarks``): a cancellation of the lesson that WAITS for the owner - who reported it and may the viewer give it back (the rule of the road ``withdraw-cancellation``)
+    waiting: Optional[bool] = None
+    reportedBy: Optional[str] = None
+    reportedByRole: Optional[str] = None                   # ``teacher`` | ``admin``
+    canWithdraw: Optional[bool] = None
 
 
 # -------------------------------------------------------------------------------- 4.2 journal and marks
@@ -252,6 +257,8 @@ class SaveAttendanceOut(BaseModel):
     version: int
     examSync: Optional[ExamSyncOut] = None
     warnings: List[CancelWarning] = Field(default_factory=list)       # W1 S2: only a cancellation has any
+    waiting: Optional[bool] = Field(None, exclude_if=lambda v: v is None)          # C13.2: true - the cancellation WAITS for the owner (a role without the right of money cancelled a past lesson); only a cancellation says it
+    consequence: Optional[str] = Field(None, exclude_if=lambda v: v is None)       # the words of it (what the students and the teacher get until it is decided)
     moneyEffects: Optional[Dict[str, Any]] = Field(None, exclude_if=lambda v: v is None)       # Money-1 A3: a correction of a held lesson says what it did to money (``money_effects.build``); absent otherwise
 
 
