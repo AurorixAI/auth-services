@@ -306,6 +306,15 @@ def test_export_of_the_real_answers_for_the_screens(pg_session, clock):
     kinds = {i["kind"]: i["canReturn"] for i in out["history"]["items"] if i.get("source") == "audit"}
     assert kinds.get("backdated") is True and kinds.get("lesson_added") is None, kinds          # the owner reads: a held lesson of an open month may be returned; the entry of an added lesson has no such question
 
+    # ---- (Пачка 4, п.13) «Ждут решения» of the owner with ONE real request of the teacher («Не смогу провести» for the future Mon 30.11) and the two waiting cancellations (18.11, 23.11);
+    #      the journal of the group in the eyes of the administrator WITHOUT the right of money (he gets the right below)
+    r = client(w, "A").post(SUB, json={"lessons": [{"groupId": str(g.id), "lessonId": MON, "lessonDate": "2026-11-30"}], "reasonCode": "sick"})
+    assert r.status_code == 201, r.text
+    mixed = dump(out, "pending_owner_with_request", client(w, "owner").get(SUB, params={"status": "pending"}))
+    assert sorted(i["source"] for i in mixed["items"]) == ["request", "unconfirmed", "unconfirmed"], [i["source"] for i in mixed["items"]]
+    jadm = dump(out, "journal_admin_no_money", client(w, "admin").get(f"{API}/org/groups/{g.id}/attendance", params={"month": "2026-11"}))
+    assert jadm["lessons"] and any(l.get("waiting") for l in jadm["lessons"])
+
     # ---- the history entry of an administrator WITH the right of money (the owner gives the right at the end: every answer above is the administrator without it)
     grant_money_right(w)
     reconcile(w, g2, "2026-11-05", THU, who="admin")
