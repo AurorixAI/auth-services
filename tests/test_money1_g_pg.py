@@ -909,15 +909,15 @@ def test_r4_the_own_month_with_the_setting_on_says_what_each_student_gets_and_th
     w, g, students, ms, url = cancel_world(pg_session, clock)               # 46 000 deducted from each of the five for the lesson of 26.10 already
     sentence = f"Ученикам зачтётся по 46{NBSP}000{NBSP}сум"
     before = db_fingerprint(w.db)
-    assert _consequence(w, "owner", g) == {"consequence": sentence}
+    assert _consequence(w, "owner", g) == {"consequence": sentence, "waiting": False}
     assert changed_tables(before, db_fingerprint(w.db)) == []                 # nothing is written
     assert cancel_post(w, "owner", url, WED, dry=True).json()["consequence"] == sentence       # «Урока не было» says the same sentence (ONE function)
     grant_money_right(w, False)
     from src.auth.money_effects import WAITING_CONSEQUENCE
 
-    assert _consequence(w, "admin", g) == {"consequence": WAITING_CONSEQUENCE}           # without the right (LESSON-RULES): the cancellation waits for the owner - no sum of the group in the answer
+    assert _consequence(w, "admin", g) == {"consequence": WAITING_CONSEQUENCE, "waiting": True}           # without the right (LESSON-RULES): the cancellation waits for the owner - no sum of the group in the answer
     assert _no_confirmation(w)
-    assert _consequence(w, "admin", g) == {"consequence": sentence}           # the centre without the confirmation: the old sentence only, the sums of the group are not in the answer
+    assert _consequence(w, "admin", g) == {"consequence": sentence, "waiting": False}           # the centre without the confirmation: the old sentence only, the sums of the group are not in the answer
 
 
 def test_g3m_c7_a_teacher_gets_the_sentence_without_a_sum_on_every_road_of_his_own_lesson(pg_session, clock):
@@ -927,7 +927,7 @@ def test_g3m_c7_a_teacher_gets_the_sentence_without_a_sum_on_every_road_of_his_o
     from src.auth.money_effects import WAITING_CONSEQUENCE_TEACHER
 
     word = WAITING_CONSEQUENCE_TEACHER                                                       # LESSON-RULES: the lesson has begun: the teacher reads the words of the mock; his cancellation waits for the owner (before: «Ученикам зачтётся по 46 000 сум», then «Ученикам будет перерасчёт за этот урок»)
-    assert _consequence(w, "A", g) == {"consequence": word}
+    assert _consequence(w, "A", g) == {"consequence": word, "waiting": True}
     dry = cancel_post(w, "A", url, WED, dry=True)
     assert dry.status_code == 200, dry.text
     assert dry.json()["consequence"] == word and "deductions" not in dry.json()
@@ -937,10 +937,10 @@ def test_g3m_c7_a_teacher_gets_the_sentence_without_a_sum_on_every_road_of_his_o
     # the owner and an administrator without the right keep the old sentences
     w2, g2, _, _, url2 = cancel_world(pg_session, clock)
     sentence = f"Ученикам зачтётся по 46{NBSP}000{NBSP}сум"
-    assert _consequence(w2, "owner", g2) == {"consequence": sentence} and cancel_post(w2, "owner", url2, WED, dry=True).json()["consequence"] == sentence
+    assert _consequence(w2, "owner", g2) == {"consequence": sentence, "waiting": False} and cancel_post(w2, "owner", url2, WED, dry=True).json()["consequence"] == sentence
     grant_money_right(w2, False)
     assert _no_confirmation(w2)      # the centre without the confirmation keeps the old sentence for the administrator
-    assert _consequence(w2, "admin", g2) == {"consequence": sentence} and cancel_post(w2, "admin", url2, WED, dry=True).json()["consequence"] == sentence
+    assert _consequence(w2, "admin", g2) == {"consequence": sentence, "waiting": False} and cancel_post(w2, "admin", url2, WED, dry=True).json()["consequence"] == sentence
 
 
 def test_g3m_c7_a_teacher_of_a_group_where_nothing_is_credited_hears_that_payment_is_not_touched(pg_session, clock):
@@ -950,12 +950,12 @@ def test_g3m_c7_a_teacher_of_a_group_where_nothing_is_credited_hears_that_paymen
     w = build_org(pg_session)
     g, s, m = month_world(w, clock, switch_on=None)
     clock.set("2026-10-30 12:00")
-    assert _consequence(w, "owner", g) == {"consequence": "На оплату не влияет"}
+    assert _consequence(w, "owner", g) == {"consequence": "На оплату не влияет", "waiting": False}
     from src.auth.money_effects import WAITING_CONSEQUENCE_TEACHER
 
-    assert _consequence(w, "A", g) == {"consequence": WAITING_CONSEQUENCE_TEACHER}          # LESSON-RULES: the lesson has begun, his cancellation waits for the owner (nothing is credited in this group either way)
+    assert _consequence(w, "A", g) == {"consequence": WAITING_CONSEQUENCE_TEACHER, "waiting": True}          # LESSON-RULES: the lesson has begun, his cancellation waits for the owner (nothing is credited in this group either way)
     assert _no_confirmation(w)
-    assert _consequence(w, "A", g) == {"consequence": "На оплату не влияет"}          # the centre without the confirmation: the old sentence
+    assert _consequence(w, "A", g) == {"consequence": "На оплату не влияет", "waiting": False}          # the centre without the confirmation: the old sentence
 
 
 def test_r4_the_setting_off_says_the_payment_is_not_touched(pg_session, clock):
@@ -965,7 +965,7 @@ def test_r4_the_setting_off_says_the_payment_is_not_touched(pg_session, clock):
     w = build_org(pg_session)
     g, s, m = month_world(w, clock, switch_on=None)                          # own month, the setting «вычитать уроки, отменённые центром» was never switched on
     clock.set("2026-10-30 12:00")
-    assert _consequence(w, "owner", g) == {"consequence": "На оплату не влияет"}
+    assert _consequence(w, "owner", g) == {"consequence": "На оплату не влияет", "waiting": False}
 
 
 def test_r4_a_package_group_says_the_payment_is_not_touched(pg_session, clock):
@@ -974,7 +974,7 @@ def test_r4_a_package_group_says_the_payment_is_not_touched(pg_session, clock):
     w = build_org(pg_session)
     g, s, m = package_world(w, clock)
     clock.set("2026-10-30 12:00")
-    assert _consequence(w, "owner", g) == {"consequence": "На оплату не влияет"}               # a package spends nothing on a cancelled lesson
+    assert _consequence(w, "owner", g) == {"consequence": "На оплату не влияет", "waiting": False}               # a package spends nothing on a cancelled lesson
 
 
 def test_r4_an_unknown_group_is_not_found(pg_session, clock):
