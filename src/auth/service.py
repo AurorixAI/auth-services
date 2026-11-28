@@ -5391,6 +5391,7 @@ class AuthService:
         )
         self.db.add(attendance)
         self.db.flush()
+        from .substitution_lists import done_on_later_day          # FIX5: ONE rule of "backdated" (the journal and the history read it too)
         self.db.add(
             GroupAttendanceAudit(
                 attendance_id=attendance.id,
@@ -5402,7 +5403,7 @@ class AuthService:
                 after_status=LessonAttendanceStatus.IN_PROGRESS.value,
                 before_records=None,
                 after_records={},
-                details={**({"backdated": True} if req.lessonDate < business_clock.business_today() else {}), "planned_teacher": str(planned_teacher) if planned_teacher else None, "taught_by": str(taught_by) if taught_by else None},
+                details={**({"backdated": True} if done_on_later_day(business_clock.utc_now(), req.lessonDate.isoformat()) else {}), "planned_teacher": str(planned_teacher) if planned_teacher else None, "taught_by": str(taught_by) if taught_by else None},
             )
         )
         self.db.commit()

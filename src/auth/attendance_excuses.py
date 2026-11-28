@@ -21,7 +21,7 @@ import re
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from types import SimpleNamespace
-from typing import Any, Dict, List, Literal, Optional, Union
+from typing import Any, Dict, List, Literal, Optional, Tuple, Union
 from uuid import UUID
 
 from pydantic import BaseModel, Field
@@ -42,7 +42,7 @@ from src.models.auth import (
 from . import business_clock as bc
 from . import money_effects as me
 from .closed_period import ClosedPeriods, assert_lesson_open, lesson_teacher_ids
-from .ops_rules import OpsError, conflict
+from .ops_rules import OpsError, conflict, short_name
 from .roster_names import student_full_name
 from .sql_text import contains
 
@@ -639,13 +639,16 @@ class AttendanceExcuseService:
             return {}
         from .substitution_lists import done_on_later_day          # FIX4 А3: ONE rule with the history of the owner - the lesson was formalised on a LATER business day than its date
 
-        audits = [a for a, day in (self.db.query(GroupAttendanceAudit, GroupAttendance.lesson_date).join(GroupAttendance, GroupAttendance.id == GroupAttendanceAudit.attendance_id)
-                                   .filter(GroupAttendanceAudit.org_id == org_id, GroupAttendanceAudit.attendance_id.in_(list(attendance_keys)),
-                                           GroupAttendanceAudit.action == "reconciliation_started").all()) if done_on_later_day(a.created_at, day)]
+        earliest: Dict[UUID, Tuple[Any, str]] = {}          # FIX5: the EARLIEST «started» line of a lesson speaks (the same one the history of the owner reads): an arrangement begun, cancelled and made again counts from its first day
+        for a, day in (self.db.query(GroupAttendanceAudit, GroupAttendance.lesson_date).join(GroupAttendance, GroupAttendance.id == GroupAttendanceAudit.attendance_id)
+                       .filter(GroupAttendanceAudit.org_id == org_id, GroupAttendanceAudit.attendance_id.in_(list(attendance_keys)),
+                               GroupAttendanceAudit.action == "reconciliation_started").order_by(GroupAttendanceAudit.created_at, GroupAttendanceAudit.id).all()):
+            earliest.setdefault(a.attendance_id, (a, day))
+        audits = [a for a, day in earliest.values() if done_on_later_day(a.created_at, day)]
         taught = {a.attendance_id: (a.details or {}).get("taught_by") for a in audits}
         users = self._users({a.actor_id for a in audits} | {UUID(t) for t in taught.values() if t})
-        return {attendance_keys[a.attendance_id]: {"by_name": _user_name(users.get(a.actor_id)), "at": _iso(a.created_at),
-                                                    "taught_by_name": _user_name(users.get(UUID(taught[a.attendance_id]))) if taught.get(a.attendance_id) else None}
+        return {attendance_keys[a.attendance_id]: {"by_name": short_name(users.get(a.actor_id)), "at": _iso(a.created_at),
+                                                    "taught_by_name": short_name(users.get(UUID(taught[a.attendance_id]))) if taught.get(a.attendance_id) else None}
                 for a in audits if a.attendance_id in attendance_keys}
 
     def _users(self, ids) -> Dict[UUID, User]:

@@ -46,10 +46,10 @@ def test_the_line_of_a_changed_kind_names_the_lesson_what_became_of_what_why_and
     owner = short(w.owner)
     r = client(w, "owner").post(f"{API}/org/days-off", json={"dateFrom": PAST_MON, "dateTo": PAST_MON, "reason": "Хайит"})
     assert r.status_code == 201, r.text
-    assert _kind_lines(w) == [f"Вид отмены изменён: Г, 23.11 10:00–11:30: ждёт подтверждения → праздник. Причина: выходной день 23.11. Изменил: {owner}."]
+    assert _kind_lines(w) == [f"Вид отмены изменён: Г, 23.11 10:00–11:30: ждёт подтверждения → праздник. Причина: выходной день «Хайит» 23.11. Изменил: {owner}."]
     assert client(w, "owner").post(f"{API}/org/days-off/{r.json()['dayOff']['id']}/void").status_code == 200
-    assert sorted(_kind_lines(w)) == sorted([f"Вид отмены изменён: Г, 23.11 10:00–11:30: ждёт подтверждения → праздник. Причина: выходной день 23.11. Изменил: {owner}.",
-                                              f"Вид отмены изменён: Г, 23.11 10:00–11:30: праздник → ждёт подтверждения. Причина: выходной день 23.11 отменён. Изменил: {owner}."])
+    assert sorted(_kind_lines(w)) == sorted([f"Вид отмены изменён: Г, 23.11 10:00–11:30: ждёт подтверждения → праздник. Причина: выходной день «Хайит» 23.11. Изменил: {owner}.",
+                                              f"Вид отмены изменён: Г, 23.11 10:00–11:30: праздник → ждёт подтверждения. Причина: выходной день «Хайит» 23.11 отменён. Изменил: {owner}."])
     set_kind(w, g, "centre")
     set_kind(w, g, "holiday", expected="centre", reason="Ошибка в выходном")
     assert f"Вид отмены изменён: Г, 23.11 10:00–11:30: по вине центра → праздник. Причина: Ошибка в выходном. Изменил: {owner}." in _kind_lines(w)

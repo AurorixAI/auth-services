@@ -43,4 +43,4 @@ def test_a_lesson_formalised_the_next_day_has_the_mark_and_the_flag(pg_session, 
     keys, flag = marks(w, g)
     assert len(keys) == 1 and flag is True
     r = client(w, "owner").get(f"{API}/org/groups/{g.id}/attendance", params={"month": "2026-11"})
-    assert r.json()["backdated"][keys[0]]["by_name"] == "Иван Иванов"
+    assert r.json()["backdated"][keys[0]]["by_name"] == "Иванов И."          # FIX5: the same short form as the history of the owner (LESSONS 48)

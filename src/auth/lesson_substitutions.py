@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from types import SimpleNamespace
 from datetime import date, datetime, timedelta
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
@@ -380,7 +381,9 @@ class SubstitutionsBase:
         day = f"{r.lesson_date[8:10]}.{r.lesson_date[5:7]}"
         kinds = snap.get("cancellationKind") or {}
         trigger = snap.get("trigger")
-        why = (f"выходной день {day}" if trigger == "day_off" else f"выходной день {day} отменён" if trigger == DAY_OFF_VOID_KIND else snap.get("reason"))
+        named = re.match(r"Выходной «(.+?)»", snap.get("reason") or "")          # FIX5: the day off has a name (the text of the record starts with it): «выходной день «Хайит» 28.10»
+        label = f"выходной день «{named.group(1)}» {day}" if named else f"выходной день {day}"
+        why = (label if trigger == "day_off" else f"{label} отменён" if trigger == DAY_OFF_VOID_KIND else snap.get("reason"))
         by = self._author(ctx, r.decided_by) or {}
         who = by.get("name") or ROLE_WORDS.get(by.get("role") or "")
         parts = [f"Вид отмены изменён: {group.name + ', ' if group else ''}{day} {r.start_time}–{r.end_time}: {KIND_WORDS.get(kinds.get('from'), kinds.get('from'))} → {KIND_WORDS.get(kinds.get('to'), kinds.get('to'))}"]
