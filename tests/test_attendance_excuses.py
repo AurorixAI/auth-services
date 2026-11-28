@@ -1,6 +1,8 @@
 """N13 P1: excused absences - reasons on save, journal payload, admin API (PostgreSQL)."""
 from datetime import timedelta
 
+import re
+
 import pytest
 
 from src.models.auth import AttendanceExcuse, AttendanceExcuseFile, GroupAttendance, GroupAttendanceAudit
@@ -168,7 +170,7 @@ def test_admin_corrects_completed_lesson_into_excused(world):
     data = journal(world, world.admin)
     key = key_of(day, lesson_id)
     assert data.corrections[key]["reason"] == "Ошибка в журнале"
-    assert data.corrections[key]["by_name"] and data.corrections[key]["at"]
+    assert re.fullmatch(r"\S+ \S\.", data.corrections[key]["by_name"]) and data.corrections[key]["at"]          # FIX6: the one short form («Admin A.»), not the full name
     assert data.excuses[key][str(world.students[0].id)]["reason"] == "Болел"
 
 
@@ -210,7 +212,7 @@ def test_journal_exposes_excuses_and_hides_review_note_from_teachers(world):
                                "decided_after_deadline", "deadline_at_decision"}      # the decision mark (#39)
     assert admin_view["status"] == "confirmed" and admin_view["review_note"] == "Справка есть"
     assert admin_view["billing_mode"] is None                                         # the student has no live payment
-    assert admin_view["reviewed_by_name"] and admin_view["has_files"] is False
+    assert re.fullmatch(r"\S+ \S\.", admin_view["reviewed_by_name"]) and re.fullmatch(r"\S+ \S\.", admin_view["reason_by_name"]) and admin_view["has_files"] is False       # FIX6: the one short form
 
     teacher_view = journal(world, world.teacher, is_admin=False).excuses[key_of(day, lesson_id)][str(world.students[0].id)]
     assert "review_note" not in teacher_view and "billing_mode" not in teacher_view and teacher_view["status"] == "confirmed"

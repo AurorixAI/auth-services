@@ -169,15 +169,37 @@ def test_a_note_of_the_journal_names_the_substitute_taught_by_in_the_short_form(
     assert mark["taught_by_name"] == "Петров П." and mark["by_name"] == f"{w.admin.last_name} {w.admin.first_name[0]}."
 
 
+def _cancelled_row(w, g, day, lesson):
+    """The state of OLD data / of a race, made by hand in the test database (LESSONS 135 allows the state, not the way to it): a row ``cancelled`` on the date of the substitution."""
+    w.db.add(GroupAttendance(org_id=w.org.id, group_id=g.id, lesson_date=day, lesson_id=lesson, status="cancelled", records={}, roster_snapshot=[], cancellation_kind="centre",
+                             cancellation_reason="Центр закрыт", version=2))
+    w.db.commit()
+
+
 def test_a_cancelled_lesson_of_the_future_is_not_a_fact_for_the_releases(pg_session, clock):
-    """Hand: B stands on Mon 30.11 (ahead) whose row is ``cancelled`` (a day off on that date turned it so).  The row is no fact before the start: the owner removes B - the assignment is cleared."""
+    """Hand: B stands on Mon 30.11 10:00 (ahead, now Thu 26.11 12:00); the journal has a row ``cancelled`` on that date (old data / a race: the lesson was cancelled and the substitute stayed).  The row is no
+    fact before the start: the owner removes B - the assignment gets ``cancelled_at`` (the lesson has no substitute).  In the other world ``release_substitutions_of`` itself returns ONE (before pack 7: 0).
+    Control: the lesson of today (Wed 25.11 10:00, now 10:30) with the same row - the substitute stays (a fact: he taught it)."""
+    from src.auth.lesson_teachers import LessonTeachers
+
     w, g, people, rid = sub_world(pg_session, clock, day="2026-11-30")
-    assert client(w, "owner").post(f"{API}/org/days-off", json={"dateFrom": "2026-11-30", "dateTo": "2026-11-30", "reason": "Хайит"}).status_code == 201
-    w.db.expire_all()
-    row = w.db.query(GroupAttendance).filter_by(group_id=g.id, lesson_date="2026-11-30", lesson_id=MON).first()
-    if row is not None:                     # the day off cancels the lesson and takes the substitute off itself; nothing is left to release
-        assert row.status == "cancelled"
+    _cancelled_row(w, g, "2026-11-30", MON)
+    assert standing(w, g, "2026-11-30") == [str(w.B.id)]
+    assert client(w, "owner").delete(f"{API}/org/members/{w.ids('member_B')}").status_code == 200
     assert standing(w, g, "2026-11-30") == []
+    w.db.expire_all()
+    assert w.db.query(LessonTeacherAssignment).filter_by(group_id=g.id, lesson_date="2026-11-30", teacher_id=w.B.id).one().cancelled_at is not None
+
+    w2, g2, p2, rid2 = sub_world(pg_session, clock, day="2026-11-30")
+    _cancelled_row(w2, g2, "2026-11-30", MON)
+    assert LessonTeachers(w2.svc).release_substitutions_of(w2.org.id, w2.B.id, w2.owner.id) == 1
+    w2.db.commit()
+    assert standing(w2, g2, "2026-11-30") == []
+
+    w3, g3, p3, rid3 = sub_world(pg_session, clock, day="2026-11-25", lesson=WED, now="2026-11-25 10:30")
+    _cancelled_row(w3, g3, "2026-11-25", WED)
+    assert LessonTeachers(w3.svc).release_substitutions_of(w3.org.id, w3.B.id, w3.owner.id) == 0
+    assert standing(w3, g3, "2026-11-25", WED) == [str(w3.B.id)]
 
 
 def test_the_day_off_text_has_the_name_of_the_day_off(pg_session, clock):

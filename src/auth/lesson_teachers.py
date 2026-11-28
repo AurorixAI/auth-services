@@ -724,13 +724,14 @@ class LessonTeachers:
             GroupAttendance.status.in_((IN_PROGRESS, COMPLETED, CANCELLED))).all()
         wanted = {(a.group_id, a.lesson_id, a.lesson_date): (a, g) for a, g in pairs}
         started = set()
+        now = bc.utc_now()          # ONE reading of the clock, the same as ``LessonCancelMixin.now()`` (``business_clock``): the release and the cancellation read the same time
         for group_id, lesson_id, lesson_date, status in rows:
             key = (group_id, lesson_id, lesson_date)
             if key not in wanted:
                 continue
             if status == CANCELLED:          # FIX5: a cancelled lesson is a fact only when its start has come (the same condition as the cancellation itself: a future lesson loses its substitute with it)
                 occ = self._occurrence(wanted[key][1], lesson_id, date.fromisoformat(lesson_date))
-                if occ is not None and bc.lesson_instant_utc(date.fromisoformat(lesson_date), hhmm_to_minutes(occ["startTime"])) > bc.utc_now():
+                if occ is not None and bc.lesson_instant_utc(date.fromisoformat(lesson_date), hhmm_to_minutes(occ["startTime"])) > now:
                     continue
             started.add(key)
         return [(a, g) for a, g in pairs if (a.group_id, a.lesson_id, a.lesson_date) not in started]

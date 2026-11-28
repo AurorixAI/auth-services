@@ -381,8 +381,8 @@ class SubstitutionsBase:
         day = f"{r.lesson_date[8:10]}.{r.lesson_date[5:7]}"
         kinds = snap.get("cancellationKind") or {}
         trigger = snap.get("trigger")
-        named = re.match(r"Выходной «(.+?)»", snap.get("reason") or "")          # FIX5: the day off has a name (the text of the record starts with it): «выходной день «Хайит» 28.10»
-        label = f"выходной день «{named.group(1)}» {day}" if named else f"выходной день {day}"
+        named = snap.get("dayOffName") or (lambda m: m.group(1) if m else None)(re.match(r"Выходной «(.+?)»", snap.get("reason") or ""))          # FIX5: the day off has a name (the text of the record starts with it): «выходной день «Хайит» 28.10»
+        label = f"выходной день «{named}» {day}" if named else f"выходной день {day}"
         why = (label if trigger == "day_off" else f"{label} отменён" if trigger == DAY_OFF_VOID_KIND else snap.get("reason"))
         by = self._author(ctx, r.decided_by) or {}
         who = by.get("name") or ROLE_WORDS.get(by.get("role") or "")

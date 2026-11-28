@@ -571,15 +571,15 @@ class DaysOffService:
             after_status="cancelled", before_records={}, after_records={}, correction_reason=lesson_reason_text(reason)[:500],
             cancellation_reason=row.cancellation_reason, details={"cancellation_kind": {"from": was, "to": HOLIDAY}, "day_off_id": str(day_off_id)}))
         waited = "подтверждать её не нужно" if was == UNCONFIRMED else "ученикам перерасчёта нет"
-        self._journal_kind(group, row, actor_id, was, HOLIDAY, f"Выходной «{reason}»: отмена урока стала «праздник», {waited}", trigger)      # #157 A3 (LESSONS 47): the money moved - the journal says so
+        self._journal_kind(group, row, actor_id, was, HOLIDAY, f"Выходной «{reason}»: отмена урока стала «праздник», {waited}", trigger, day_off_name=reason)      # #157 A3 (LESSONS 47): the money moved - the journal says so
 
-    def _journal_kind(self, group: Optional[Group], att: GroupAttendance, actor_id: Any, before: str, after: str, text: str, trigger: str) -> None:
+    def _journal_kind(self, group: Optional[Group], att: GroupAttendance, actor_id: Any, before: str, after: str, text: str, trigger: str, day_off_name: Optional[str] = None) -> None:
         """#157 A3: a day off turned the kind of a hand cancellation (or gave it back): one record of the journal «Замены» (``KIND_CHANGED``, author - whoever made / cancelled the day off)."""
         if group is None:
             return
         from .lesson_substitutions import Substitutions  # lazy: it imports this module
 
-        Substitutions(self.svc).record_kind_change(group, att.lesson_id, date.fromisoformat(att.lesson_date), UUID(str(actor_id)), before, after, text[:500], trigger=trigger)
+        Substitutions(self.svc).record_kind_change(group, att.lesson_id, date.fromisoformat(att.lesson_date), UUID(str(actor_id)), before, after, text[:500], trigger=trigger, day_off_name=day_off_name)
 
     def _cancel(self, org_id: str, actor_id: str, group: Group, occurrence: Dict[str, Any], reason: str, day_off_id: UUID) -> Optional[str]:
         """The usual cancellation (``Substitutions.cancel_lesson``), kind ``holiday``, of a lesson that has no journal row (a started one is never touched: the row is read again
@@ -711,7 +711,7 @@ class DaysOffService:
             before_records={}, after_records={}, correction_reason=f"Выходной «{day_off.reason}» отменён: ручная отмена вернулась к прежнему виду"[:500], cancellation_reason=att.cancellation_reason,
             details={"cancellation_kind": {"from": before, "to": att.cancellation_kind}, "day_off_voided": str(day_off.id)}))
         again = "ждёт подтверждения" if att.cancellation_kind == UNCONFIRMED else "«по вине центра»"
-        self._journal_kind(group, att, actor_id, before, att.cancellation_kind, f"Выходной «{day_off.reason}» отменён: отмена урока снова {again}", DAY_OFF_VOID_KIND)      # #157 A3
+        self._journal_kind(group, att, actor_id, before, att.cancellation_kind, f"Выходной «{day_off.reason}» отменён: отмена урока снова {again}", DAY_OFF_VOID_KIND, day_off_name=day_off.reason)      # #157 A3
 
     def _started_today(self, group: Optional[Group], att: GroupAttendance, lines: Dict[Any, Dict[str, Any]]) -> bool:
         """The lesson of the row is today and its start has passed (a lesson that is gone from the schedule is not «started»)."""

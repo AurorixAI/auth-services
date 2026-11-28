@@ -101,7 +101,7 @@ def _changes(audit: GroupAttendanceAudit) -> list:
 
 
 def _event(audit: GroupAttendanceAudit, users: Dict[UUID, User]) -> Dict[str, Any]:
-    return {"kind": "returned" if audit.action == "completed_reverted" else "corrected", "by_name": _user_name(users.get(audit.actor_id)), "at": _iso(audit.created_at),
+    return {"kind": "returned" if audit.action == "completed_reverted" else "corrected", "by_name": _mark_name(users.get(audit.actor_id)), "at": _iso(audit.created_at),
             "reason": audit.correction_reason, "changes": _changes(audit)}
 
 
@@ -114,6 +114,11 @@ def _user_name(user: Optional[User]) -> Optional[str]:
     if not user:
         return None
     return f"{user.first_name} {user.last_name}".strip() or None
+
+
+def _mark_name(user: Optional[User]) -> Optional[str]:
+    """LESSONS 48: the name in a note of the journal is ONE form («Иванов И.») - the one of «оформлен задним числом» and of the history; with no name at all the same as ``_user_name`` gives."""
+    return short_name(user) or _user_name(user)
 
 
 # ============================================================================
@@ -599,9 +604,9 @@ class AttendanceExcuseService:
                 "id": str(row.id),
                 "status": row.status,
                 "reason": row.reason,
-                "reason_by_name": _user_name(users.get(row.reason_by)),
+                "reason_by_name": _mark_name(users.get(row.reason_by)),
                 "reason_at": _iso_wall(row.reason_at),
-                "reviewed_by_name": _user_name(users.get(row.reviewed_by)) if row.reviewed_by else None,
+                "reviewed_by_name": _mark_name(users.get(row.reviewed_by)) if row.reviewed_by else None,
                 "reviewed_at": _iso_wall(row.reviewed_at),
                 "has_files": row.id in with_files,
             }
@@ -622,7 +627,7 @@ class AttendanceExcuseService:
                 continue
             corrections[key] = {
                 "kind": "returned" if audit.action == "completed_reverted" else "corrected",
-                "by_name": _user_name(users.get(audit.actor_id)),
+                "by_name": _mark_name(users.get(audit.actor_id)),
                 "at": _iso(audit.created_at),
                 "reason": audit.correction_reason,
                 # Money-1 A6 (П9): WHAT changed - «было → стало» per student from the audit (``before_records`` / ``after_records``) - and every earlier correction / return of the lesson,
