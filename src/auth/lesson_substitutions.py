@@ -228,8 +228,10 @@ class SubstitutionsBase:
             by_group.setdefault(r.group_id, []).append(r.lesson_date)
         for gid, day in extra:
             by_group.setdefault(gid, []).append(day)
+        by_group = {gid: [d for d in days if d] for gid, days in by_group.items()}          # LESSONS 194 (b): a row without the date of its lesson is read as «no lesson to look up», never as a date
+        by_group = {gid: days for gid, days in by_group.items() if days}
         every = [d for days in by_group.values() for d in days]
-        preload = self.svc._preload_schedule_data(list(by_group), date_from=date.fromisoformat(min(every)), date_to=date.fromisoformat(max(every)))      # wave C DM-009: two queries for the page
+        preload = self.svc._preload_schedule_data(list(by_group), date_from=date.fromisoformat(min(every)), date_to=date.fromisoformat(max(every))) if every else None      # wave C DM-009: two queries for the page
         for gid, days in by_group.items():
             group = ctx.groups.get(gid)
             if group is None:
@@ -957,6 +959,9 @@ class SubstitutionsBase:
     def _returnable(self, org_id: Any, entries: Sequence[Any], money_right: bool) -> Dict[Tuple[str, str, str], bool]:
         """C13.7 ``canReturn`` of an entry of the history: «Вернуть урок на отметку» is offered when the lesson is HELD now, its group is active, its month is open and the caller has the right of money
         (the conditions of the road ``attendance/return`` - nobody keeps a copy on the screen).  One query for the lessons, one for the groups."""
+        if not entries:
+            return {}
+        entries = [e for e in entries if e.lesson_date and e.lesson_id]          # LESSONS 194 (b): an entry without the date / the id of its lesson has nothing to return
         if not entries:
             return {}
         gids = {e.group_id for e in entries}

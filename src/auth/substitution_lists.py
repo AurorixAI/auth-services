@@ -98,12 +98,14 @@ def attendance_branch(org_id: Any, *, since: Optional[datetime], group_id: Optio
     The actor is whoever wrote the line (a teacher or an administrator over somebody's lesson); the teacher is the one the lesson is frozen with.
     Accepted (C12.3): the threshold «12 hours» of a lesson STARTED in time counts from ``started_at`` (the end of a lesson is not kept in the journal)."""
     a, g, grp, actor, teacher, member = GroupAttendanceAudit, aliased(GroupAttendance), aliased(Group), aliased(User), aliased(User), aliased(OrganizationMember)
-    late = business_day(a.created_at) - cast(a.lesson_date, Date)
+    # the lines of the journal written before the migration ``mg12a1b2c3d4`` carry no date and no id of the lesson (LESSONS 194 b): the row of the lesson ``g`` (the inner join below) always has them
+    day, lesson = func.coalesce(a.lesson_date, g.lesson_date), func.coalesce(a.lesson_id, g.lesson_id)
+    late = business_day(a.created_at) - cast(day, Date)
     # a lesson arranged afterwards (``started_at`` empty) is «late» by the day the teacher BEGAN to arrange it (the line ``reconciliation_started``) - not by the moment of the completion (C12.2: begun in
     # his own day at 23:58 and completed at 00:02 is no entry, as C4 does not refuse it); no such line (an old row): the completion, as before
     arranged = (select(func.min(GroupAttendanceAudit.created_at)).where(GroupAttendanceAudit.attendance_id == g.id, GroupAttendanceAudit.action == "reconciliation_started")
                 .correlate(g).scalar_subquery())
-    late_done = case((g.started_at.is_(None), business_day(func.coalesce(arranged, a.created_at))), else_=business_day(a.created_at)) - cast(a.lesson_date, Date)
+    late_done = case((g.started_at.is_(None), business_day(func.coalesce(arranged, a.created_at))), else_=business_day(a.created_at)) - cast(day, Date)
     # a lesson STARTED in time (``started_at`` filled) is closed «later» only when it is closed more than 12 hours after it was started (the end of the lesson is not kept in the journal; the start is its lower
     # bound, so an evening lesson closed after midnight is not «задним числом»); a lesson arranged afterwards (``started_at`` empty) - by the difference of the dates
     wall = a.created_at + text(f"interval '{_hours()} hours'")
@@ -111,7 +113,7 @@ def attendance_branch(org_id: Any, *, since: Optional[datetime], group_id: Optio
     done_late = and_(a.action == "updated", a.before_status == "in_progress", a.after_status == "completed", late_done >= 1, ~in_time)    # the completion writes ``updated`` (service.py)
     corrected = and_(a.action == "corrected", a.before_status == "completed", a.after_status == "completed")
     stmt = (select(*cols(case((done_late, literal(BACKDATED)), else_=literal(CORRECTED)), a.created_at, overdue=literal(True), ref_id=a.id, group_id=a.group_id, group_name=grp.name,
-                         lesson_id=a.lesson_id, lesson_date=a.lesson_date, actor_id=a.actor_id, actor_last=actor.last_name, actor_first=actor.first_name, actor_role=member.org_role,
+                         lesson_id=lesson, lesson_date=day, actor_id=a.actor_id, actor_last=actor.last_name, actor_first=actor.first_name, actor_role=member.org_role,
                          teacher_id=g.teacher_id, teacher_last=teacher.last_name, teacher_first=teacher.first_name, late_days=cast(case((done_late, late_done), else_=late), Integer), reason=a.correction_reason))
             .select_from(a).join(g, g.id == a.attendance_id).join(grp, grp.id == a.group_id).outerjoin(actor, actor.id == a.actor_id).outerjoin(teacher, teacher.id == g.teacher_id)
             .outerjoin(member, and_(member.user_id == a.actor_id, member.org_id == a.org_id))
@@ -123,9 +125,9 @@ def attendance_branch(org_id: Any, *, since: Optional[datetime], group_id: Optio
     if teacher_id is not None:
         stmt = stmt.where(or_(g.teacher_id == teacher_id, a.actor_id == teacher_id))
     if date_from:
-        stmt = stmt.where(a.lesson_date >= date_from)
+        stmt = stmt.where(day >= date_from)
     if date_to:
-        stmt = stmt.where(a.lesson_date <= date_to)
+        stmt = stmt.where(day <= date_to)
     if like:
         stmt = stmt.where(or_(grp.name.ilike(like, escape="\\"), teacher.last_name.ilike(like, escape="\\"), teacher.first_name.ilike(like, escape="\\")))
     return stmt
