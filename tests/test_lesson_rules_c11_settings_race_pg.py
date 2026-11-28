@@ -73,14 +73,18 @@ def effects(w):
 WANT = {"policy": 14, "payments": True, "payroll": 26, "openings": "skipped", "batch": 1}
 
 
-def _waiting(engine, n, seconds=15):
-    """Wait until ``n`` backends wait on a row lock (a real wait, not a sleep; the only row the test holds is the organisation, the text of a long query is cut by the server, so the query is not matched)."""
+def _waiting(engine, n, threads=(), seconds=180):
+    """Wait until ``n`` backends wait on a row lock (a real wait, not a sleep; the only row the test holds is the organisation, the text of a long query is cut by the server, so the query is not matched).
+    LESSONS 190: the way out is an EVENT, not the clock: a writer that has FINISHED without reaching the lock (an early answer, an error) ends the wait at once and the answer says so; the time bound
+    (180 s, was 15 s: under the load of the full suite a request that has not yet reached the lock was taken for a lost one) is only the last resort."""
     end = time.monotonic() + seconds
     while time.monotonic() < end:
         with engine.connect() as conn:
             got = conn.execute(text("SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock' AND wait_event IN ('transactionid', 'tuple')")).scalar()
         if got >= n:
             return True
+        if any(not t.is_alive() for t in threads):
+            return False
         time.sleep(0.05)
     return False
 
@@ -114,7 +118,7 @@ def run_pair(w, first, second):
             t = threading.Thread(target=run, args=(name, clients[i]), daemon=True)
             t.start()
             threads.append(t)
-            assert _waiting(engine, i + 1), f"{name} did not reach the lock of the organisation"
+            assert _waiting(engine, i + 1, threads), f"{name} did not reach the lock of the organisation (answers so far: { {k: (v.status_code, v.text[:200]) for k, v in answers.items()} })"
     finally:
         trans.commit()
         holder.close()

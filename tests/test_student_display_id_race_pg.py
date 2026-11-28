@@ -49,9 +49,17 @@ def factory():
     engine.dispose()
 
 
-def _letters() -> str:
-    """Two random capitals: initials that no other test or earlier run is likely to hold."""
-    return "".join(random.choice(string.ascii_uppercase) for _ in range(2))
+def _letters(sessions=None) -> str:
+    """Two random capitals: initials that no other test or earlier run holds.  With ``sessions`` the pair is checked against the organisations of the shared test database (an organisation of another test
+    takes the prefix of its own initials, «NO» of «Nikolay Orlov»: a random pair met it and the INSERT of ``holder`` broke on ``uq_org_student_id_prefix``, LESSONS 190): a pair that is the start of a
+    prefix of any organisation is not taken."""
+    while True:
+        pair = "".join(random.choice(string.ascii_uppercase) for _ in range(2))
+        if sessions is None:
+            return pair
+        with sessions() as db:
+            if db.query(Organization.id).filter(Organization.student_id_prefix.like(f"{pair}%")).first() is None:
+                return pair
 
 
 def _make_org(sessions, made, name, prefix=None):
@@ -92,7 +100,7 @@ def _run_threads(jobs):
 
 def test_equal_initials_enrolling_first_students_together_both_succeed(factory, monkeypatch):
     sessions, made = factory
-    ab = _letters()
+    ab = _letters(sessions)
     org_a = _make_org(sessions, made, f"{ab[0]}alpha {ab[1]}beta")
     org_b = _make_org(sessions, made, f"{ab[0]}gamma {ab[1]}delta")
     student_a, student_b = _make_student(sessions, org_a), _make_student(sessions, org_b)
@@ -133,7 +141,7 @@ def test_equal_initials_enrolling_first_students_together_both_succeed(factory, 
 
 def test_many_organisations_with_equal_initials_all_get_distinct_prefixes(factory):
     sessions, made = factory
-    ab = _letters()
+    ab = _letters(sessions)
     orgs = [_make_org(sessions, made, f"{ab[0]}one{i} {ab[1]}two{i}") for i in range(6)]
     students = [_make_student(sessions, o) for o in orgs]
     start = threading.Barrier(len(orgs), timeout=20)
@@ -161,7 +169,7 @@ def test_many_organisations_with_equal_initials_all_get_distinct_prefixes(factor
 def test_a_lost_prefix_claim_is_retried_in_a_savepoint_that_keeps_the_callers_transaction(factory, monkeypatch):
     """The prefix write runs in a SAVEPOINT: what the caller already wrote in the same transaction survives it."""
     sessions, made = factory
-    ab = _letters()
+    ab = _letters(sessions)
     holder = _make_org(sessions, made, f"{ab[0]}holder {ab[1]}one")
     with sessions() as db:
         sid.assign_display_id(db, holder, db.get(Student, _make_student(sessions, holder)))
@@ -224,7 +232,7 @@ def test_students_of_one_organisation_enrolled_together_get_distinct_consecutive
 def test_a_session_that_loaded_the_organisation_before_its_prefix_was_assigned_keeps_that_prefix(factory):
     """The lock must re-read the organisation: a stale copy would assign a second, different prefix."""
     sessions, made = factory
-    ab = _letters()
+    ab = _letters(sessions)
     holder = _make_org(sessions, made, f"{ab[0]}holder {ab[1]}one", prefix=ab)  # so the new org gets AB1, not AB
     org_id = _make_org(sessions, made, f"{ab[0]}stale {ab[1]}org")
     first, second = _make_student(sessions, org_id, "A"), _make_student(sessions, org_id, "B")
@@ -251,7 +259,7 @@ def test_a_session_that_loaded_the_organisation_before_its_prefix_was_assigned_k
 
 def test_the_batch_allocator_survives_the_same_prefix_race(factory, monkeypatch):
     sessions, made = factory
-    ab = _letters()
+    ab = _letters(sessions)
     org_a = _make_org(sessions, made, f"{ab[0]}batch {ab[1]}one")
     org_b = _make_org(sessions, made, f"{ab[0]}batch {ab[1]}two")
     chosen = threading.Barrier(2, timeout=20)
