@@ -110,8 +110,9 @@ class LessonCancelMixin:
         if kind != UNCONFIRMED:          # #154: a cancelled make-up frees the lesson it made up for (the deduction comes back by itself); a WAITING cancellation moves nothing - it frees it when the kind is confirmed (C12.1)
             OneOffPurpose(self.svc).release(group, lesson_id, actor)
         # LESSON-RULES FIX4 А2: the lesson whose start has come was TAUGHT by whoever stands on it (a substitute included) - a mistaken «урока не было» does not take it from him (the return of the lesson goes
-        # back to him: ``_restore_locked`` reads the assignment); the cancelled lesson pays nobody either way.  The lesson that is still to come loses its substitute, as the lesson is gone
-        released = None if ref.starts_at <= self.now() else self._release_substitute(group, ref, actor, "cancel", {"dayOffId": str(day_off_id)} if by_day_off else None)
+        # back to him: ``_restore_locked`` reads the assignment); the cancelled lesson pays nobody either way.  The lesson that is still to come loses its substitute, as the lesson is gone; the ARCHIVE of the group (missed lessons nobody can give back,
+        # the group is closed) releases as it always did
+        released = None if (ref.starts_at <= self.now() and not archive) else self._release_substitute(group, ref, actor, "cancel", {"dayOffId": str(day_off_id)} if by_day_off else None)
         if released:
             warnings.append({"code": "SUBSTITUTE_RELEASED", "message": f"Замена снята: {released}"})
         if not archive:

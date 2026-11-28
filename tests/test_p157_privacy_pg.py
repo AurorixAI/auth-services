@@ -186,7 +186,7 @@ def test_a2_what_an_administrator_wrote_on_his_own_action_is_not_in_the_teachers
     assert client(w, "owner").put(f"{API}/org/members/{member.id}/role", params={"role": "admin"}).status_code == 200            # D stops being a teacher: A's lesson is back to A, a new request is reopened
     items = client(w, "A").get(f"{SUB}/mine").json()["items"]
     triggered = [i for i in items if i["origin"] == "system" and i["trigger"]]
-    assert {i["trigger"] for i in triggered} >= {"manager_assign", "manager_restore", "manager_reason_change"}
+    assert {i["trigger"] for i in triggered} >= {"manager_assign", "manager_cancel", "manager_reason_change"}          # FIX4 А4: the lesson that was given back is ONE row (the cancellation); the record of the return is not a second row any more - its text is in nobody's list of the teacher (checked below)
     assert all(i["comment"] is None for i in triggered)
     reopened = [i for i in items if i["origin"] == "system" and i["trigger"] is None]
     assert len(reopened) == 1 and "больше не ведёт уроки" in reopened[0]["comment"]
