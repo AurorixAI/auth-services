@@ -110,9 +110,8 @@ class LessonCancelMixin:
         if kind != UNCONFIRMED:          # #154: a cancelled make-up frees the lesson it made up for (the deduction comes back by itself); a WAITING cancellation moves nothing - it frees it when the kind is confirmed (C12.1)
             OneOffPurpose(self.svc).release(group, lesson_id, actor)
         # LESSON-RULES FIX4 А2: the lesson whose start has come was TAUGHT by whoever stands on it (a substitute included) - a mistaken «урока не было» does not take it from him (the return of the lesson goes
-        # back to him: ``_restore_locked`` reads the assignment); the cancelled lesson pays nobody either way.  The lesson that is still to come loses its substitute, as the lesson is gone; the ARCHIVE of the group (missed lessons nobody can give back,
-        # the group is closed) releases as it always did
-        released = None if (ref.starts_at <= self.now() and not archive) else self._release_substitute(group, ref, actor, "cancel", {"dayOffId": str(day_off_id)} if by_day_off else None)
+        # back to him: ``_restore_locked`` reads the assignment); the cancelled lesson pays nobody either way.  The lesson that is still to come loses its substitute, as the lesson is gone; one rule, no exception (the archive of a group included - FIX5 В2)
+        released = None if ref.starts_at <= self.now() else self._release_substitute(group, ref, actor, "cancel", {"dayOffId": str(day_off_id)} if by_day_off else None)
         if released:
             warnings.append({"code": "SUBSTITUTE_RELEASED", "message": f"Замена снята: {released}"})
         if not archive:
@@ -161,10 +160,19 @@ class LessonCancelMixin:
         pending = next((r for r in reqs if r.status == "pending"), None)
         if pending is not None and journal:
             return self.db.query(Req).filter(Req.id == pending.id).with_for_update().populate_existing().first()
-        main = TeacherBook(self.db).default_teacher(group, ref.lesson_date, hhmm_to_minutes(ref.end_time))
+        main = self._author_of(group, ref)
         if main is None or not journal:
             return None
         return self._system_request(group, ref, main, None, trigger, actor, reqs[0] if reqs else None)
+
+    def _author_of(self, group: Group, ref: Any) -> Optional[Any]:
+        """LESSON-RULES FIX5 В1: whose record of «Замены» a cancellation / a return / a change of kind is: of the teacher who LEADS the lesson - for a lesson whose start has come, the one who stands on it
+        (a substitute included, he taught it); for a lesson that is still to come, the teacher of the group (the substitute is released with the cancellation)."""
+        book = TeacherBook(self.db)
+        end = hhmm_to_minutes(ref.end_time)
+        if ref.starts_at <= self.now():
+            return book.resolve(group, ref.lesson_id, ref.lesson_date, end).teacher_id
+        return book.default_teacher(group, ref.lesson_date, end)
 
     def _cancel_started_row(self, group: Group, ref: Any, row: GroupAttendance, actor: Any, reason: str, kind: str) -> None:
         """A lesson that was started and has no marks: the row becomes ``cancelled`` (the lesson sheet of an administrator)."""
@@ -258,7 +266,7 @@ class LessonCancelMixin:
                  "version": int(row.version or 1), "cancelledBy": names.get(row.marked_by), "cancelledAt": row.created_at.isoformat() if row.created_at else None}
         self.db.add(GroupAudit(org_id=group.org_id, group_id=group.id, actor_id=actor, actor_role=actor_role if actor_role in ("owner", "admin", "teacher") else "admin", action="lesson_restored",
                                assigned_teacher_id=group.teacher_id, snapshot=trace, created_at=bc.utc_now()))
-        main = TeacherBook(self.db).default_teacher(group, iso, hhmm_to_minutes(ref.end_time))
+        main = self._author_of(group, ref)
         reqs = self._lesson_requests(group, lesson_id, iso)
         cancelled = lesson_outcomes(list(reversed(reqs)), row.status)             # #157 A10: the record of THIS cancellation learns that the lesson is back (its chip stops being «Урок отменён»)
         if cancelled is not None and cancelled.status == "cancelled":
@@ -325,7 +333,7 @@ class LessonCancelMixin:
             ref, _occ = self._lesson_ref(group, lesson_id, day)
         except OpsError:
             return
-        main = TeacherBook(self.db).default_teacher(group, ref.lesson_date, hhmm_to_minutes(ref.end_time))
+        main = self._author_of(group, ref)
         if main is None:
             return
         reqs = self._lesson_requests(group, lesson_id, ref.lesson_date)

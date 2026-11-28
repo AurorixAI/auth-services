@@ -327,7 +327,7 @@ def test_r3_9_a_repeated_decision_answers_the_real_version_and_kind(w):
 
 
 # ====================================================================================================== 10, 11, 12: the archive and the restore
-def test_r3_10_archive_with_missed_lessons_releases_their_substitutes_and_the_return_has_no_false_busy(w):
+def test_r3_10_archive_with_missed_lessons_keeps_their_substitutes_and_the_return_has_no_false_busy(w):
     from src.auth.membership_periods import close_period
     from tests.ops_helpers import new_student
 
@@ -347,7 +347,7 @@ def test_r3_10_archive_with_missed_lessons_releases_their_substitutes_and_the_re
     assert r.status_code == 200, r.text
     row = w.db.query(GroupAttendance).filter_by(group_id=group.id, lesson_date="2026-10-21", lesson_id="lesson-e").one()
     assert (row.status, row.cancellation_kind, row.marked_by) == ("cancelled", None, w.admin.id)       # the kind it always had: none
-    assert w.db.query(LessonTeacherAssignment).filter_by(group_id=group.id, lesson_date="2026-10-21").one().cancelled_at is not None
+    assert w.db.query(LessonTeacherAssignment).filter_by(group_id=group.id, lesson_date="2026-10-21").one().cancelled_at is None          # FIX5 В2: one rule - the lesson has begun, D stands on it (the archive is no exception)
     assert [x for x in requests_of(w) if x.group_id == group.id and x.status == "cancelled"] == []       # no record of «Замены» (the archive has its own)
     restored = client(w, "admin").post(f"{API}/org/groups/{group.id}/restore", json={})
     assert restored.status_code == 200, restored.text
