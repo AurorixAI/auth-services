@@ -136,7 +136,9 @@ def test_s17_the_reason_of_a_cancellation_is_changed_in_the_window_with_a_record
     ev = events_of(w, recs[0].id)[-1]
     assert ev.snapshot["trigger"] == "manager_reason_change" and ev.snapshot["cancellationKind"] == {"from": "centre", "to": "holiday"} and ev.snapshot["reason"] == "Это был праздник"
     listed = client(w, "admin").get(SUB, params={"status": "decided"}).json()["items"]
-    assert any(i["decision"]["closedReasonText"] == "Вид отмены изменён" for i in listed)
+    admin = f"{w.admin.last_name} {w.admin.first_name[0]}."          # FIX4 А4: the line names the lesson, what became of what, why and who (it said only «Вид отмены изменён»)
+    assert [i["decision"]["closedReasonText"] for i in listed if i["decision"]["closedReason"] == "KIND_CHANGED"] == [
+        f"Вид отмены изменён: 9-А, 26.10 10:00–11:30: по вине центра → праздник. Причина: Это был праздник. Изменил: {admin}."]
     assert kind("2026-10-26", kind="holiday").json()["changed"] is False                                  # nothing changed: nothing recorded
     assert len([x for x in requests_of(w) if x.closed_reason == "KIND_CHANGED"]) == 1
     # Money-1 A1: a month the saved sheet of the lesson's teacher has closed is closed for money (was: the window «from the 1st of the previous month»)

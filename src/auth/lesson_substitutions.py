@@ -129,6 +129,7 @@ class Ctx:
         self.triggers: Dict[UUID, str] = {}                      # request id -> the trigger of its ``requested`` event (a record the system made)
         self.cleared: Dict[UUID, LessonSubstitutionEvent] = {}   # request id -> its last ``assignment_cleared`` event
         self.closed_trigger: Dict[UUID, str] = {}                # request id -> the trigger of its last ``closed`` event (#157 A9)
+        self.kind_changes: Dict[UUID, Dict[str, Any]] = {}       # request id -> the snapshot of its ``closed`` event ``KIND_CHANGED`` (FIX4 А4: the words of the history name what became of what)
         self.restored: Set[UUID] = set()                         # requests whose lesson was given back (``lesson_restored``, #157 A10)
         self.voided: Set[UUID] = set()                           # requests a day off that was cancelled left behind (``day_off_voided``, #157 A4)
         self.needs_decision: Dict[UUID, bool] = {}               # request id -> ``needsDecision`` of its LAST ``day_off_voided`` (same query as the rest of the events)
@@ -258,6 +259,8 @@ class SubstitutionsBase:
                 ctx.cleared[e.request_id] = e
             elif e.action == "closed":
                 ctx.closed_trigger[e.request_id] = (e.snapshot or {}).get("trigger")
+                if (e.snapshot or {}).get("closedReason") == "KIND_CHANGED":
+                    ctx.kind_changes[e.request_id] = e.snapshot
             elif e.action == "lesson_restored":
                 ctx.restored.add(e.request_id)
             elif e.action == "confirmed":
@@ -330,6 +333,8 @@ class SubstitutionsBase:
             text = None
             if r.closed_reason:
                 text = CLOSED_REASON_TEXT.get(r.closed_reason)
+                if r.closed_reason == "KIND_CHANGED" and ctx.viewer == MANAGER and r.id in ctx.kind_changes:          # FIX4 А4: the lesson, what became of what, why, who - the owner reads one sentence
+                    text = self._kind_changed_text(r, ctx, ctx.kind_changes[r.id])
                 if r.closed_reason == "GROUP_TEACHER_CHANGED":          # #157 (owner 28.10): the name of the new teacher is the manager's; the one who asked is told only that the group was handed over
                     text = ((f"Группу передали: {r.decision_note}" if r.decision_note else "Группу передали другому преподавателю") if ctx.viewer == MANAGER
                             else "Запрос закрыт: группу передали другому преподавателю")
@@ -364,6 +369,26 @@ class SubstitutionsBase:
             "lastActivityAt": max(t for t in (r.decided_at or r.created_at, ctx.last_event.get(r.id)) if t is not None).isoformat(),
             **self._lesson_rules_fields(r, ctx),
         }
+
+    def _kind_changed_text(self, r: Req, ctx: Ctx, snap: Dict[str, Any]) -> str:
+        """FIX4 А4: «Вид отмены изменён» of the history says WHICH lesson (group, date, time), WHAT became of WHAT («по вине центра → праздник»), WHY («выходной день 23.11»; the words of the owner for a change
+        he made by hand) and WHO - all from the event of the record (the server speaks, the screen shows it as it is)."""
+        from .cancellation_kind import KIND_WORDS, ROLE_WORDS
+        from .days_off import DAY_OFF_VOID_KIND
+
+        group = ctx.groups.get(r.group_id)
+        day = f"{r.lesson_date[8:10]}.{r.lesson_date[5:7]}"
+        kinds = snap.get("cancellationKind") or {}
+        trigger = snap.get("trigger")
+        why = (f"выходной день {day}" if trigger == "day_off" else f"выходной день {day} отменён" if trigger == DAY_OFF_VOID_KIND else snap.get("reason"))
+        by = self._author(ctx, r.decided_by) or {}
+        who = by.get("name") or ROLE_WORDS.get(by.get("role") or "")
+        parts = [f"Вид отмены изменён: {group.name + ', ' if group else ''}{day} {r.start_time}–{r.end_time}: {KIND_WORDS.get(kinds.get('from'), kinds.get('from'))} → {KIND_WORDS.get(kinds.get('to'), kinds.get('to'))}"]
+        if why:
+            parts.append(f"причина: {why}")
+        if who:
+            parts.append(f"изменил: {who}")
+        return ". ".join(p[0].upper() + p[1:] if i else p for i, p in enumerate(parts)) + "."
 
     def _lesson_rules_fields(self, r: Req, ctx: Ctx) -> Dict[str, Any]:
         """LESSON-RULES: who confirmed a waiting cancellation and when (the manager's eyes), how long it has waited, whether the teacher could still mark a lesson that was given back (the window of the centre)."""
@@ -701,7 +726,17 @@ class SubstitutionsBase:
         if reqs:        # wave C DM-009: the same re-read as a refresh of each request, in one query
             self.db.query(Req).filter(Req.id.in_([r.id for r in reqs])).populate_existing().all()
         pending_total = sum(1 for r in reqs if r.status == PENDING)
-        return {"items": self.items(reqs, actor), "pendingTotal": pending_total, "assignedToMe": self._assigned_to(org_id, actor, past_days), "clearedForMe": self._cleared_for(org_id, actor)}
+        return {"items": self._one_row_per_returned_lesson(self.items(reqs, actor)), "pendingTotal": pending_total, "assignedToMe": self._assigned_to(org_id, actor, past_days), "clearedForMe": self._cleared_for(org_id, actor)}
+
+    @staticmethod
+    def _one_row_per_returned_lesson(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """FIX4 А4 (LESSONS 139): a lesson that was given back has TWO records of its teacher - the cancellation (its outcome says «урок возвращён») and the record of the return; whoever cancelled it
+        (the teacher, an administrator, a decision of a request) the block lists the lesson ONCE: the cancellation with its outcome (the screen no longer filters)."""
+        def key(i):
+            return (i["group"]["id"], i["lesson"]["date"], i["lesson"]["lessonId"])
+
+        cancelled = {key(i) for i in items if i["status"] == "cancelled"}
+        return [i for i in items if not (i["status"] == "closed" and i["outcome"] == "lesson_restored" and key(i) in cancelled)]
 
     def _preload_assigned(self, rows: Sequence[Tuple[LessonTeacherAssignment, Group]]) -> Optional[Any]:
         """Wave C DM-009: the schedule of the groups of these assignments for their days, in two queries (``None`` without rows)."""

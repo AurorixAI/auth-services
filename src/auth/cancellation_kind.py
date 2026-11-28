@@ -39,6 +39,7 @@ ZERO_TEXTS = {          # the words of the server for «перерасчёта �
     "packages": "В пакетах уроков отмена не требует перерасчёта: урок просто не списывается.",
     "nobody_charged": "За этот урок никто из учеников не платит: перерасчёта нет.",
     "one_off": "Разовый урок: перерасчёта нет.",
+    "holiday": "Праздник — перерасчёта нет.",          # FIX4 А4: the confirmation «праздник» recalculates nothing BY ITS KIND (not «nobody pays»)
 }
 
 
@@ -205,7 +206,7 @@ def _preview(db: Session, org_id: str, group: Group, row: GroupAttendance, req: 
             _, centre_added = me.measure_cancellation(db, org_id, group.id, lambda: _apply(db, group, row, centre_req, row.marked_by, before, reason))
         db.expire(row)
     amounts = [int(a["amount"]) for a in added]
-    why = zero_reason(block if isinstance(block, dict) else {}, req.lessonId, day) if not amounts and not recalc_off else None          # recalc off: the screen says it by ``recalc_off``
+    why = ("holiday" if req.cancellationKind == "holiday" else zero_reason(block if isinstance(block, dict) else {}, req.lessonId, day)) if not amounts and not recalc_off else None          # recalc off: the screen says it by ``recalc_off``
     policy = CentrePolicy.of(db, org_id)
     window = policy.lesson_window_days
     restore_allowed = group.status == "active" and day >= open_lessons_since(db, org_id, today)

@@ -190,7 +190,10 @@ def days_word(n: int) -> str:
 def entry_text(row) -> str:
     """The words of an entry (the server speaks, the screen shows them as they are)."""
     if row.kind == BACKDATED:
-        return f"Урок оформлен задним числом: на {days_word(row.late_days or 0)} позже даты урока"
+        by = person(row, "actor", "actor_id")
+        # FIX4 А4: a lesson formalised by an owner / an administrator over the teacher's lesson says WHO did it («оформление: …»); the teacher's own late completion says nothing more
+        who = f"; оформление: {by['name']}" if by and by.get("name") and by.get("role") in ("owner", "admin") else ""
+        return f"Урок оформлен задним числом: на {days_word(row.late_days or 0)} позже даты урока{who}"
     if row.kind == CORRECTED:
         return "Отметки исправлены" + (f": {row.reason}" if row.reason else "")
     if row.kind == LESSON_ADDED:
