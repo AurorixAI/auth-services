@@ -633,12 +633,15 @@ class AttendanceExcuseService:
         return excuses, corrections
 
     def backdated_payload(self, org_id: str, attendance_keys: Dict[UUID, str]) -> Dict[str, Dict[str, Any]]:
-        """Money-1 A6 (Д4): ``{lessonKey: {by_name, at, taught_by_name}}`` of the lessons that were FORMALISED AFTERWARDS («Оформить проведённый урок»: audit ``reconciliation_started``) - the journal
-        marks them «оформлен задним числом»; ``taught_by_name`` only when somebody other than the planned teacher was named."""
+        """Money-1 A6 (Д4): ``{lessonKey: {by_name, at, taught_by_name}}`` of the lessons that were FORMALISED AFTERWARDS («Оформить проведённый урок»: audit ``reconciliation_started``) on a LATER business day than the lesson's date
+        (FIX4 А3: the same day is no mark) - the journal marks them «оформлен задним числом»; ``taught_by_name`` only when somebody other than the planned teacher was named."""
         if not attendance_keys:
             return {}
-        audits = (self.db.query(GroupAttendanceAudit).filter(GroupAttendanceAudit.org_id == org_id, GroupAttendanceAudit.attendance_id.in_(list(attendance_keys)),
-                                                             GroupAttendanceAudit.action == "reconciliation_started").all())
+        from .substitution_lists import done_on_later_day          # FIX4 А3: ONE rule with the history of the owner - the lesson was formalised on a LATER business day than its date
+
+        audits = [a for a, day in (self.db.query(GroupAttendanceAudit, GroupAttendance.lesson_date).join(GroupAttendance, GroupAttendance.id == GroupAttendanceAudit.attendance_id)
+                                   .filter(GroupAttendanceAudit.org_id == org_id, GroupAttendanceAudit.attendance_id.in_(list(attendance_keys)),
+                                           GroupAttendanceAudit.action == "reconciliation_started").all()) if done_on_later_day(a.created_at, day)]
         taught = {a.attendance_id: (a.details or {}).get("taught_by") for a in audits}
         users = self._users({a.actor_id for a in audits} | {UUID(t) for t in taught.values() if t})
         return {attendance_keys[a.attendance_id]: {"by_name": _user_name(users.get(a.actor_id)), "at": _iso(a.created_at),

@@ -12,7 +12,7 @@ moment of the reading.
 Not here: the sums (the window of the decision asks ``dry_run``), the payroll marks (the pack PAYROLL-MONTH)."""
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any, Dict, List, Optional, Sequence
 from uuid import UUID
 
@@ -40,6 +40,12 @@ def _hours() -> int:
 def business_day(column):
     """The business day of a UTC instant column, in SQL."""
     return func.date(column + text(f"interval '{_hours()} hours'"))
+
+
+def done_on_later_day(moment: datetime, lesson_date: Optional[str]) -> bool:
+    """FIX4 А3: THE rule of «оформлен задним числом», in Python - the business day of the moment the lesson was formalised (UTC ``moment``) is LATER than the day of the lesson.  The SQL twin is
+    ``late_done >= 1`` of ``attendance_branch``; the journal of the group and the history of the owner read the same word by the same rule (the same day: no mark, nothing written)."""
+    return bool(lesson_date) and bc.utc_to_business_date(moment) > date.fromisoformat(lesson_date)
 
 
 def cols(kind, at, **given):

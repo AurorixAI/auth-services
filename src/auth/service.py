@@ -5402,7 +5402,7 @@ class AuthService:
                 after_status=LessonAttendanceStatus.IN_PROGRESS.value,
                 before_records=None,
                 after_records={},
-                details={"backdated": True, "planned_teacher": str(planned_teacher) if planned_teacher else None, "taught_by": str(taught_by) if taught_by else None},
+                details={**({"backdated": True} if req.lessonDate < business_clock.business_today() else {}), "planned_teacher": str(planned_teacher) if planned_teacher else None, "taught_by": str(taught_by) if taught_by else None},
             )
         )
         self.db.commit()
