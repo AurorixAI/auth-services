@@ -716,12 +716,12 @@ class LessonTeachers:
         return len(rows)
 
     def _not_started(self, pairs: List[Tuple[LessonTeacherAssignment, Group]]) -> List[Tuple[LessonTeacherAssignment, Group]]:
-        """W1 S22 (D30): an assignment on a lesson that has already begun (a journal row ``in_progress`` / ``completed``) is a fact - who taught it - and is never taken off by a release."""
+        """W1 S22 (D30): an assignment on a lesson that has already begun (a journal row ``in_progress`` / ``completed``, or ``cancelled`` - a lesson of the past a mistaken «урока не было» may give back, FIX4 А2) is a fact - who taught it - and is never taken off by a release."""
         if not pairs:
             return pairs
         started = {(r.group_id, r.lesson_id, r.lesson_date) for r in self.db.query(GroupAttendance.group_id, GroupAttendance.lesson_id, GroupAttendance.lesson_date).filter(
             GroupAttendance.group_id.in_({a.group_id for a, _ in pairs}), GroupAttendance.lesson_date.in_({a.lesson_date for a, _ in pairs}),
-            GroupAttendance.status.in_((IN_PROGRESS, COMPLETED)))}
+            GroupAttendance.status.in_((IN_PROGRESS, COMPLETED, CANCELLED)))}
         return [(a, g) for a, g in pairs if (a.group_id, a.lesson_id, a.lesson_date) not in started]
 
     def release_substitutions_of(self, org_id: Any, teacher_id: UUID, actor_id: Any, *, reason: str = REASON_REMOVED, trigger: str = "member_removed") -> int:
